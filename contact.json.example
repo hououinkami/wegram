@@ -1,0 +1,11 @@
+[
+    {
+        "name": "",
+        "wxId": "wxid_xxxxxxxxxxxxx",
+        "chatId": -123456789,
+        "isGroup": false,
+        "isReceive": true,
+        "alias": "",
+        "avatarLink": ""
+    }
+]
