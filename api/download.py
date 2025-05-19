@@ -56,12 +56,10 @@ def get_image(msg_id: str, from_wxid: str, data_length: int) -> Tuple[bool, str]
             }
             
             # 发送请求
-            response = wechat_api("/Tools/DownloadImg", payload)
+            response_data = wechat_api("/Tools/DownloadImg", payload)
             
             # 解析响应JSON
-            try:
-                response_data = response.json()
-                
+            try:                
                 # 提取Data.data.buffer部分
                 if 'Data' in response_data and 'data' in response_data['Data'] and 'buffer' in response_data['Data']['data']:
                     # 获取base64字符串
@@ -95,8 +93,7 @@ def get_image(msg_id: str, from_wxid: str, data_length: int) -> Tuple[bool, str]
                         }
                         
                         # 发送临时请求
-                        temp_response = wechat_api("/Tools/DownloadImg", temp_payload)
-                        temp_data = temp_response.json()
+                        temp_data = wechat_api("/Tools/DownloadImg", temp_payload)
                         
                         # 尝试获取totalLen
                         if 'Data' in temp_data and 'totalLen' in temp_data['Data']:
@@ -118,9 +115,6 @@ def get_image(msg_id: str, from_wxid: str, data_length: int) -> Tuple[bool, str]
                     else:
                         logger.error(f"响应格式错误: 找不到Data.data.buffer字段")
                         return False, f"响应格式错误: 找不到Data.data.buffer字段"
-            except json.JSONDecodeError:
-                logger.error(f"响应不是有效的JSON格式")
-                return False, f"响应不是有效的JSON格式"
             except Exception as e:
                 logger.error(f"处理响应数据时出错: {str(e)}")
                 return False, f"处理响应数据时出错: {str(e)}"

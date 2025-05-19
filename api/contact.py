@@ -23,8 +23,7 @@ def get_user_info(towxids):
     }
     
     # 发送请求
-    response = wechat_api("/Friend/GetContractDetail", body)
-    result = response.json()
+    result = wechat_api("/Friend/GetContractDetail", body)
     
     # 解析响应获取备注名
     if result.get("Success"):
