@@ -51,6 +51,9 @@ def extract_url_items(json_dict):
                                                     key_word = key_word["_text"]
                                                 if isinstance(value_word, dict) and "_text" in value_word:
                                                     value_word = value_word["_text"]
+                                                # 若无冒号结尾，新增冒号
+                                                if key_word and not key_word.endswith((":", "：")):
+                                                    key_word = key_word + ": "
                                                 line_texts.append(f"{escape_markdown_chars(key_word)}{escape_markdown_chars(value_word)}")
                                         
                                         # 将所有行文本以换行符连接
