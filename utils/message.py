@@ -7,11 +7,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import config
 from api import contact, download
 from api.base import telegram_api
 from utils.contact import contact_manager
+# from utils.quote import get_message_mapper
 from utils import xml, format
 
 
@@ -42,6 +43,7 @@ def process_message(message_data: Dict[str, Any]) -> None:
             content = format.escape_markdown_chars(content)
         else:
             content = xml.xml_to_json(content)
+        logger.warning(f"{content}")
         logger.info(f"处理器收到消息: 类型={msg_type}, 发送者={sender_wxid}")
         
         if not from_wxid or not content:
@@ -59,48 +61,110 @@ def process_message(message_data: Dict[str, Any]) -> None:
         # 文本消息
         logger.warning(f"{content}")
         if msg_type == 1:
-            telegram_api(
+            # 发送消息到Telegram
+            response = telegram_api(
                 chat_id=chat_id,
                 content=f"{sender_name}\n{content}",
             )
+            
         # 图片消息
         elif msg_type == 3:
-            # 下载图片
-            success, filepath = download.get_image(
-                msg_id=msg_id,
-                from_wxid=from_wxid,
-                data_length=int(content["msg"]["img"]["length"])
-            )
+            # 下载图片（企业微信用户无法下载）
+            if not "openim" in from_wxid:
+                success, filepath = download.get_image(
+                    msg_id=msg_id,
+                    from_wxid=from_wxid,
+                    data_json=content
+                )
+            else:
+                success = False
+
             if success:
                 # 发送照片
-                telegram_api(
+                response = telegram_api(
                     chat_id=chat_id,
                     content=filepath,
                     method="sendPhoto",
                     additional_payload={
                         "caption": f"{sender_name}"
                     }
+                )  
+            else:
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=f"{sender_name}\n\[{config.type(msg_type)}\]"
+                )
+        
+        # 视频消息
+        elif msg_type == 43:
+            # 下载视频（企业微信用户无法下载）
+            if not "openim" in from_wxid:
+                success, filepath = download.get_video(
+                    msg_id=msg_id,
+                    from_wxid=from_wxid,
+                    data_json=content
                 )
             else:
-                telegram_api(
+                success = False
+
+            if success:
+                # 发送视频
+                response = telegram_api(
                     chat_id=chat_id,
-                    content=f"{sender_name}\n[{config.type(msg_type)}]"
+                    content=filepath,
+                    method="sendVideo",
+                    additional_payload={
+                        "caption": f"{sender_name}"
+                    }
                 )
+                
+            else:
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=f"{sender_name}\n\[{config.type(msg_type)}\]"
+                )
+                       
         # 公众号消息
         elif msg_type == 6:
             logger.warning(f"{content}")
             url_items = format.extract_url_items(content)
             logger.warning(f"{url_items}")
-            telegram_api(
+            response = telegram_api(
                 chat_id=chat_id,
                 content=f"{sender_name}\n{url_items}",
             )
+                
+        # 贴纸消息
+        elif msg_type == 47:
+            logger.warning(f"{content}")
+
+            success, filepath = download.get_emoji(content)
+
+            if success:
+                # 发送视频
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=filepath,
+                    method="sendAnimation",
+                    additional_payload={
+                        "caption": f"{sender_name}"
+                    }
+                )
+                
+            else:
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=f"{sender_name}\n\[{config.type(msg_type)}\]"
+                )
+            
+            
         else:
-            telegram_api(
+            response = telegram_api(
                 chat_id=chat_id,
-                content=f"{sender_name}\n[{config.type(msg_type)}]"
+                content=f"{sender_name}\n\[{config.type(msg_type)}\]"
             )
+                
         # 添加其他消息类型的处理...
         
     except Exception as e:
-        logger.error(f"处理消息时出错: {e}")
+        logger.error(f"处理消息时出错: {e}", exc_info=True)
