@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, Union
 from utils.contact import contact_manager
 from api import contact
 from api.base import wechat_api, telegram_api
+from utils.sticker import get_sticker_info
 import config
 
 # 获取模块专用的日志记录器
@@ -83,6 +84,24 @@ def forward_photo_to_wx(chat_id: str, photo: list) -> bool:
         logger.error(f"处理图片时出错: {e}")
         return False
 
+
+# 从Telegram转发贴纸消息到微信API
+def forward_sticker_to_wx(chat_id: str, md5: str, len: int) -> bool:
+    to_wxid = contact_manager.get_wxid_by_chatid(chat_id)
+    
+    if not to_wxid:
+        return False
+        
+    # 准备API请求数据
+    payload = {
+            "Md5": md5,
+            "ToWxid": to_wxid,
+            "TotalLen": len,
+            "Wxid": config.MY_WXID
+        }
+    
+    return wechat_api("/Msg/SendEmoji", payload)
+
 # 处理Telegram更新中的消息
 def process_telegram_update(update: Dict[str, Any]) -> None:
     # 处理消息
@@ -130,6 +149,26 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
             # 如果有说明文字，也转发文字
             if success and caption:
                 forward_text_to_wx(chat_id, caption)
+        
+        elif "sticker" in message:
+            logger.info(f"收到来自用户 {user_id} 在群组 {chat_id} 的贴纸消息")
+            sticker = message["sticker"]
+            
+            # 提取贴纸的file_unique_id
+            file_unique_id = sticker.get("file_unique_id", "")
+            logger.info(f"贴纸file_unique_id: {file_unique_id}")         
+            
+            sticker_info = get_sticker_info(file_unique_id)
+            if sticker_info:
+                md5 = sticker_info.get("md5", "")
+                size = int(sticker_info.get("size", 0))
+                name = sticker_info.get("name", "")
+                logger.info(f"匹配到贴纸: {name}, md5: {md5}, size: {size}")
+                
+                forward_sticker_to_wx(chat_id, md5, size)
+                
+            else:
+                logger.info(f"未找到匹配的贴纸信息: {file_unique_id}")
                 
         # 可以在这里添加其他类型消息的处理逻辑，例如：
         # elif "document" in message:
