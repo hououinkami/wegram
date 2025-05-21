@@ -14,32 +14,63 @@ import api.login as login
 from api.base import telegram_api
 import config
 
+# 全局变量，用于跟踪当前登录状态
+is_logged_in = None  # None表示初始状态，True表示登录，False表示离线
+
 def check_login_status():
     """
     检查登录状态的函数
     如果A函数返回的JSON中存在"Data"键，则表示登录正常
     否则表示登录失效，需要调用B函数重新登录
     """
+    global is_logged_in
+    
     try:
         # 调用A函数获取JSON数据
         response_json = login.get_profile(config.MY_WXID)
         
         # 检查是否存在"Data"键
         if response_json.get("Data") is not None:
+            # 登录状态正常
             logger.info("登录状态正常")
+            
+            # 如果之前是离线状态，发送上线通知
+            if is_logged_in is False:
+                telegram_api(
+                    chat_id=config.CHAT_ID,
+                    content="WeChatがオンラインしました",
+                )
+                logger.info("已发送上线通知")
+            
+            is_logged_in = True
             return True
         else:
-            logger.info("登录已失效，正在重新登录...")
-            telegram_api(
-                chat_id=config.CHAT_ID,
-                content="WeChatがオフラインしました",
-            )
-            push_qr_code()
+            # 登录已失效
+            logger.info("登录已失效")
+            
+            # 只有在首次检测到离线或从在线状态变为离线状态时才发送通知
+            if is_logged_in is not False:  # None(初始状态)或True(之前在线)
+                telegram_api(
+                    chat_id=config.CHAT_ID,
+                    content="WeChatがオフラインしました",
+                )
+                logger.info("已发送离线通知")
+                push_qr_code()
+            
+            is_logged_in = False
             return False
     except Exception as e:
         logger.error(f"检查登录状态时出错: {e}")
-        push_qr_code()
         
+        # 异常情况下，如果之前不是离线状态，则发送通知并推送二维码
+        if is_logged_in is not False:
+            telegram_api(
+                chat_id=config.CHAT_ID,
+                content="WeChatがオフラインしました（エラー発生）",
+            )
+            push_qr_code()
+            
+        is_logged_in = False
         return False
 
 def periodic_check(interval=300):
@@ -104,8 +135,6 @@ def main():
     check_thread.start()
     
     # 保持服务运行
-    # 注意：由于main.py框架会管理线程，这里不需要额外的循环来保持主线程运行
-    # 但为了防止函数立即返回，我们可以让线程加入主线程
     while True:
         # 简单的心跳日志，每小时记录一次
         logger.info("微信登录状态监控服务正在运行")
