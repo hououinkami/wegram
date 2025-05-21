@@ -1,6 +1,10 @@
 .DS_Store
 /logs
 /image
+/video
+/sticker
+/id_mappings
 test.py
 config.py
 contact.json
+sticker.json
