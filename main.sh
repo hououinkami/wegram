@@ -12,8 +12,8 @@ mkdir -p $LOG_DIR
 # 获取当前日期时间作为日志文件名后缀
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-# 日志文件路径
-MAIN_LOG="$LOG_DIR/main.log"
+# 按日期生成日志文件
+LOG_FILE="$LOG_DIR/$(date +'%Y-%m-%d').log"
 
 # 改进的进程检测函数 - 解决grep自匹配问题
 check_process_running() {
@@ -94,7 +94,7 @@ manage_main() {
     
     # 启动服务
     echo "启动 $script_name 服务..."
-    start_process $MAIN_PATH $MAIN_LOG
+    start_process $MAIN_PATH $LOG_FILE
     
     # 等待服务初始化
     echo "等待服务初始化..."
@@ -106,17 +106,17 @@ manage_main() {
     # 检查服务是否正常运行
     if [ -n "$pid" ] && ps -p $pid > /dev/null 2>&1; then
         # 检查日志中是否有错误信息
-        if grep -i "error\|exception\|failed\|traceback" $MAIN_LOG > /dev/null; then
+        if grep -i "error\|exception\|failed\|traceback" $LOG_FILE > /dev/null; then
             echo "⚠️ $script_name 进程已启动，但日志中包含错误信息:"
-            grep -i -A 3 -B 1 "error\|exception\|failed\|traceback" $MAIN_LOG | head -n 10
-            echo "完整日志路径: $MAIN_LOG"
+            grep -i -A 3 -B 1 "error\|exception\|failed\|traceback" $LOG_FILE | head -n 10
+            echo "完整日志路径: $LOG_FILE"
         else
             echo "✅ $script_name 服务已成功启动，PID: $pid"
-            echo "日志保存在: $MAIN_LOG"
+            echo "日志保存在: $LOG_FILE"
         fi
     else
         echo "❌ $script_name 服务启动失败，查看错误日志:"
-        cat $MAIN_LOG | tail -n 15
+        cat $LOG_FILE | tail -n 15
     fi
 }
 
@@ -132,9 +132,9 @@ show_status() {
     if [ -n "$main_pid" ] && ps -p $main_pid > /dev/null 2>&1; then
         echo "✅ $main_name 服务进程正在运行，PID: $main_pid"
         ps -p $main_pid -o pid,ppid,user,%cpu,%mem,start,time,command
-        if [ -f "$MAIN_LOG" ]; then
+        if [ -f "$LOG_FILE" ]; then
             echo "最新日志内容:"
-            tail -n 5 $MAIN_LOG
+            tail -n 5 $LOG_FILE
         fi
     else
         echo "❌ $main_name 服务未运行"

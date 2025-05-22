@@ -7,14 +7,18 @@
 
 import os
 import logging
+from datetime import datetime
 
 def setup_logging():
-    """设置全局日志配置"""
+    """设置按天生成日志文件的配置"""
+    # 获取当前脚本目录并创建 logs 文件夹
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-    log_file = os.path.join(log_dir, "main.log")
+    # 按天生成日志文件名
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    log_file = os.path.join(log_dir, f"{today_date}.log")
 
     # 移除所有现有处理器
     for handler in logging.root.handlers[:]:
@@ -25,16 +29,16 @@ def setup_logging():
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.FileHandler(log_file, mode='a', encoding='utf-8'),  # mode='a' 表示追加内容
             logging.StreamHandler()
         ]
     )
-    
+
     # 确保所有现有的记录器都正确配置
     for logger_name in logging.root.manager.loggerDict:
         logger = logging.getLogger(logger_name)
         logger.propagate = True
-    
+
     return logging.getLogger()
 
 # 在导入任何模块前初始化日志
