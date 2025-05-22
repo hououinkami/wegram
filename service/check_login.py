@@ -73,7 +73,7 @@ def check_login_status():
         is_logged_in = False
         return False
 
-def periodic_check(interval=300):
+def periodic_check(interval=120):
     """
     定期执行检查的函数
     参数:
@@ -116,6 +116,23 @@ def push_qr_code():
     except Exception as e:
         logger.error(f"推送二维码过程中出错: {e}")
         return None
+
+# 初始化
+def newinit():
+    result = login.newinit(config.MY_WXID)
+    if result:
+        logger.info("Newinit初始化成功")
+
+        # 检查是否需要继续同步
+        continue_flag = result.get("ContinueFlag")
+        if continue_flag == 1:
+            logger.info("需要继续同步数据")
+            # 获取同步键
+            current_synckey = result.get("CurrentSynckey", {}).get("Buffer", "")
+            max_synckey = result.get("MaxSynckey", {}).get("Buffer", "")
+
+            # 再次执行Newinit，带入同步键
+            newinit(config.MY_WXID, max_synckey, current_synckey)
 
 def main():
     """
