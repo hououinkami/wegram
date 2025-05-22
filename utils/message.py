@@ -32,10 +32,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
         user_info = contact.get_user_info(sender_wxid)
         sender_name = format.escape_markdown_chars(user_info.name)
         
-        if "chatroom" in group_id.lower():
-            sender_name = f">{sender_name}"
-        else:
-            sender_name = ""
         # 原始回调内容
         content = message_data.get('Content')
         # 不是文本则进行XML解析
@@ -43,10 +39,10 @@ def process_message(message_data: Dict[str, Any]) -> None:
             content = format.escape_markdown_chars(content)
         else:
             content = xml.xml_to_json(content)
-        logger.warning(f"{content}")
         logger.info(f"处理器收到消息: 类型={msg_type}, 发送者={sender_wxid}")
+        logger.info(f"{content}")
         
-        if not from_wxid or not content:
+        if not from_wxid or not content or from_wxid == config.MY_WXID:
             logger.warning("缺少发送者ID或消息内容")
             return
 
@@ -57,9 +53,14 @@ def process_message(message_data: Dict[str, Any]) -> None:
         else:
             return
         
+        # 非群聊不显示发送者
+        if "chatroom" in group_id.lower() or contact_dic["wxId"] == "wxid_not_in_json":
+            sender_name = f">{sender_name}"
+        else:
+            sender_name = ""
+
         # 根据消息类型进行不同处理
         # 文本消息
-        logger.warning(f"{content}")
         if msg_type == 1:
             # 发送消息到Telegram
             response = telegram_api(
@@ -126,7 +127,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
                        
         # 公众号消息
         elif msg_type == 6:
-            logger.warning(f"{content}")
             url_items = format.extract_url_items(content)
             logger.warning(f"{url_items}")
             response = telegram_api(
@@ -136,8 +136,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 
         # 贴纸消息
         elif msg_type == 47:
-            logger.warning(f"{content}")
-
             success, filepath = download.get_emoji(content)
 
             if success:
@@ -157,7 +155,13 @@ def process_message(message_data: Dict[str, Any]) -> None:
                     content=f"{sender_name}\n\[{config.type(msg_type)}\]"
                 )
             
-            
+        # 引用消息
+        elif msg_type == 49:
+            response = telegram_api(
+                chat_id=chat_id,
+                content=f"{sender_name}\n{content}",
+            )
+
         else:
             response = telegram_api(
                 chat_id=chat_id,
