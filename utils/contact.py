@@ -56,7 +56,10 @@ class ContactManager:
     def get_contact(self, wxid):
         """通过wxId获取联系人信息，先检查文件是否更新"""
         self.load_contacts()
-        return self.wxid_to_contact.get(wxid)
+        contact = self.wxid_to_contact.get(wxid)
+        if not contact:
+            contact = self.wxid_to_contact.get("wxid_not_in_json")
+        return contact
     
     def get_wxid_by_chatid(self, chat_id):
         """通过chatId获取wxId，先检查文件是否更新"""
