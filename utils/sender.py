@@ -50,27 +50,7 @@ def forward_photo_to_wx(chat_id: str, photo: list) -> bool:
     file_id = photo[-1]["file_id"]  # 最后一个通常是最大尺寸
     
     try:
-        # 获取文件路径
-        file_path_url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/getFile?file_id={file_id}"
-        file_path_response = requests.get(file_path_url)
-        file_path_data = file_path_response.json()
-        
-        if not file_path_data.get("ok"):
-            logger.error(f"获取文件路径失败: {file_path_data}")
-            return False
-            
-        file_path = file_path_data["result"]["file_path"]
-        
-        # 下载文件
-        file_url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_path}"
-        file_response = requests.get(file_url)
-        
-        if file_response.status_code != 200:
-            logger.error(f"下载图片失败，状态码: {file_response.status_code}")
-            return False
-            
-        # 将图片转换为Base64
-        image_base64 = base64.b64encode(file_response.content).decode('utf-8')
+        image_base64 = get_file_base64(file_id)
         
         # 准备API请求数据
         payload = {
@@ -84,6 +64,40 @@ def forward_photo_to_wx(chat_id: str, photo: list) -> bool:
         logger.error(f"处理图片时出错: {e}")
         return False
 
+# 从Telegram获取视频并转发到微信API
+def forward_video_to_wx(chat_id: str, video) -> bool:
+    to_wxid = contact_manager.get_wxid_by_chatid(chat_id)
+    
+    if not to_wxid:
+        return False
+        
+    # 获取视频
+    if not video:
+        logger.error("未收到视频数据")
+        return False
+        
+    # 获取视频与缩略图文件ID
+    file_id = video["file_id"]
+    thumb_file_id = video["thumb"]["file_id"]
+    duration = video["duration"]
+    
+    
+    try:
+        video_base64 = get_file_base64(file_id)
+        thumb_base64 = get_file_base64(thumb_file_id)
+        
+        # 准备API请求数据
+        payload = {
+            "Base64": video_base64,
+            "ImageBase64": thumb_base64,
+            "PlayLength": int(duration),
+            "ToWxid": to_wxid,
+            "Wxid": config.MY_WXID
+        }        
+        return wechat_api("/Msg/SendVideo", payload)
+    except Exception as e:
+        logger.error(f"处理视频时出错: {e}")
+        return False
 
 # 从Telegram转发贴纸消息到微信API
 def forward_sticker_to_wx(chat_id: str, md5: str, len: int) -> bool:
@@ -149,7 +163,20 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
             # 如果有说明文字，也转发文字
             if success and caption:
                 forward_text_to_wx(chat_id, caption)
-        
+
+        elif "video" in message:
+            logger.info(f"收到来自用户 {user_id} 在群组 {chat_id} 的视频消息")
+            video = message["video"]
+            # 如果有视频说明，也一并转发
+            caption = message.get("caption", "")
+            
+            # 先转发视频
+            success = forward_video_to_wx(chat_id, video)
+            
+            # 如果有说明文字，也转发文字
+            if success and caption:
+                forward_text_to_wx(chat_id, caption)
+
         elif "sticker" in message:
             logger.info(f"收到来自用户 {user_id} 在群组 {chat_id} 的贴纸消息")
             sticker = message["sticker"]
@@ -177,3 +204,28 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
         else:
             # 不支持的消息类型
             logger.info(f"收到不支持的消息类型，来自用户 {user_id} 在群组 {chat_id}")
+
+# 获取文件的 Base64 编码
+def get_file_base64(file_id):
+    # Step 1: 获取文件路径
+    file_path_url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/getFile?file_id={file_id}"
+    file_path_response = requests.get(file_path_url)
+    file_path_data = file_path_response.json()
+    
+    if not file_path_data['ok']:
+        logger.error(f"获取文件路径失败: {file_path_data}")
+    
+    file_path = file_path_data['result']['file_path']
+    
+    # Step 2: 下载文件
+    file_url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_path}"
+    file_response = requests.get(file_url)
+    
+    # Step 3: 转换为 Base64
+    if file_response.status_code != 200:
+        logger.error(f"下载文件失败，状态码: {file_response.status_code}")
+        return False
+            
+    # 将图片转换为Base64
+    file_base64 = base64.b64encode(file_response.content).decode('utf-8')
+    return file_base64
