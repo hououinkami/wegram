@@ -3,7 +3,7 @@
 /image
 /video
 /sticker
-/id_mappings
+/msgid
 test.py
 config.py
 contact.json
