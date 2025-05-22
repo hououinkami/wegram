@@ -26,6 +26,11 @@ def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         filename = f"{md5}.png"
         filepath = os.path.join(IMAGE_DIR, filename)
         
+        # 检查文件是否已存在
+        if os.path.exists(filepath):
+            logger.info(f"文件已存在，跳过下载: {filepath}")
+            return True, filepath
+        
         # 确保保存目录存在
         os.makedirs(IMAGE_DIR, exist_ok=True)
         
@@ -153,6 +158,11 @@ def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         filename = f"{md5}.mp4"
         filepath = os.path.join(VIDEO_DIR, filename)
         
+        # 检查文件是否已存在
+        if os.path.exists(filepath):
+            logger.info(f"文件已存在，跳过下载: {filepath}")
+            return True, filepath
+        
         # 确保保存目录存在
         os.makedirs(VIDEO_DIR, exist_ok=True)
         
@@ -276,51 +286,65 @@ def get_emoji(data_json) -> Tuple[bool, str]:
     try:
         md5 = data_json["msg"]["emoji"]["md5"]
         data_length = int(data_json["msg"]["emoji"]["len"])
+        url = data_json["msg"]["emoji"]["cdnurl"]
+
         # 文件名和路径
         filename = f"{md5}.gif"
         filepath = os.path.join(EMOJI_DIR, filename)
-        # 构建请求参数
-        payload = {
-            "Md5": md5,
-            "Wxid": WXID
-        }
-        # 发送请求
-        response_data = wechat_api("/Tools/EmojiDownload", payload)
+
+        # 检查文件是否已存在
+        if os.path.exists(filepath):
+            logger.info(f"文件已存在，跳过下载: {filepath}")
+            return True, filepath
         
-        # 检查响应数据结构
-        if (response_data and "Data" in response_data):
-            # 检查是否有直接的url
-            if "url" in response_data["Data"]:
-                url = response_data["Data"]["url"]
-            # 检查是否有emojiList结构
-            elif "emojiList" in response_data["Data"] and response_data["Data"]["emojiList"] and len(response_data["Data"]["emojiList"]) > 0:
-                if "url" in response_data["Data"]["emojiList"][0]:
-                    url = response_data["Data"]["emojiList"][0]["url"]
+        # 利用API请求下载
+        def get_url_by_api():
+            # 构建请求参数
+            payload = {
+                "Md5": md5,
+                "Wxid": WXID
+            }
+
+            # 发送请求
+            response_data = wechat_api("/Tools/EmojiDownload", payload)
+            
+            # 检查响应数据结构
+            if (response_data and "Data" in response_data):
+                # 检查是否有直接的url
+                if "url" in response_data["Data"]:
+                    url = response_data["Data"]["url"]
+                # 检查是否有emojiList结构
+                elif "emojiList" in response_data["Data"] and response_data["Data"]["emojiList"] and len(response_data["Data"]["emojiList"]) > 0:
+                    if "url" in response_data["Data"]["emojiList"][0]:
+                        url = response_data["Data"]["emojiList"][0]["url"]
+                        return url
+                    else:
+                        logger.error("emojiList中找不到url字段")
+                        return False, "emojiList中找不到url字段"
                 else:
-                    logger.error("emojiList中找不到url字段")
-                    return False, "emojiList中找不到url字段"
+                    logger.error("响应数据中找不到url")
+                    return False, "响应数据中找不到url"
             else:
-                logger.error("响应数据中找不到url")
-                return False, "响应数据中找不到url"
-            
-            # 确保目录存在
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            
-            # 下载文件
-            file_response = requests.get(url, stream=True)
-            if file_response.status_code == 200:
-                with open(filepath, 'wb') as f:
-                    for chunk in file_response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                logger.info(f"表情包已下载到: {filepath}")
-                return True, filepath
-            else:
-                error_msg = f"下载URL失败，HTTP状态码: {file_response.status_code}"
-                logger.error(error_msg)
-                return False, error_msg
+                logger.error("响应数据格式不正确")
+                return False, "响应数据格式不正确"
+        
+        # url = get_url_by_api()
+        
+        # 确保目录存在
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # 下载文件
+        file_response = requests.get(url, stream=True)
+        if file_response.status_code == 200:
+            with open(filepath, 'wb') as f:
+                for chunk in file_response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info(f"表情包已下载到: {filepath}")
+            return True, filepath
         else:
-            logger.error("响应数据格式不正确")
-            return False, "响应数据格式不正确"
+            error_msg = f"下载URL失败，HTTP状态码: {file_response.status_code}"
+            logger.error(error_msg)
+            return False, error_msg
                 
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")
