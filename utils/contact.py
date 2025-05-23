@@ -57,7 +57,7 @@ class ContactManager:
         """通过wxId获取联系人信息，先检查文件是否更新"""
         self.load_contacts()
         contact = self.wxid_to_contact.get(wxid)
-        if not contact:
+        if not contact and not "chatroom" in wxid and not "gh_" in wxid:
             contact = self.wxid_to_contact.get("wxid_not_in_json")
         return contact
     
