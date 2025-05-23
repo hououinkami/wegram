@@ -12,14 +12,16 @@ import config
 from api import contact, download
 from api.base import telegram_api
 from utils.contact import contact_manager
-# from utils.quote import get_message_mapper
+from utils.quote import MappingManager
 from utils import xml, format
 
+# 创建映射管理器实例
+msgid_mapping = MappingManager()
 
 def process_message(message_data: Dict[str, Any]) -> None:
     """处理微信消息"""
     try:
-        msg_type = message_data.get('MsgType')
+        msg_type = int(message_data.get('MsgType'))
         msg_id = message_data.get('MsgId')
         from_wxid = message_data.get("FromWxid")
         sender_wxid = message_data.get("SenderWxid")
@@ -35,7 +37,7 @@ def process_message(message_data: Dict[str, Any]) -> None:
         # 原始回调内容
         content = message_data.get('Content')
         # 不是文本则进行XML解析
-        if msg_type == 1:
+        if msg_type == 1 or msg_type == 49:
             content = format.escape_markdown_chars(content)
         else:
             content = xml.xml_to_json(content)
@@ -67,7 +69,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 chat_id=chat_id,
                 content=f"{sender_name}\n{content}",
             )
-            
         # 图片消息
         elif msg_type == 3:
             # 下载图片（企业微信用户无法下载）
@@ -118,7 +119,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
                         "caption": f"{sender_name}"
                     }
                 )
-                
             else:
                 response = telegram_api(
                     chat_id=chat_id,
@@ -148,13 +148,26 @@ def process_message(message_data: Dict[str, Any]) -> None:
                         "caption": f"{sender_name}"
                     }
                 )
-                
             else:
                 response = telegram_api(
                     chat_id=chat_id,
                     content=f"{sender_name}\n\[{config.type(msg_type)}\]"
                 )
-            
+
+        # 聊天记录消息
+        elif msg_type == 19:            
+            chat_history = process_chathistory(content)
+            if chat_history:
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=f"{sender_name}\n{chat_history}",
+                )
+            else:
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=f"{sender_name}\n\[{config.type(msg_type)}\]"
+                )
+
         # 引用消息
         elif msg_type == 49:
             response = telegram_api(
@@ -162,13 +175,49 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 content=f"{sender_name}\n{content}",
             )
 
+        # 其他消息
         else:
             response = telegram_api(
                 chat_id=chat_id,
                 content=f"{sender_name}\n\[{config.type(msg_type)}\]"
             )
-                
-        # 添加其他消息类型的处理...
+        
+        # 储存消息ID
+        tg_msgid = response['result']['message_id']
+        msgid_mapping.add(msg_id, tg_msgid)
         
     except Exception as e:
         logger.error(f"处理消息时出错: {e}", exc_info=True)
+
+# 处理聊天记录
+def process_chathistory(content):
+    chat_data = xml.xml_to_json(content["msg"]["appmsg"]["recorditem"])
+    chat_json = chat_data["recordinfo"]
+    
+    # 提取标题和件数
+    title = chat_json['title']
+    count = chat_json['datalist']['count']
+    
+    # 提取所有 sourcetime 并转换为日期格式
+    data_items = chat_json['datalist']['dataitem']
+    sourcetimes = [item['sourcetime'] for item in data_items]
+    sourcetimes_formatted = [datetime.strptime(time, "%Y-%m-%d %H:%M:%S") for time in sourcetimes]
+    
+    # 确定日期范围
+    start_date = sourcetimes_formatted[0].strftime("%Y-%m-%d")
+    end_date = sourcetimes_formatted[-1].strftime("%Y-%m-%d")
+    date_range = f"{start_date} ～ {end_date}" if start_date != end_date else start_date
+    
+    # 构建聊天记录文本
+    chat_history = [f"{format.escape_markdown_chars(title)}\n件数：{count}\n日期：{format.escape_markdown_chars(date_range)}\n**>"]
+    
+    for item in data_items:
+        sourcename = item['sourcename']
+        sourcetime = datetime.strptime(item['sourcetime'], "%Y-%m-%d %H:%M:%S").strftime("%m/%d %H:%M")
+        datadesc = item.get('datadesc', "[不明]") if item['datatype'] != '1' else item.get('datadesc', "[不明]")
+        
+        chat_history.append(f">{format.escape_markdown_chars(sourcename)} ({sourcetime})\n>{format.escape_markdown_chars(datadesc)}")
+
+    # 返回格式化后的文本
+    return "\n".join(chat_history)
+    
