@@ -18,269 +18,26 @@ VIDEO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 EMOJI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sticker")
 
 def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
-    try:
-        md5 = data_json["msg"]["img"]["md5"]
-        data_length = int(data_json["msg"]["img"]["length"])
-
-        # 文件名和路径
-        filename = f"{md5}.png"
-        filepath = os.path.join(IMAGE_DIR, filename)
-        
-        # 检查文件是否已存在
-        if os.path.exists(filepath):
-            logger.info(f"文件已存在，跳过下载: {filepath}")
-            return True, filepath
-        
-        # 确保保存目录存在
-        os.makedirs(IMAGE_DIR, exist_ok=True)
-        
-        # 配置分段大小
-        chunk_size = 256 * 256
-        total_chunks = math.ceil(data_length / chunk_size)
-        
-        logger.info(f"开始下载图片: {filename}, 初始大小: {data_length}, 分段数: {total_chunks}")
-        
-        # 初始化分段参数
-        chunk_index = 1
-        next_start_pos = 0
-        next_chunk_size = min(chunk_size, data_length)
-            
-        # 用于存储所有分段的二进制数据
-        all_binary_data = bytearray()
-        
-        # 循环下载所有分段
-        while True:
-            logger.debug(f"下载分段 {chunk_index}/{total_chunks}, 起始位置: {next_start_pos}, 大小: {next_chunk_size}")
-            
-            # 构建请求参数
-            payload = {
-                "CompressType": 0,
-                "DataLen": data_length,
-                "MsgId": msg_id,
-                "Section": {
-                    "DataLen": next_chunk_size,
-                    "StartPos": next_start_pos
-                },
-                "Wxid": WXID,
-                "ToWxid": from_wxid
-            }
-            
-            # 发送请求
-            response_data = wechat_api("/Tools/DownloadImg", payload)
-            
-            # 解析响应JSON
-            try:                
-                # 提取Data.data.buffer部分
-                if 'Data' in response_data and 'data' in response_data['Data'] and 'buffer' in response_data['Data']['data']:
-                    # 获取base64字符串
-                    base64_data = response_data['Data']['data']['buffer']
-                    
-                    # 移除可能存在的base64头部
-                    if ',' in base64_data:
-                        base64_data = base64_data.split(',', 1)[1]
-                    
-                    # 解码base64为二进制
-                    binary_chunk = base64.b64decode(base64_data)
-                    
-                    # 添加到总数据中
-                    all_binary_data.extend(binary_chunk)
-                    logger.debug(f"成功接收分段 {chunk_index}, 大小: {len(binary_chunk)} 字节")
-                else:
-                    # 当第一次请求获取不到buffer时，尝试更改payload重新请求
-                    if chunk_index == 1:
-                        logger.warning("第一次请求未获取到buffer，尝试更改请求参数...")
-                        
-                        # 临时更改payload
-                        temp_payload = {
-                            "CompressType": 0,
-                            "MsgId": msg_id,
-                            "Section": {
-                                "DataLen": chunk_size,
-                                "StartPos": 0
-                            },
-                            "Wxid": WXID,
-                            "ToWxid": from_wxid
-                        }
-                        
-                        # 发送临时请求
-                        temp_data = wechat_api("/Tools/DownloadImg", temp_payload)
-                        
-                        # 尝试获取totalLen
-                        if 'Data' in temp_data and 'totalLen' in temp_data['Data']:
-                            # 更新data_length
-                            new_data_length = temp_data['Data']['totalLen']
-                            logger.info(f"获取到新的数据长度: {new_data_length}，原长度: {data_length}")
-                            
-                            # 使用新的data_length重新计算参数
-                            data_length = new_data_length
-                            total_chunks = math.ceil(data_length / chunk_size)
-                            next_chunk_size = min(chunk_size, data_length)
-                            
-                            # 重新开始下载
-                            logger.info(f"使用新的数据长度重新开始下载，总大小: {data_length}, 分段数: {total_chunks}")
-                            continue
-                        else:
-                            logger.error("临时请求未能获取到totalLen")
-                            return False, "临时请求未能获取到totalLen"
-                    else:
-                        logger.error(f"响应格式错误: 找不到Data.data.buffer字段")
-                        return False, f"响应格式错误: 找不到Data.data.buffer字段"
-            except Exception as e:
-                logger.error(f"处理响应数据时出错: {str(e)}")
-                return False, f"处理响应数据时出错: {str(e)}"
-            
-            # 检查是否已下载完所有分段
-            if chunk_index == total_chunks:
-                break
-                
-            # 准备下一个请求
-            chunk_index += 1
-            next_start_pos = chunk_size * (chunk_index - 1)
-            remaining_data = data_length - next_start_pos
-            next_chunk_size = min(chunk_size, remaining_data)
-        
-        # 将完整的二进制数据写入文件
-        with open(filepath, 'wb') as f:
-            f.write(all_binary_data)
-            
-        logger.info(f"图片下载完成，保存至: {filepath}, 总大小: {len(all_binary_data)} 字节")
-        return True, filepath
-        
-    except Exception as e:
-        logger.exception(f"下载失败: {str(e)}")
-        return False, f"下载失败: {str(e)}"
+    return chunked_download(
+        api_path="/Tools/DownloadImg",
+        msg_id=msg_id,
+        from_wxid=from_wxid,
+        data_json=data_json,
+        file_key="img",
+        file_extension="png",
+        save_dir=IMAGE_DIR
+    )
 
 def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
-    try:
-        md5 = data_json["msg"]["videomsg"]["md5"]
-        data_length = int(data_json["msg"]["videomsg"]["length"])
-        # 文件名和路径
-        filename = f"{md5}.mp4"
-        filepath = os.path.join(VIDEO_DIR, filename)
-        
-        # 检查文件是否已存在
-        if os.path.exists(filepath):
-            logger.info(f"文件已存在，跳过下载: {filepath}")
-            return True, filepath
-        
-        # 确保保存目录存在
-        os.makedirs(VIDEO_DIR, exist_ok=True)
-        
-        # 配置分段大小
-        chunk_size = 256 * 256
-        total_chunks = math.ceil(data_length / chunk_size)
-        
-        logger.info(f"开始下载视频: {filename}, 初始大小: {data_length}, 分段数: {total_chunks}")
-        
-        # 初始化分段参数
-        chunk_index = 1
-        next_start_pos = 0
-        next_chunk_size = min(chunk_size, data_length)
-            
-        # 用于存储所有分段的二进制数据
-        all_binary_data = bytearray()
-        
-        # 循环下载所有分段
-        while True:
-            logger.debug(f"下载分段 {chunk_index}/{total_chunks}, 起始位置: {next_start_pos}, 大小: {next_chunk_size}")
-            
-            # 构建请求参数
-            payload = {
-                "CompressType": 0,
-                "DataLen": data_length,
-                "MsgId": msg_id,
-                "Section": {
-                    "DataLen": next_chunk_size,
-                    "StartPos": next_start_pos
-                },
-                "Wxid": WXID,
-                "ToWxid": from_wxid
-            }
-            
-            # 发送请求
-            response_data = wechat_api("/Tools/DownloadVideo", payload)
-            
-            # 解析响应JSON
-            try:                
-                # 提取Data.data.buffer部分
-                if 'Data' in response_data and 'data' in response_data['Data'] and 'buffer' in response_data['Data']['data']:
-                    # 获取base64字符串
-                    base64_data = response_data['Data']['data']['buffer']
-                    
-                    # 移除可能存在的base64头部
-                    if ',' in base64_data:
-                        base64_data = base64_data.split(',', 1)[1]
-                    
-                    # 解码base64为二进制
-                    binary_chunk = base64.b64decode(base64_data)
-                    
-                    # 添加到总数据中
-                    all_binary_data.extend(binary_chunk)
-                    logger.debug(f"成功接收分段 {chunk_index}, 大小: {len(binary_chunk)} 字节")
-                else:
-                    # 当第一次请求获取不到buffer时，尝试更改payload重新请求
-                    if chunk_index == 1:
-                        logger.warning("第一次请求未获取到buffer，尝试更改请求参数...")
-                        
-                        # 临时更改payload
-                        temp_payload = {
-                            "CompressType": 0,
-                            "MsgId": msg_id,
-                            "Section": {
-                                "DataLen": chunk_size,
-                                "StartPos": 0
-                            },
-                            "Wxid": WXID,
-                            "ToWxid": from_wxid
-                        }
-                        
-                        # 发送临时请求
-                        temp_data = wechat_api("/Tools/DownloadVideo", temp_payload)
-                        
-                        # 尝试获取totalLen
-                        if 'Data' in temp_data and 'totalLen' in temp_data['Data']:
-                            # 更新data_length
-                            new_data_length = temp_data['Data']['totalLen']
-                            logger.info(f"获取到新的数据长度: {new_data_length}，原长度: {data_length}")
-                            
-                            # 使用新的data_length重新计算参数
-                            data_length = new_data_length
-                            total_chunks = math.ceil(data_length / chunk_size)
-                            next_chunk_size = min(chunk_size, data_length)
-                            
-                            # 重新开始下载
-                            logger.info(f"使用新的数据长度重新开始下载，总大小: {data_length}, 分段数: {total_chunks}")
-                            continue
-                        else:
-                            logger.error("临时请求未能获取到totalLen")
-                            return False, "临时请求未能获取到totalLen"
-                    else:
-                        logger.error(f"响应格式错误: 找不到Data.data.buffer字段")
-                        return False, f"响应格式错误: 找不到Data.data.buffer字段"
-            except Exception as e:
-                logger.error(f"处理响应数据时出错: {str(e)}")
-                return False, f"处理响应数据时出错: {str(e)}"
-            
-            # 检查是否已下载完所有分段
-            if chunk_index == total_chunks:
-                break
-                
-            # 准备下一个请求
-            chunk_index += 1
-            next_start_pos = chunk_size * (chunk_index - 1)
-            remaining_data = data_length - next_start_pos
-            next_chunk_size = min(chunk_size, remaining_data)
-        
-        # 将完整的二进制数据写入文件
-        with open(filepath, 'wb') as f:
-            f.write(all_binary_data)
-            
-        logger.info(f"视频下载完成，保存至: {filepath}, 总大小: {len(all_binary_data)} 字节")
-        return True, filepath
-        
-    except Exception as e:
-        logger.exception(f"下载失败: {str(e)}")
-        return False, f"下载失败: {str(e)}"
+    return chunked_download(
+        api_path="/Tools/DownloadVideo",
+        msg_id=msg_id,
+        from_wxid=from_wxid,
+        data_json=data_json,
+        file_key="videomsg",
+        file_extension="mp4",
+        save_dir=VIDEO_DIR
+    )
     
 def get_emoji(data_json) -> Tuple[bool, str]:
     try:
@@ -328,7 +85,8 @@ def get_emoji(data_json) -> Tuple[bool, str]:
                 logger.error("响应数据格式不正确")
                 return False, "响应数据格式不正确"
         
-        # url = get_url_by_api()
+        if url == "":
+            url = get_url_by_api()
         
         # 确保目录存在
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -346,6 +104,140 @@ def get_emoji(data_json) -> Tuple[bool, str]:
             logger.error(error_msg)
             return False, error_msg
                 
+    except Exception as e:
+        logger.exception(f"下载失败: {str(e)}")
+        return False, f"下载失败: {str(e)}"
+
+def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict, file_key: str, file_extension: str, save_dir: str) -> Tuple[bool, str]:
+    try:
+        # 提取文件信息
+        file_info = data_json["msg"][file_key]
+        md5 = file_info["md5"]
+        data_length = int(file_info["length"])
+        
+        # 文件名和路径
+        filename = f"{md5}.{file_extension}"
+        filepath = os.path.join(save_dir, filename)
+        
+        # 检查文件是否已存在
+        if os.path.exists(filepath):
+            logger.info(f"文件已存在，跳过下载: {filepath}")
+            return True, filepath
+        
+        # 确保保存目录存在
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # 配置分段大小
+        chunk_size = 256 * 256
+        total_chunks = math.ceil(data_length / chunk_size)
+        
+        logger.info(f"开始下载文件: {filename}, 初始大小: {data_length}, 分段数: {total_chunks}")
+        
+        # 初始化分段参数
+        chunk_index = 1
+        next_start_pos = 0
+        next_chunk_size = min(chunk_size, data_length)
+        
+        # 用于存储所有分段的二进制数据
+        all_binary_data = bytearray()
+        
+        # 循环下载所有分段
+        while True:
+            logger.debug(f"下载分段 {chunk_index}/{total_chunks}, 起始位置: {next_start_pos}, 大小: {next_chunk_size}")
+            
+            # 构建请求参数
+            payload = {
+                "CompressType": 0,
+                "DataLen": data_length,
+                "MsgId": msg_id,
+                "Section": {
+                    "DataLen": next_chunk_size,
+                    "StartPos": next_start_pos
+                },
+                "Wxid": WXID,
+                "ToWxid": from_wxid
+            }
+            
+            # 发送请求
+            response_data = wechat_api(api_path, payload)
+            
+            # 解析响应JSON
+            try:
+                if 'Data' in response_data and 'data' in response_data['Data'] and 'buffer' in response_data['Data']['data']:
+                    # 获取base64字符串
+                    base64_data = response_data['Data']['data']['buffer']
+                    
+                    # 移除可能存在的base64头部
+                    if ',' in base64_data:
+                        base64_data = base64_data.split(',', 1)[1]
+                    
+                    # 解码base64为二进制
+                    binary_chunk = base64.b64decode(base64_data)
+                    
+                    # 添加到总数据中
+                    all_binary_data.extend(binary_chunk)
+                    logger.debug(f"成功接收分段 {chunk_index}, 大小: {len(binary_chunk)} 字节")
+                else:
+                    # 当第一次请求获取不到buffer时，尝试更改payload重新请求
+                    if chunk_index == 1:
+                        logger.warning("第一次请求未获取到buffer，尝试更改请求参数...")
+                        
+                        # 临时更改payload
+                        temp_payload = {
+                            "CompressType": 0,
+                            "MsgId": msg_id,
+                            "Section": {
+                                "DataLen": chunk_size,
+                                "StartPos": 0
+                            },
+                            "Wxid": WXID,
+                            "ToWxid": from_wxid
+                        }
+                        
+                        # 发送临时请求
+                        temp_data = wechat_api(api_path, temp_payload)
+                        
+                        # 尝试获取totalLen
+                        if 'Data' in temp_data and 'totalLen' in temp_data['Data']:
+                            # 更新data_length
+                            new_data_length = temp_data['Data']['totalLen']
+                            logger.info(f"获取到新的数据长度: {new_data_length}，原长度: {data_length}")
+                            
+                            # 使用新的data_length重新计算参数
+                            data_length = new_data_length
+                            total_chunks = math.ceil(data_length / chunk_size)
+                            next_chunk_size = min(chunk_size, data_length)
+                            
+                            # 重新开始下载
+                            logger.info(f"使用新的数据长度重新开始下载，总大小: {data_length}, 分段数: {total_chunks}")
+                            continue
+                        else:
+                            logger.error("临时请求未能获取到totalLen")
+                            return False, "临时请求未能获取到totalLen"
+                    else:
+                        logger.error(f"响应格式错误: 找不到Data.data.buffer字段")
+                        return False, f"响应格式错误: 找不到Data.data.buffer字段"
+            except Exception as e:
+                logger.error(f"处理响应数据时出错: {str(e)}")
+                return False, f"处理响应数据时出错: {str(e)}"
+            
+            # 检查是否已下载完所有分段
+            if chunk_index == total_chunks:
+                break
+                
+            # 准备下一个请求
+            chunk_index += 1
+            next_start_pos = chunk_size * (chunk_index - 1)
+            remaining_data = data_length - next_start_pos
+            next_chunk_size = min(chunk_size, remaining_data)
+        
+        # 将完整的二进制数据写入文件
+        with open(filepath, 'wb') as f:
+            f.write(all_binary_data)
+            
+        logger.info(f"文件下载完成，保存至: {filepath}, 总大小: {len(all_binary_data)} 字节")
+        return True, filepath
+        
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")
         return False, f"下载失败: {str(e)}"
