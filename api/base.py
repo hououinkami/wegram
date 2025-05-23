@@ -101,7 +101,6 @@ def telegram_api(chat_id, content=None, from_wxid=None,
         # 如果不是文件发送或文件打开失败，使用 JSON 方式发送
         if files is None:
             response = requests.post(url, json=payload)
-        logger.warning(f"{response}")
         if response.status_code == 200:
             logger.info(f"内容已成功发送到 Telegram 群组 {chat_id}")
             return response.json()
