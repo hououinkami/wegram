@@ -19,25 +19,38 @@ from utils import xml, format
 msgid_mapping = MappingManager()
 
 def process_message(message_data: Dict[str, Any]) -> None:
+    message_info = extract_message(message_data)
+    if not message_info:
+        return
     """处理微信消息"""
     try:
-        msg_type = int(message_data.get('MsgType'))
-        msg_id = message_data.get('MsgId')
-        from_wxid = message_data.get("FromWxid")
-        sender_wxid = message_data.get("SenderWxid")
+        msg_type = int(message_info['MsgType'])
+        msg_id = message_info['MsgId']
+        from_wxid = message_info['FromUserName']
+        content = message_info['Content']
 
-        # 如果是我自己发送的消息
-        if from_wxid == "":
-            from_wxid = sender_wxid
-            
-        group_id = message_data.get("FromWxid")
+        # 判断是否为群聊消息
+        if from_wxid.endswith('@chatroom'):
+            # 群聊消息格式处理
+            if ':\n' in content:
+                # 分割消息内容
+                sender_part, content_part = content.split('\n', 1)
+                # 提取发送者ID（去掉最后的冒号）
+                sender_wxid = sender_part.rstrip(':')
+                # 更新content为实际消息内容
+                content = content_part
+            else:
+                # 如果没有换行符，可能是系统消息
+                sender_wxid = ''
+        else:
+            # 私聊消息，发送者就是FromUserName
+            sender_wxid = from_wxid
+
         user_info = contact.get_user_info(sender_wxid)
         sender_name = format.escape_markdown_chars(user_info.name)
         
-        # 原始回调内容
-        content = message_data.get('Content')
         # 不是文本则进行XML解析
-        if msg_type == 1 or msg_type == 49:
+        if msg_type == 1:
             content = format.escape_markdown_chars(content)
         else:
             content = xml.xml_to_json(content)
@@ -56,7 +69,7 @@ def process_message(message_data: Dict[str, Any]) -> None:
             return
         
         # 非群聊不显示发送者
-        if "chatroom" in group_id.lower() or contact_dic["wxId"] == "wxid_not_in_json":
+        if "chatroom" in from_wxid or contact_dic["wxId"] == "wxid_not_in_json":
             sender_name = f">{sender_name}"
         else:
             sender_name = ""
@@ -156,7 +169,7 @@ def process_message(message_data: Dict[str, Any]) -> None:
 
         # 聊天记录消息
         elif msg_type == 19:            
-            chat_history = process_chathistory(content)
+            chat_history = f"\[{config.type(msg_type)}\]\n{process_chathistory(content)}"
             if chat_history:
                 response = telegram_api(
                     chat_id=chat_id,
@@ -183,9 +196,9 @@ def process_message(message_data: Dict[str, Any]) -> None:
             )
         
         # 储存消息ID
-        tg_msgid = response['result']['message_id']
-        msgid_mapping.add(msg_id, tg_msgid)
-        
+        if response and response.get('ok', False):
+            tg_msgid = response['result']['message_id']
+            msgid_mapping.add(msg_id, tg_msgid)
     except Exception as e:
         logger.error(f"处理消息时出错: {e}", exc_info=True)
 
@@ -209,15 +222,44 @@ def process_chathistory(content):
     date_range = f"{start_date} ～ {end_date}" if start_date != end_date else start_date
     
     # 构建聊天记录文本
-    chat_history = [f"{format.escape_markdown_chars(title)}\n件数：{count}\n日期：{format.escape_markdown_chars(date_range)}\n**>"]
+    chat_history = [f">{format.escape_markdown_chars(title)}\n>件数：{count}\n>日期：{format.escape_markdown_chars(date_range)}\n**>测试"]
     
     for item in data_items:
         sourcename = item['sourcename']
         sourcetime = datetime.strptime(item['sourcetime'], "%Y-%m-%d %H:%M:%S").strftime("%m/%d %H:%M")
         datadesc = item.get('datadesc', "[不明]") if item['datatype'] != '1' else item.get('datadesc', "[不明]")
-        
-        chat_history.append(f">{format.escape_markdown_chars(sourcename)} ({sourcetime})\n>{format.escape_markdown_chars(datadesc)}")
+        chat_history.append(f">👤{format.escape_markdown_chars(sourcename)} \({sourcetime}\)\n>{format.escape_markdown_chars(datadesc)}")
 
     # 返回格式化后的文本
     return "\n".join(chat_history)
+
+# 提取回调信息
+def extract_message(data):
+    """安全地提取第一条消息的关键信息"""
+    try:
+        if data.get('Message') == "当前未有新消息":
+            return None
+        # 检查是否有消息
+        add_msgs = data.get('Data', {}).get('AddMsgs', [])
+        if not add_msgs:
+            print("没有新消息")
+            return None
+        
+        # 获取第一条消息
+        first_msg = add_msgs[0]
+        
+        # 提取所需字段
+        message_info = {
+            'MsgId': first_msg.get('MsgId'),
+            'FromUserName': first_msg.get('FromUserName', {}).get('string', ''),
+            'ToUserName': first_msg.get('ToUserName', {}).get('string', ''),
+            'MsgType': first_msg.get('MsgType'),
+            'Content': first_msg.get('Content', {}).get('string', '')
+        }
+        
+        return message_info
+        
+    except Exception as e:
+        print(f"提取消息信息失败: {e}")
+        return None
     
