@@ -77,13 +77,21 @@ class MappingManager:
 
     def tg_to_wx(self, tg_id):
         """
-        映射 Telegram ID 到微信 ID
+        映射 Telegram ID 到微信 ID（包含缓冲区搜索）
         :param tg_id: Telegram ID
         :return: 微信 ID 或 None
         """
         today = datetime.now()
         for i in range(3):  # 搜索范围为当前日期往前 3 天
             date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+            
+            # 首先检查缓冲区
+            if date in self.buffer:
+                for wx_id, mapped_tg_id in self.buffer[date].items():
+                    if mapped_tg_id == tg_id:
+                        return wx_id
+            
+            # 然后检查文件
             file_path = self._get_file_path(date)
             if os.path.exists(file_path):
                 with open(file_path, "r") as f:
@@ -95,13 +103,19 @@ class MappingManager:
 
     def wx_to_tg(self, wx_id):
         """
-        映射微信 ID 到 Telegram ID
+        映射微信 ID 到 Telegram ID（包含缓冲区搜索）
         :param wx_id: 微信 ID
         :return: Telegram ID 或 None
         """
         today = datetime.now()
         for i in range(3):  # 搜索范围为当前日期往前 3 天
             date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+            
+            # 首先检查缓冲区
+            if date in self.buffer and wx_id in self.buffer[date]:
+                return self.buffer[date][wx_id]
+            
+            # 然后检查文件
             file_path = self._get_file_path(date)
             if os.path.exists(file_path):
                 with open(file_path, "r") as f:
@@ -109,3 +123,9 @@ class MappingManager:
                 if wx_id in data:
                     return data[wx_id]
         return None
+
+    def force_save(self):
+        """
+        手动触发保存（可选功能）
+        """
+        self._save_to_file()
