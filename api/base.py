@@ -9,14 +9,13 @@ logger = logging.getLogger(__name__)
 
 # API请求函数
 def wechat_api(api_path: str, body: Dict[str, Any] = None, query_params: Dict[str, Any] = None):
-    api_url = f"{config.XXX_BASE_URL}{api_path}"
+    api_url = f"{config.BASE_URL}{api_path}"
     try:
         response = requests.post(
             url=api_url,
             json=body,  # 请求体数据
             params=query_params  # URL 查询参数
         )
-        
         if response.status_code == 200:
             logger.info(f"API调用成功: {api_path}")
             return response.json()
