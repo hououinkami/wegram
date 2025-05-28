@@ -99,14 +99,11 @@ def process_message(message_data: Dict[str, Any]) -> None:
         # 图片消息
         elif msg_type == 3:
             # 下载图片（企业微信用户无法下载）
-            if not "openim" in from_wxid:
-                success, filepath = download.get_image(
-                    msg_id=msg_id,
-                    from_wxid=from_wxid,
-                    data_json=content
-                )
-            else:
-                success = False
+            success, filepath = download.get_image(
+                msg_id=msg_id,
+                from_wxid=from_wxid,
+                data_json=content
+            )
 
             if success:
                 # 发送照片
@@ -127,14 +124,11 @@ def process_message(message_data: Dict[str, Any]) -> None:
         # 视频消息
         elif msg_type == 43:
             # 下载视频（企业微信用户无法下载）
-            if not "openim" in from_wxid:
-                success, filepath = download.get_video(
-                    msg_id=msg_id,
-                    from_wxid=from_wxid,
-                    data_json=content
-                )
-            else:
-                success = False
+            success, filepath = download.get_video(
+                msg_id=msg_id,
+                from_wxid=from_wxid,
+                data_json=content
+            )
 
             if success:
                 # 发送视频
@@ -151,7 +145,31 @@ def process_message(message_data: Dict[str, Any]) -> None:
                     chat_id=chat_id,
                     content=f"{sender_name}\n\[{config.type(msg_type)}\]"
                 )
-                       
+
+        # 文件消息
+        elif msg_type == 6:
+            # 下载文件
+            success, filepath = download.get_file(
+                msg_id=msg_id,
+                from_wxid=from_wxid,
+                data_json=content
+            )
+            if success:
+                # 发送文件
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=filepath,
+                    method="sendDocument",
+                    additional_payload={
+                        "caption": f"{sender_name}"
+                    }
+                )
+            else:
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=f"{sender_name}\n\[{config.type(msg_type)}\]"
+                )
+
         # 公众号消息
         elif msg_type == 5:
             url_items = format.extract_url_items(content)

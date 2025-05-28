@@ -4,6 +4,7 @@
 /video
 /sticker
 /msgid
+/file
 test.py
 config.py
 contact.json
