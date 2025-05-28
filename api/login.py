@@ -64,7 +64,7 @@ def awaken_login(wxid):
     return response
 
 def get_qr_code():
-    api_path="/Login/GetQR"
+    api_path="/Login/LoginGetQR"
     body={
         "DeviceID": "49c6a982f2c5abedcb8e78a55a59a8a7",
         "DeviceName": "\u30a2\u30af\u30bb\u30b9\u30dd\u30a4\u30f3\u30c8"
