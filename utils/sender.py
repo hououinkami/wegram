@@ -10,49 +10,113 @@ from typing import Dict, Any, Optional, Union
 from utils.contact import contact_manager
 from api import contact
 from api.base import wechat_api, telegram_api
+from utils.msgid import msgid_mapping
 from utils.sticker import get_sticker_info
 import config
 
 # 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
 
-# 从Telegram转发文本消息到微信API
-def forward_text_to_wx(chat_id: str, message_text: str) -> bool:
+# 处理Telegram更新中的消息
+def process_telegram_update(update: Dict[str, Any]) -> None:
+    # 处理消息
+    if "message" in update:
+        message = update["message"]
+        message_id = message["message_id"]
+        chat_id = str(message["chat"]["id"])
+        user_id = message["from"]["id"]
+        is_bot = message["from"].get("is_bot", False)
+        
+        # 判断是否为机器人消息
+        if is_bot:
+            logger.info(f"忽略来自机器人的消息")
+            return
+        
+        # 判断消息类型并处理
+        if "text" in message:        
+            # 处理特殊命令
+            if "/update" in message["text"]:
+                to_wxid = contact_manager.get_wxid_by_chatid(chat_id)
+                if not to_wxid:
+                    return False
+                user_info = contact.get_user_info(to_wxid)
+                contact.update_info(chat_id, user_info.name, user_info.avatar_url)
+                return
+            
+        # 转发消息
+        wx_api_response = forward_message_to_wx(chat_id, message)
+
+        # 将消息添加进映射
+        if wx_api_response:
+            add_send_msgid(wx_api_response, message_id)  
+
+# 转发函数
+def forward_message_to_wx(chat_id: str, message: dict) -> bool:
     to_wxid = contact_manager.get_wxid_by_chatid(chat_id)
     
     if not to_wxid:
+        logger.error(f"未找到chat_id {chat_id} 对应的微信ID")
         return False
+    
+    try:
+        # 判断消息类型并处理
+        if 'text' in message and not "reply_to_message" in message:
+            # 文本消息
+            return _send_text_message(to_wxid, message['text'])
+            
+        elif 'photo' in message:
+            # 发送附带文字
+            _send_text_message(to_wxid, message.get("caption", ""))
+            # 图片消息
+            return _send_photo_message(to_wxid, message['photo'])
+            
+        elif 'video' in message:
+            # 发送附带文字
+            _send_text_message(to_wxid, message.get("caption", ""))
+            # 视频消息
+            return _send_video_message(to_wxid, message['video'])
         
-    # 准备API请求数据
+        elif 'sticker' in message:
+            # 贴纸消息
+            return _send_sticker_message(to_wxid, message['sticker'])
+
+        elif "reply_to_message" in message:
+            # 回复消息
+            return _send_reply_message(to_wxid, message)
+            
+        else:
+            logger.warning(f"不支持的消息类型: {list(message.keys())}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"转发消息时出错: {e}")
+        return False
+
+
+def _send_text_message(to_wxid: str, text: str) -> bool:
+    """发送文本消息到微信"""
     payload = {
         "At": "",
-        "Content": message_text,
+        "Content": text,
         "ToWxid": to_wxid,
         "Type": 1,
         "Wxid": config.MY_WXID
     }
-    
     return wechat_api("/Msg/SendTxt", payload)
 
-# 从Telegram获取图片并转发到微信API
-def forward_photo_to_wx(chat_id: str, photo: list) -> bool:
-    to_wxid = contact_manager.get_wxid_by_chatid(chat_id)
-    
-    if not to_wxid:
-        return False
-        
-    # 从照片列表中获取最大尺寸的照片
+
+def _send_photo_message(to_wxid: str, photo: list) -> bool:
+    """发送图片消息到微信"""
     if not photo:
         logger.error("未收到照片数据")
         return False
-        
+    
     # 获取最大尺寸的照片文件ID
     file_id = photo[-1]["file_id"]  # 最后一个通常是最大尺寸
     
     try:
         image_base64 = get_file_base64(file_id)
         
-        # 准备API请求数据
         payload = {
             "Base64": image_base64,
             "ToWxid": to_wxid,
@@ -64,146 +128,90 @@ def forward_photo_to_wx(chat_id: str, photo: list) -> bool:
         logger.error(f"处理图片时出错: {e}")
         return False
 
-# 从Telegram获取视频并转发到微信API
-def forward_video_to_wx(chat_id: str, video) -> bool:
-    to_wxid = contact_manager.get_wxid_by_chatid(chat_id)
-    
-    if not to_wxid:
-        return False
-        
-    # 获取视频
+
+def _send_video_message(to_wxid: str, video: dict) -> bool:
+    """发送视频消息到微信"""
     if not video:
         logger.error("未收到视频数据")
         return False
-        
+    
     # 获取视频与缩略图文件ID
     file_id = video["file_id"]
     thumb_file_id = video["thumb"]["file_id"]
     duration = video["duration"]
     
-    
     try:
         video_base64 = get_file_base64(file_id)
         thumb_base64 = get_file_base64(thumb_file_id)
         
-        # 准备API请求数据
         payload = {
             "Base64": video_base64,
             "ImageBase64": thumb_base64,
             "PlayLength": int(duration),
             "ToWxid": to_wxid,
             "Wxid": config.MY_WXID
-        }        
+        }
+        
         return wechat_api("/Msg/SendVideo", payload)
     except Exception as e:
         logger.error(f"处理视频时出错: {e}")
         return False
 
-# 从Telegram转发贴纸消息到微信API
-def forward_sticker_to_wx(chat_id: str, md5: str, len: int) -> bool:
-    to_wxid = contact_manager.get_wxid_by_chatid(chat_id)
-    
-    if not to_wxid:
+def _send_sticker_message(to_wxid: str, sticker: dict) -> bool:
+    """发送贴纸消息到微信"""
+    if not sticker:
+        logger.error("未收到贴纸数据")
         return False
+            
+    # 提取贴纸的file_unique_id
+    file_unique_id = sticker.get("file_unique_id", "")
+    logger.info(f"贴纸file_unique_id: {file_unique_id}")
+    try:       
+        sticker_info = get_sticker_info(file_unique_id)
+
+        if sticker_info:
+            md5 = sticker_info.get("md5", "")
+            len = int(sticker_info.get("size", 0))
+            name = sticker_info.get("name", "")
+            logger.info(f"匹配到贴纸: {name}, md5: {md5}, size: {len}")
         
-    # 准备API请求数据
-    payload = {
+        payload = {
             "Md5": md5,
             "ToWxid": to_wxid,
             "TotalLen": len,
             "Wxid": config.MY_WXID
         }
-    
-    return wechat_api("/Msg/SendEmoji", payload)
+        return wechat_api("/Msg/SendEmoji", payload)
+    except Exception as e:
+        logger.error(f"处理贴纸时出错: {e}")
+        return False
 
-# 处理Telegram更新中的消息
-def process_telegram_update(update: Dict[str, Any]) -> None:
-    # 处理消息
-    if "message" in update:
-        message = update["message"]
-        chat_id = str(message["chat"]["id"])
-        user_id = message["from"]["id"]
-        is_bot = message["from"].get("is_bot", False)
-        
-        if is_bot:
-            logger.info(f"忽略来自机器人的消息")
-            return
-        
-        # 判断消息类型并处理
-        if "text" in message:
-            message_text = message["text"]
-            
-            # 处理特殊命令
-            if "/update" in message_text:
-                to_wxid = contact_manager.get_wxid_by_chatid(chat_id)
-    
-                if not to_wxid:
-                    return False
-                payload = {
-                    "Toxids": to_wxid,
-                    "Wxid": config.MY_WXID,
-                    "ChatRoom": ""
-                }
-                contact_info = wechat_api("/Friend/GetContractDetail", payload)
-                user_info = contact.get_user_info(to_wxid)
-                contact.update_info(chat_id, user_info.name, user_info.avatar_url)
-                return
-            logger.info(f"收到来自用户 {user_id} 在群组 {chat_id} 的文本消息: {message_text}")
-            forward_text_to_wx(chat_id, message_text)
-            
-        elif "photo" in message:
-            logger.info(f"收到来自用户 {user_id} 在群组 {chat_id} 的图片消息")
-            photo = message["photo"]
-            # 如果有图片说明，也一并转发
-            caption = message.get("caption", "")
-            
-            # 先转发图片
-            success = forward_photo_to_wx(chat_id, photo)
-            
-            # 如果有说明文字，也转发文字
-            if success and caption:
-                forward_text_to_wx(chat_id, caption)
-
-        elif "video" in message:
-            logger.info(f"收到来自用户 {user_id} 在群组 {chat_id} 的视频消息")
-            video = message["video"]
-            # 如果有视频说明，也一并转发
-            caption = message.get("caption", "")
-            
-            # 先转发视频
-            success = forward_video_to_wx(chat_id, video)
-            
-            # 如果有说明文字，也转发文字
-            if success and caption:
-                forward_text_to_wx(chat_id, caption)
-
-        elif "sticker" in message:
-            logger.info(f"收到来自用户 {user_id} 在群组 {chat_id} 的贴纸消息")
-            sticker = message["sticker"]
-            
-            # 提取贴纸的file_unique_id
-            file_unique_id = sticker.get("file_unique_id", "")
-            logger.info(f"贴纸file_unique_id: {file_unique_id}")         
-            
-            sticker_info = get_sticker_info(file_unique_id)
-            if sticker_info:
-                md5 = sticker_info.get("md5", "")
-                size = int(sticker_info.get("size", 0))
-                name = sticker_info.get("name", "")
-                logger.info(f"匹配到贴纸: {name}, md5: {md5}, size: {size}")
-                
-                forward_sticker_to_wx(chat_id, md5, size)
-                
-            else:
-                logger.info(f"未找到匹配的贴纸信息: {file_unique_id}")
-                
-        # 可以在这里添加其他类型消息的处理逻辑，例如：
-        # elif "document" in message:
-        #     # 处理文档消息
-        #     pass
-        else:
-            # 不支持的消息类型
-            logger.info(f"收到不支持的消息类型，来自用户 {user_id} 在群组 {chat_id}")
+def _send_reply_message(to_wxid: str, message: dict):
+    """发送回复消息到微信"""
+    if not "reply_to_message" in message:
+        logger.error("未收到回复信息数据")
+        return False
+    try:
+        send_text = message["text"]
+        reply_to_message = message["reply_to_message"]
+        reply_to_message_id = reply_to_message["message_id"]
+        reply_to_wx_msgid = msgid_mapping.tg_to_wx(reply_to_message_id)
+        if reply_to_wx_msgid is None:
+            logger.warning(f"警告：找不到TG消息ID {reply_to_message_id} 对应的微信消息映射")
+            # 处理找不到映射的情况，可能需要跳过或使用默认值
+            _send_text_message(to_wxid, send_text)
+        reply_to_text = reply_to_message.get("text", "")
+        reply_xml = f"""<appmsg appid="" sdkver="0"><title>{send_text}</title><des /><action /><type>57</type><showtype>0</showtype><soundtype>0</soundtype><mediatagname /><messageext /><messageaction /><content /><contentattr>0</contentattr><url /><lowurl /><dataurl /><lowdataurl /><songalbumurl /><songlyric /><appattach><totallen>0</totallen><attachid /><emoticonmd5 /><fileext /><aeskey /></appattach><extinfo /><sourceusername /><sourcedisplayname /><thumburl /><md5 /><statextstr /><refermsg><content>{reply_to_text}</content><type>1</type><svrid>{int(reply_to_wx_msgid["msgid"])}</svrid><chatusr>{reply_to_wx_msgid["fromwxid"]}</chatusr><fromusr>${to_wxid}</fromusr></refermsg></appmsg>"""
+        payload = {
+            "ToWxid": to_wxid,
+            "Type": 49,
+            "Wxid": config.MY_WXID,
+            "Xml": reply_xml
+        }
+        return wechat_api("/Msg/SendApp", payload)
+    except Exception as e:
+        logger.error(f"处理回复消息时出错: {e}")
+        return False
 
 # 获取文件的 Base64 编码
 def get_file_base64(file_id):
@@ -229,3 +237,28 @@ def get_file_base64(file_id):
     # 将图片转换为Base64
     file_base64 = base64.b64encode(file_response.content).decode('utf-8')
     return file_base64
+
+
+# 添加msgid映射
+def add_send_msgid(wx_api_response, tg_msgid):
+    data = wx_api_response.get("Data", {})
+    msg_list = data.get("List", [])
+    if msg_list == []:
+        # 查找第一个非空列表
+        for value in data.values():
+            if isinstance(value, list) and value:
+                msg_list = value
+    if msg_list:
+        new_msg_id = (msg_list[0].get("NewMsgId") or msg_list[0].get("newMsgId"))
+        if new_msg_id:
+            msgid_mapping.add(
+                tg_msg_id=tg_msgid,
+                wx_msg_id=new_msg_id,
+                from_wx_id=config.MY_WXID,
+                content=""
+            )
+        else:
+            logger.info("NewMsgId 不存在")
+    else:
+        logger.info("消息列表为空")
+        

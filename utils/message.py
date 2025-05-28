@@ -12,23 +12,27 @@ import config
 from api import contact, download
 from api.base import telegram_api
 from utils.contact import contact_manager
-from utils.quote import MappingManager
+from utils.msgid import msgid_mapping
 from utils import xml, format
 
-# 创建映射管理器实例
-msgid_mapping = MappingManager()
-
 def process_message(message_data: Dict[str, Any]) -> None:
+    logger.info(f"调试：：：{message_data}")
     message_info = extract_message(message_data)
+    
     if not message_info:
         return
     """处理微信消息"""
     try:
         msg_type = int(message_info['MsgType'])
         msg_id = message_info['MsgId']
+        new_msg_id = message_info['NewMsgId']
         from_wxid = message_info['FromUserName']
         content = message_info['Content']
-
+        
+        # 处理自己发的消息
+        if from_wxid == config.MY_WXID:
+            from_wxid = message_info['ToUserName']
+            
         # 判断是否为群聊消息
         if from_wxid.endswith('@chatroom'):
             # 群聊消息格式处理
@@ -54,10 +58,13 @@ def process_message(message_data: Dict[str, Any]) -> None:
             content = format.escape_markdown_chars(content)
         else:
             content = xml.xml_to_json(content)
+            if msg_type == 49:
+                msg_type = int(content['msg']['appmsg']['type'])
+
         logger.info(f"处理器收到消息: 类型={msg_type}, 发送者={sender_wxid}")
         logger.info(f"{content}")
         
-        if not from_wxid or not content or from_wxid == config.MY_WXID:
+        if not from_wxid or not content :
             logger.warning("缺少发送者ID或消息内容")
             return
 
@@ -71,8 +78,15 @@ def process_message(message_data: Dict[str, Any]) -> None:
         # 非群聊不显示发送者
         if "chatroom" in from_wxid or contact_dic["wxId"] == "wxid_not_in_json":
             sender_name = f">{sender_name}"
+            sender_name_no_md = f"{format.escape_html_chars(user_info.name)}"
         else:
             sender_name = ""
+            sender_name_no_md = ""
+
+        # 跳过未知消息
+        if not config.type(msg_type):
+            return
+        
 
         # 根据消息类型进行不同处理
         # 文本消息
@@ -139,9 +153,8 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 )
                        
         # 公众号消息
-        elif msg_type == 6:
+        elif msg_type == 5:
             url_items = format.extract_url_items(content)
-            logger.warning(f"{url_items}")
             response = telegram_api(
                 chat_id=chat_id,
                 content=f"{sender_name}\n{url_items}",
@@ -169,11 +182,13 @@ def process_message(message_data: Dict[str, Any]) -> None:
 
         # 聊天记录消息
         elif msg_type == 19:            
-            chat_history = f"\[{config.type(msg_type)}\]\n{process_chathistory(content)}"
+            chat_history = f"[{config.type(msg_type)}]\n{process_chathistory(content)}"
+            logger.warning(f"{chat_history}")
             if chat_history:
                 response = telegram_api(
                     chat_id=chat_id,
-                    content=f"{sender_name}\n{chat_history}",
+                    content=f"{sender_name_no_md}\n{chat_history}",
+                    parse_mode="HTML"
                 )
             else:
                 response = telegram_api(
@@ -182,10 +197,29 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 )
 
         # 引用消息
-        elif msg_type == 49:
+        elif msg_type == 57:
+            send_text = format.escape_markdown_chars(content["msg"]["appmsg"]["title"])
+            quote = content["msg"]["appmsg"]["refermsg"]
+            quote_type = int(quote["type"])
+            quote_newmsgid = quote["svrid"]
+            if quote_type == 1:
+                quote_text = quote["content"]
+            else:
+                quote_text = xml.xml_to_json(quote["content"])["msg"]["appmsg"]["title"]
+
+            if quote_newmsgid:
+                quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid)
+                if quote_tgmsgid:
+                    additional_payload={
+                        "reply_to_message_id": quote_tgmsgid
+                    }
+                else:
+                    additional_payload={}
+            
             response = telegram_api(
                 chat_id=chat_id,
-                content=f"{sender_name}\n{content}",
+                content=f"{sender_name}\n{send_text}",
+                additional_payload=additional_payload
             )
 
         # 其他消息
@@ -198,7 +232,12 @@ def process_message(message_data: Dict[str, Any]) -> None:
         # 储存消息ID
         if response and response.get('ok', False):
             tg_msgid = response['result']['message_id']
-            msgid_mapping.add(msg_id, tg_msgid)
+            msgid_mapping.add(
+                tg_msg_id=tg_msgid,
+                wx_msg_id=new_msg_id,
+                from_wx_id=sender_wxid,
+                content=content
+            )
     except Exception as e:
         logger.error(f"处理消息时出错: {e}", exc_info=True)
 
@@ -220,41 +259,41 @@ def process_chathistory(content):
     start_date = sourcetimes_formatted[0].strftime("%Y-%m-%d")
     end_date = sourcetimes_formatted[-1].strftime("%Y-%m-%d")
     date_range = f"{start_date} ～ {end_date}" if start_date != end_date else start_date
-    
+
     # 构建聊天记录文本
-    chat_history = [f">{format.escape_markdown_chars(title)}\n>件数：{count}\n>日期：{format.escape_markdown_chars(date_range)}\n**>测试"]
+    chat_history = [f"{format.escape_html_chars(title)}\n件数：{count}\n日期：{format.escape_html_chars(date_range)}"]
     
+    # 判断起止日期是否相同
+    dates = {datetime.strptime(item['sourcetime'], "%Y-%m-%d %H:%M:%S").date() for item in data_items}
+    same_date = len(dates) == 1
+
     for item in data_items:
         sourcename = item['sourcename']
-        sourcetime = datetime.strptime(item['sourcetime'], "%Y-%m-%d %H:%M:%S").strftime("%m/%d %H:%M")
+        dt = datetime.strptime(item['sourcetime'], "%Y-%m-%d %H:%M:%S")
+
+        # 根据是否同一天选择格式
+        sourcetime = dt.strftime("%H:%M" if same_date else "%m/%d %H:%M")
+    
         datadesc = item.get('datadesc', "[不明]") if item['datatype'] != '1' else item.get('datadesc', "[不明]")
-        chat_history.append(f">👤{format.escape_markdown_chars(sourcename)} \({sourcetime}\)\n>{format.escape_markdown_chars(datadesc)}")
+        chat_history.append(f"👤{format.escape_html_chars(sourcename)} ({sourcetime})\n{format.escape_html_chars(datadesc)}")
 
     # 返回格式化后的文本
-    return "\n".join(chat_history)
+    chat_history = "\n".join(chat_history)
+    return f"<blockquote expandable>{chat_history}</blockquote>"
 
 # 提取回调信息
 def extract_message(data):
-    """安全地提取第一条消息的关键信息"""
     try:
-        if data.get('Message') == "当前未有新消息":
-            return None
-        # 检查是否有消息
-        add_msgs = data.get('Data', {}).get('AddMsgs', [])
-        if not add_msgs:
-            print("没有新消息")
-            return None
-        
-        # 获取第一条消息
-        first_msg = add_msgs[0]
-        
         # 提取所需字段
         message_info = {
-            'MsgId': first_msg.get('MsgId'),
-            'FromUserName': first_msg.get('FromUserName', {}).get('string', ''),
-            'ToUserName': first_msg.get('ToUserName', {}).get('string', ''),
-            'MsgType': first_msg.get('MsgType'),
-            'Content': first_msg.get('Content', {}).get('string', '')
+            'MsgId': data.get('MsgId'),
+            'NewMsgId': data.get('NewMsgId'),
+            'FromUserName': data.get('FromUserName', {}).get('string', ''),
+            'ToUserName': data.get('ToUserName', {}).get('string', ''),
+            'MsgType': data.get('MsgType'),
+            'Content': data.get('Content', {}).get('string', ''),
+            'PushContent': data.get('PushContent')
+
         }
         
         return message_info
