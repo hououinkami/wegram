@@ -9,6 +9,9 @@ class MappingManager:
         初始化映射管理器
         :param save_interval: 保存文件的时间间隔（单位：秒）
         """
+        
+        # 初始化
+        print(f"✅ 初始化 MappingManager 单例 (ID: {id(self)})")
         self.base_path = "./msgid"
         self.mapping = {
             "test_wx_id_1": "test_tg_id_1",
@@ -129,3 +132,6 @@ class MappingManager:
         手动触发保存（可选功能）
         """
         self._save_to_file()
+
+# 创建映射管理器实例
+msgid_mapping = MappingManager()
