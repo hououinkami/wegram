@@ -113,3 +113,25 @@ def escape_markdown_chars(text):
             result += char
             
     return result
+
+def escape_html_chars(text):
+    """
+    转义文本中的HTML特殊字符，用于Telegram Bot API的HTML格式
+    
+    Args:
+        text (str): 需要转义的文本
+        
+    Returns:
+        str: 转义后的文本
+    """
+    if not isinstance(text, str):
+        return str(text)
+    
+    # 先处理 & 符号（必须最先处理，避免重复转义）
+    text = text.replace('&', '&amp;')
+    
+    # 处理 < 和 > 符号
+    text = text.replace('<', '&lt;')
+    text = text.replace('>', '&gt;')
+    
+    return text
