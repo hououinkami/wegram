@@ -13,10 +13,12 @@ logger = logging.getLogger(__name__)
 
 # 常量定义
 WXID = config.MY_WXID
-IMAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "image")
-VIDEO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "video")
-EMOJI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sticker")
-FILE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "file")
+DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "download")
+IMAGE_DIR = os.path.join(DOWNLOAD_DIR, "image")
+VIDEO_DIR = os.path.join(DOWNLOAD_DIR, "video")
+EMOJI_DIR = os.path.join(DOWNLOAD_DIR, "sticker")
+FILE_DIR = os.path.join(DOWNLOAD_DIR, "file")
+VOICE_DIR = os.path.join(DOWNLOAD_DIR, "voice")
 
 def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
     return chunked_download(
@@ -120,6 +122,64 @@ def get_emoji(data_json) -> Tuple[bool, str]:
         logger.exception(f"下载失败: {str(e)}")
         return False, f"下载失败: {str(e)}"
 
+def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
+    try:
+        md5 = data_json["msg"]["voicemsg"]["aeskey"]
+        data_length = int(data_json["msg"]["voicemsg"]["length"])
+        bufid = data_json["msg"]["voicemsg"]["bufid"]
+
+        # 文件名和路径
+        filename = f"{md5}.silk"
+        filepath = os.path.join(VOICE_DIR, filename)
+
+        # 检查文件是否已存在
+        if os.path.exists(filepath):
+            logger.info(f"文件已存在，跳过下载: {filepath}")
+            return True, filepath
+        
+        # 构建请求参数
+        payload = {
+            "Bufid": str(bufid),
+            "FromUserName": str(from_user_name),
+            "Length": int(data_length),
+            "MsgId": int(msg_id),
+            "Wxid": str(WXID)
+        }
+
+        # 发送请求
+        response_data = wechat_api("/Tools/DownloadVoice", payload)
+        logger.warning(f"语音：：：{response_data}")
+        # 检查响应数据结构
+        if (response_data and "Data" in response_data):
+            # 检查是否有直接的url
+            if "data" in response_data["Data"] and "buffer" in response_data["Data"]["data"]:
+                voice_base64 = response_data["Data"]["data"]["buffer"]
+            else:
+                logger.error("响应数据中找不到buffer")
+                return False, "响应数据中找不到buffer"
+        else:
+            logger.error("响应数据格式不正确")
+            return False, "响应数据格式不正确"
+        
+        # 确保目录存在
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # 下载文件
+        all_binary_data = bytearray()
+        if voice_base64:
+            # 移除可能的base64头部
+            if ',' in voice_base64:
+                voice_base64 = voice_base64.split(',', 1)[1]
+            # 解码base64为二进制数据
+            voice_binary_data = base64.b64decode(voice_base64)
+            all_binary_data.extend(voice_binary_data)
+            logger.info(f"语音下载成功，大小: {len(voice_binary_data)} 字节")
+                
+    except Exception as e:
+        logger.exception(f"下载失败: {str(e)}")
+        return False, f"下载失败: {str(e)}"
+
+# 分段下载函数
 def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict, file_key: str, file_extension: str, save_dir: str) -> Tuple[bool, str]:
     try:
         # 提取文件信息
