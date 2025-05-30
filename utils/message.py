@@ -13,7 +13,7 @@ from api import contact, download
 from api.base import telegram_api
 from utils.contact import contact_manager
 from utils.msgid import msgid_mapping
-from utils import xml, format
+from utils import format
 
 def process_message(message_data: Dict[str, Any]) -> None:
     logger.info(f"调试：：：{message_data}")
@@ -28,8 +28,9 @@ def process_message(message_data: Dict[str, Any]) -> None:
         new_msg_id = message_info['NewMsgId']
         from_wxid = message_info['FromUserName']
         content = message_info['Content']
+        push_content = message_info['PushContent']
         
-        # 处理自己发的消息
+        # 转发自己的消息
         if from_wxid == config.MY_WXID:
             from_wxid = message_info['ToUserName']
             
@@ -44,20 +45,23 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 # 更新content为实际消息内容
                 content = content_part
             else:
-                # 如果没有换行符，可能是系统消息
-                sender_wxid = ''
+                # 如果没有换行符，可能是转发自己发的消息
+                sender_wxid = message_info['FromUserName'] if message_info['FromUserName'] == config.MY_WXID else ""
         else:
             # 私聊消息，发送者就是FromUserName
             sender_wxid = from_wxid
 
         user_info = contact.get_user_info(sender_wxid)
         sender_name = format.escape_markdown_chars(user_info.name)
+        # 处理企业微信用户
+        if sender_name == "未知用户" and push_content:
+            sender_name = push_content.split(" : ")[0]
         
         # 不是文本则进行XML解析
         if msg_type == 1:
             content = format.escape_markdown_chars(content)
         else:
-            content = xml.xml_to_json(content)
+            content = format.xml_to_json(content)
             if msg_type == 49:
                 msg_type = int(content['msg']['appmsg']['type'])
 
@@ -146,6 +150,31 @@ def process_message(message_data: Dict[str, Any]) -> None:
                     content=f"{sender_name}\n\[{config.type(msg_type)}\]"
                 )
 
+        # 语音消息
+        elif msg_type == 34:
+            # 下载语音
+            success, filepath = download.get_voice(
+                msg_id=msg_id,
+                data_json=content,
+                from_user_name=message_info['FromUserName']
+            )
+
+            if success:
+                # 发送语音
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=filepath,
+                    method="sendDocument",
+                    additional_payload={
+                        "caption": f"{sender_name}"
+                    }
+                )
+            else:
+                response = telegram_api(
+                    chat_id=chat_id,
+                    content=f"{sender_name}\n\[{config.type(msg_type)}\]"
+                )
+                
         # 文件消息
         elif msg_type == 6:
             # 下载文件
@@ -223,7 +252,7 @@ def process_message(message_data: Dict[str, Any]) -> None:
             if quote_type == 1:
                 quote_text = quote["content"]
             else:
-                quote_text = xml.xml_to_json(quote["content"])["msg"]["appmsg"]["title"]
+                quote_text = format.xml_to_json(quote["content"])["msg"]["appmsg"]["title"]
 
             if quote_newmsgid:
                 quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid)
@@ -239,7 +268,27 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 content=f"{sender_name}\n{send_text}",
                 additional_payload=additional_payload
             )
-
+        
+        # 撤回
+        elif msg_type == 10002:
+            revoke_msg = content["sysmsg"]["revokemsg"]
+            send_text = revoke_msg["replacemsg"]
+            quote_newmsgid = revoke_msg["newmsgid"]
+            if quote_newmsgid:
+                quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid)
+                if quote_tgmsgid:
+                    additional_payload={
+                        "reply_to_message_id": quote_tgmsgid
+                    }
+                else:
+                    additional_payload={}
+            
+            response = telegram_api(
+                chat_id=chat_id,
+                content=f"{sender_name}\n{send_text}",
+                additional_payload=additional_payload
+            )
+            
         # 其他消息
         else:
             response = telegram_api(
@@ -250,6 +299,10 @@ def process_message(message_data: Dict[str, Any]) -> None:
         # 储存消息ID
         if response and response.get('ok', False):
             tg_msgid = response['result']['message_id']
+            if msg_type == 1:
+                content=content
+            else:
+                content=""
             msgid_mapping.add(
                 tg_msg_id=tg_msgid,
                 wx_msg_id=new_msg_id,
@@ -261,7 +314,7 @@ def process_message(message_data: Dict[str, Any]) -> None:
 
 # 处理聊天记录
 def process_chathistory(content):
-    chat_data = xml.xml_to_json(content["msg"]["appmsg"]["recorditem"])
+    chat_data = format.xml_to_json(content["msg"]["appmsg"]["recorditem"])
     chat_json = chat_data["recordinfo"]
     
     # 提取标题和件数
@@ -311,7 +364,6 @@ def extract_message(data):
             'MsgType': data.get('MsgType'),
             'Content': data.get('Content', {}).get('string', ''),
             'PushContent': data.get('PushContent')
-
         }
         
         return message_info
