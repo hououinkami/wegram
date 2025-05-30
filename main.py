@@ -5,36 +5,74 @@
 微信消息接收服务
 """
 
-import os
 import logging
+from logging.handlers import RotatingFileHandler
+import os
 from datetime import datetime
 
+class DailyRotatingHandler(RotatingFileHandler):
+    """按天切换的文件处理器"""
+
+    def __init__(self, log_dir, encoding='utf-8'):
+        self.log_dir = log_dir
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        
+        # 获取今天的文件名
+        filename = self._get_filename()
+        
+        # 使用 RotatingFileHandler，但不设置大小限制
+        super().__init__(
+            filename=filename,
+            mode='a',  # 追加模式
+            maxBytes=0,  # 不按大小轮转
+            backupCount=0,  # 不保留备份（我们手动管理）
+            encoding=encoding
+        )
+        
+        self.current_date = datetime.now().strftime("%Y-%m-%d")
+    
+    def _get_filename(self):
+        """获取当前日期的文件名"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        return os.path.join(self.log_dir, f"{today}.log")
+    
+    def shouldRollover(self, record):
+        """检查是否应该轮转（当日期变化时）"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        return today != self.current_date
+    
+    def doRollover(self):
+        """执行轮转"""
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        
+        # 更新到新的日期文件
+        self.current_date = datetime.now().strftime("%Y-%m-%d")
+        self.baseFilename = self._get_filename()
+        
+        # 以追加模式打开新文件
+        if not self.delay:
+            self.stream = self._open()
+
 def setup_logging():
-    """设置按天生成日志文件的配置"""
-    # 获取当前脚本目录并创建 logs 文件夹
+    """设置按天自动切换的日志文件配置"""
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    # 按天生成日志文件名
-    today_date = datetime.now().strftime("%Y-%m-%d")
-    log_file = os.path.join(log_dir, f"{today_date}.log")
-
+    
     # 移除所有现有处理器
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
 
-    # 配置根日志记录器
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_file, mode='a', encoding='utf-8'),  # mode='a' 表示追加内容
+            DailyRotatingHandler(log_dir),
             logging.StreamHandler()
         ]
     )
 
-    # 确保所有现有的记录器都正确配置
     for logger_name in logging.root.manager.loggerDict:
         logger = logging.getLogger(logger_name)
         logger.propagate = True
@@ -85,19 +123,19 @@ def module_monitor_task():
     # 初始化记录 config.py 文件的最后修改时间
     if os.path.exists(config_path):
         file_mtimes[config_path] = os.path.getmtime(config_path)
-        logger.info("开始监控文件: config.py")
+        logger.info("开始监控配置文件: config.py")
     else:
         logger.warning("config.py 文件不存在，无法监控")
     
     # 初始化监控文件夹中的 Python 文件
     for folder_name, folder_path in folders.items():
         if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            logger.info(f"开始监控模块文件夹: {folder_name}")
             for filename in os.listdir(folder_path):
                 if filename.endswith('.py'):
                     filepath = os.path.join(folder_path, filename)
                     file_mtimes[filepath] = os.path.getmtime(filepath)
                     module_name = f"{folder_name}.{filename[:-3]}"
-                    logger.info(f"开始监控模块: {module_name}")
         else:
             logger.warning(f"{folder_name} 文件夹不存在，无法监控: {folder_path}")
     
@@ -181,7 +219,6 @@ def import_service_module(module_name):
             return sys.modules[full_module_name]
         else:
             module = importlib.import_module(full_module_name)
-            logger.info(f"成功导入模块: {full_module_name}")
             return module
             
     except ImportError as e:
