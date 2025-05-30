@@ -1,10 +1,7 @@
 .DS_Store
 /logs
-/image
-/video
-/sticker
+/download
 /msgid
-/file
 test.py
 config.py
 contact.json
