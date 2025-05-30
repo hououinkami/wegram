@@ -57,16 +57,12 @@ def telegram_polling_thread():
             time.sleep(config.POLLING_INTERVAL)
 
 def main():
-    """主函数"""
-    logger.info("主函数开始执行")
-    
+    """主函数"""    
     try:
         # 启动Telegram轮询线程
         polling_thread = threading.Thread(target=telegram_polling_thread, daemon=True)
         polling_thread.start()
         logger.info("Telegram轮询线程已启动")
-        
-        logger.info("仅启动Telegram轮询服务")
             
         # 保持主线程运行
         try:

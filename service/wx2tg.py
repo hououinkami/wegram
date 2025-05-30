@@ -71,6 +71,7 @@ class WxMessageHandler(http.server.BaseHTTPRequestHandler):
         return self.rfile.read(content_length)
     
     def _process_callback_data(self, callback_data: Dict[str, Any]) -> Dict[str, Any]:
+        logger.warning(f"#####回调数据：{callback_data}")
         """处理回调数据"""
         try:
             # 检查是否无新消息
@@ -101,7 +102,6 @@ class WxMessageHandler(http.server.BaseHTTPRequestHandler):
                 try:
                     message.process_message(msg)
                     processed_count += 1
-                    logger.info(f"处理消息: {msg_id}")
                 except Exception as e:
                     logger.error(f"处理消息 {msg_id} 失败: {e}")
             
