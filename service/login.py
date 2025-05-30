@@ -32,7 +32,7 @@ def check_login_status():
         # 检查是否存在"Data"键
         if response_json.get("Data") is not None:
             # 登录状态正常
-            logger.info("登录状态正常")
+            logger.info("🟢登录状态正常")
             
             # 如果之前是离线状态，发送上线通知
             if is_logged_in is False:
@@ -40,13 +40,12 @@ def check_login_status():
                     chat_id=config.CHAT_ID,
                     content="🟢WeChatがオンラインしました",
                 )
-                logger.info("已发送上线通知")
-            
+
             is_logged_in = True
             return True
         else:
             # 登录已失效
-            logger.info("登录已失效")
+            logger.info("🔴登录已失效")
             
             # 只有在首次检测到离线或从在线状态变为离线状态时才发送通知
             if is_logged_in is not False:  # None(初始状态)或True(之前在线)
@@ -54,7 +53,6 @@ def check_login_status():
                     chat_id=config.CHAT_ID,
                     content="🔴WeChatがオフラインしました",
                 )
-                logger.info("已发送离线通知")
                 # push_qr_code()
             
             is_logged_in = False
@@ -62,7 +60,7 @@ def check_login_status():
     except Exception as e:
         logger.error(f"检查登录状态时出错: {e}")
             
-def periodic_check(interval=300):
+def periodic_check(interval=600):
     """
     定期执行检查的函数
     参数:
