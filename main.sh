@@ -74,8 +74,18 @@ stop_process() {
             kill -9 $pid 2>/dev/null
             sleep 1
         fi
+        
+        # 再次检查进程是否已停止
+        if ps -p $pid > /dev/null 2>&1; then
+            echo "❌ 进程终止失败"
+            return 1
+        else
+            echo "✅ 进程已成功终止"
+            return 0
+        fi
     else
         echo "没有找到运行中的 $script_name 进程"
+        return 0
     fi
 }
 
@@ -120,6 +130,58 @@ manage_main() {
     fi
 }
 
+# 只启动服务
+start_main() {
+    local script_name=$(basename $MAIN_PATH)
+    echo "启动 $script_name 服务..."
+    
+    # 检查进程是否已经在运行
+    if check_process_running $script_name; then
+        local pid=$(get_process_pid $script_name)
+        echo "⚠️ $script_name 服务已在运行，PID: $pid"
+        echo "如需重启，请使用 restart 选项"
+        return 1
+    fi
+    
+    # 启动服务
+    start_process $MAIN_PATH $LOG_FILE
+    
+    # 等待服务初始化
+    echo "等待服务初始化..."
+    sleep 5
+    
+    # 获取PID
+    local pid=$(get_process_pid $script_name)
+    
+    # 检查服务是否正常运行
+    if [ -n "$pid" ] && ps -p $pid > /dev/null 2>&1; then
+        # 检查日志中是否有错误信息
+        if grep -i "error\|exception\|failed\|traceback" $LOG_FILE > /dev/null; then
+            echo "⚠️ $script_name 进程已启动，但日志中包含错误信息:"
+            grep -i -A 3 -B 1 "error\|exception\|failed\|traceback" $LOG_FILE | head -n 10
+            echo "完整日志路径: $LOG_FILE"
+        else
+            echo "✅ $script_name 服务已成功启动，PID: $pid"
+            echo "日志保存在: $LOG_FILE"
+        fi
+    else
+        echo "❌ $script_name 服务启动失败，查看错误日志:"
+        cat $LOG_FILE | tail -n 15
+    fi
+}
+
+# 只停止服务
+stop_main() {
+    local script_name=$(basename $MAIN_PATH)
+    echo "停止 $script_name 服务..."
+    
+    if check_process_running $script_name; then
+        stop_process $script_name
+    else
+        echo "$script_name 服务未运行"
+    fi
+}
+
 # 显示服务状态和日志摘要
 show_status() {
     echo "\n当前服务状态:"
@@ -139,23 +201,64 @@ show_status() {
     else
         echo "❌ $main_name 服务未运行"
     fi
+}
 
+# 显示帮助信息
+show_help() {
+    echo "===== 消息转发服务管理脚本 ====="
+    echo "用法: $0 [选项]"
+    echo ""
+    echo "选项:"
+    echo "  start     - 启动服务（如果已运行则提示）"
+    echo "  stop      - 停止服务"
+    echo "  restart   - 重启服务（默认行为）"
+    echo "  status    - 显示服务状态"
+    echo "  help      - 显示此帮助信息"
+    echo ""
+    echo "无参数运行时默认执行重启操作"
+    echo "================================"
 }
 
 # 主函数
 main() {
+    local action=${1:-restart}  # 默认为restart
+    
     echo "===== 消息转发服务管理 ====="
     echo "开始时间: $(date)"
+    echo "执行操作: $action"
+    echo ""
     
-    # 管理服务
-    manage_main
-    
-    # 显示最终状态
-    show_status
+    case $action in
+        "start")
+            start_main
+            show_status
+            ;;
+        "stop")
+            stop_main
+            show_status
+            ;;
+        "restart")
+            manage_main
+            show_status
+            ;;
+        "status")
+            show_status
+            ;;
+        "help"|"-h"|"--help")
+            show_help
+            return 0
+            ;;
+        *)
+            echo "❌ 未知选项: $action"
+            echo ""
+            show_help
+            return 1
+            ;;
+    esac
     
     echo "\n操作完成: $(date)"
     echo "=========================="
 }
 
-# 执行主函数
-main
+# 执行主函数，传递所有命令行参数
+main "$@"

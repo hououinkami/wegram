@@ -14,6 +14,7 @@ class UserInfo:
     def __init__(self, name, avatar_url):
         self.name = name
         self.avatar_url = avatar_url
+
 def get_user_info(towxids):
     # 构建请求体
     body = {

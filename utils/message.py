@@ -3,11 +3,13 @@
 微信消息处理器 - 处理从主服务接收的消息和Telegram消息
 """
 import logging
+import asyncio
+from typing import Dict, Any, Optional
+
 # 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
 
 from datetime import datetime
-from typing import Dict, Any, Optional
 import config
 from api import contact, download
 from api.base import telegram_api
@@ -15,24 +17,66 @@ from utils.contact import contact_manager
 from utils.msgid import msgid_mapping
 from utils import format
 
-def process_message(message_data: Dict[str, Any]) -> None:
-    logger.info(f"调试：：：{message_data}")
-    message_info = extract_message(message_data)
-    
-    if not message_info:
-        return
-    """处理微信消息"""
+# 全局变量存储主事件循环
+_main_loop = None
+
+def set_main_loop(loop):
+    """设置主事件循环"""
+    global _main_loop
+    _main_loop = loop
+    logger.info("主事件循环已设置")
+
+def get_main_loop():
+    """获取主事件循环"""
+    return _main_loop
+
+async def _create_group_for_contact_async(wxid: str, contact_name: str, avatar_url: str = None) -> Optional[int]:
+    """异步创建群组"""
+    try:
+        logger.info(f"开始为 {wxid} 创建群组，名称: {contact_name}")
+        
+        # 参数验证
+        if not wxid or not contact_name:
+            logger.error(f"参数无效: wxid={wxid}, contact_name={contact_name}")
+            return None
+        
+        # 使用异步版本 - 直接调用，不使用create_task
+        result = await contact_manager.create_group_for_contact_async(
+            wxid=wxid,
+            contact_name=contact_name,
+            avatar_url=avatar_url
+        )
+        
+        logger.info(f"create_group_for_contact_async返回结果: {result}")
+        
+        if result and result.get('success'):
+            chat_id = result['chat_id']
+            logger.info(f"群组创建成功: {wxid} -> {chat_id}")
+            return chat_id
+        else:
+            error_msg = result.get('error', '未知错误') if result else '返回结果为空'
+            logger.error(f"群组创建失败: {wxid}, 错误: {error_msg}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"创建群组异常: {e}", exc_info=True)
+        return None
+
+async def _process_message_async(message_info: Dict[str, Any]) -> None:
+    """异步处理单条消息"""
     try:
         msg_type = int(message_info['MsgType'])
         msg_id = message_info['MsgId']
         new_msg_id = message_info['NewMsgId']
         from_wxid = message_info['FromUserName']
+        to_wxid = message_info['ToUserName']
         content = message_info['Content']
         push_content = message_info['PushContent']
+        create_time = message_info['CreateTime']
         
         # 转发自己的消息
         if from_wxid == config.MY_WXID:
-            from_wxid = message_info['ToUserName']
+            from_wxid = to_wxid
             
         # 判断是否为群聊消息
         if from_wxid.endswith('@chatroom'):
@@ -68,16 +112,38 @@ def process_message(message_data: Dict[str, Any]) -> None:
         logger.info(f"处理器收到消息: 类型={msg_type}, 发送者={sender_wxid}")
         logger.info(f"{content}")
         
-        if not from_wxid or not content :
+        if not from_wxid or not content:
             logger.warning("缺少发送者ID或消息内容")
             return
 
         # 读取contact映射
-        contact_dic = contact_manager.get_contact(from_wxid)
+        contact_dic = await contact_manager.get_contact(from_wxid)
         if contact_dic and contact_dic["isReceive"]:
             chat_id = contact_dic["chatId"]
         else:
-            return
+            # 检查是否允许自动创建群组
+            auto_create = getattr(config, 'AUTO_CREATE_GROUPS', True)
+            if not auto_create or from_wxid == config.MY_WXID:
+                logger.info(f"自动创建群组已禁用，跳过: {from_wxid}")
+                return
+            
+            # 创建群组
+            logger.info(f"未找到映射关系，为 {from_wxid} 创建群组")
+            
+            # 获取联系人信息
+            contact_name = sender_name
+            avatar_url = user_info.avatar_url
+            
+            chat_id = await _create_group_for_contact_async(from_wxid, contact_name, avatar_url)
+            if not chat_id:
+                logger.warning(f"无法创建聊天群组: {from_wxid}")
+                return
+            
+            # 重新获取contact信息
+            contact_dic = await contact_manager.get_contact(from_wxid)
+            if not contact_dic:
+                logger.error(f"创建群组后仍无法获取contact信息: {from_wxid}")
+                return
         
         # 非群聊不显示发送者
         if "chatroom" in from_wxid or contact_dic["wxId"] == "wxid_not_in_json":
@@ -90,19 +156,18 @@ def process_message(message_data: Dict[str, Any]) -> None:
         # 跳过未知消息
         if not config.type(msg_type):
             return
-        
 
         # 根据消息类型进行不同处理
+        response = None
+        
         # 文本消息
         if msg_type == 1:
-            # 发送消息到Telegram
             response = telegram_api(
                 chat_id=chat_id,
                 content=f"{sender_name}\n{content}",
             )
         # 图片消息
         elif msg_type == 3:
-            # 下载图片（企业微信用户无法下载）
             success, filepath = download.get_image(
                 msg_id=msg_id,
                 from_wxid=from_wxid,
@@ -110,7 +175,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
             )
 
             if success:
-                # 发送照片
                 response = telegram_api(
                     chat_id=chat_id,
                     content=filepath,
@@ -127,7 +191,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
         
         # 视频消息
         elif msg_type == 43:
-            # 下载视频（企业微信用户无法下载）
             success, filepath = download.get_video(
                 msg_id=msg_id,
                 from_wxid=from_wxid,
@@ -135,7 +198,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
             )
 
             if success:
-                # 发送视频
                 response = telegram_api(
                     chat_id=chat_id,
                     content=filepath,
@@ -152,7 +214,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
 
         # 语音消息
         elif msg_type == 34:
-            # 下载语音
             success, filepath = download.get_voice(
                 msg_id=msg_id,
                 data_json=content,
@@ -160,7 +221,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
             )
 
             if success:
-                # 发送语音
                 response = telegram_api(
                     chat_id=chat_id,
                     content=filepath,
@@ -177,14 +237,12 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 
         # 文件消息
         elif msg_type == 6:
-            # 下载文件
             success, filepath = download.get_file(
                 msg_id=msg_id,
                 from_wxid=from_wxid,
                 data_json=content
             )
             if success:
-                # 发送文件
                 response = telegram_api(
                     chat_id=chat_id,
                     content=filepath,
@@ -212,7 +270,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
             success, filepath = download.get_emoji(content)
 
             if success:
-                # 发送视频
                 response = telegram_api(
                     chat_id=chat_id,
                     content=filepath,
@@ -298,6 +355,7 @@ def process_message(message_data: Dict[str, Any]) -> None:
         
         # 储存消息ID
         if response and response.get('ok', False):
+            logger.warning(f"{response}")
             tg_msgid = response['result']['message_id']
             if msg_type == 1:
                 content=content
@@ -305,12 +363,15 @@ def process_message(message_data: Dict[str, Any]) -> None:
                 content=""
             msgid_mapping.add(
                 tg_msg_id=tg_msgid,
-                wx_msg_id=new_msg_id,
                 from_wx_id=sender_wxid,
+                to_wx_id=to_wxid,
+                wx_msg_id=new_msg_id,
+                client_msg_id=0,
+                create_time=create_time,
                 content=content
             )
     except Exception as e:
-        logger.error(f"处理消息时出错: {e}", exc_info=True)
+        logger.error(f"异步消息处理失败: {e}", exc_info=True)
 
 # 处理聊天记录
 def process_chathistory(content):
@@ -363,12 +424,68 @@ def extract_message(data):
             'ToUserName': data.get('ToUserName', {}).get('string', ''),
             'MsgType': data.get('MsgType'),
             'Content': data.get('Content', {}).get('string', ''),
-            'PushContent': data.get('PushContent')
+            'PushContent': data.get('PushContent', ''),
+            'CreateTime': data.get('CreateTime'),
         }
         
         return message_info
         
     except Exception as e:
-        print(f"提取消息信息失败: {e}")
+        logger.error(f"提取消息信息失败: {e}")
         return None
+
+def _schedule_in_main_loop(coro):
+    """在主事件循环中调度协程"""
+    main_loop = get_main_loop()
+    if main_loop and not main_loop.is_closed():
+        # 使用 call_soon_threadsafe 来在主循环中调度任务
+        future = asyncio.run_coroutine_threadsafe(coro, main_loop)
+        return future
+    else:
+        logger.error("主事件循环不可用")
+        return None
+
+def process_message(message_data: Dict[str, Any]) -> None:
+    """处理微信消息 - 同步入口，将任务提交到主事件循环"""
+    logger.info(f"调试：：：{message_data}")
     
+    try:
+        # 提取消息信息
+        message_info = extract_message(message_data)
+        if not message_info:
+            logger.error("提取消息信息失败")
+            return
+        
+        # 首先尝试获取当前运行的事件循环
+        try:
+            current_loop = asyncio.get_running_loop()
+            logger.debug("检测到当前运行的事件循环")
+            
+            # 检查是否是主事件循环
+            main_loop = get_main_loop()
+            if current_loop == main_loop:
+                # 在主事件循环中，直接创建任务
+                logger.debug("在主事件循环中创建消息处理任务")
+                current_loop.create_task(_process_message_async(message_info))
+                return
+            else:
+                # 在其他事件循环中，需要调度到主循环
+                logger.debug("在非主事件循环中，调度到主循环")
+                future = _schedule_in_main_loop(_process_message_async(message_info))
+                if future:
+                    logger.debug("消息处理任务已调度到主循环")
+                return
+                
+        except RuntimeError:
+            # 没有运行的事件循环，尝试调度到主循环
+            logger.debug("没有当前事件循环，尝试调度到主循环")
+            future = _schedule_in_main_loop(_process_message_async(message_info))
+            if future:
+                logger.debug("消息处理任务已调度到主循环")
+                return
+            else:
+                logger.warning("无法调度到主循环，消息处理失败")
+                return
+                
+    except Exception as e:
+        logger.error(f"提交消息处理任务失败: {e}")

@@ -1,0 +1,4 @@
+request
+telethon
+cryptg
+pyaes

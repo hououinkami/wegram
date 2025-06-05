@@ -65,7 +65,7 @@ class MappingManager:
             with open(file_path, "w", encoding='utf-8') as f:
                 json.dump({"tgToWxMapping": {}}, f, ensure_ascii=False)
 
-    def add(self, tg_msg_id, wx_msg_id, from_wx_id, content):
+    def add(self, tg_msg_id, from_wx_id, to_wx_id, wx_msg_id, client_msg_id, create_time, content):
         """
         添加TG消息ID到微信消息的映射 - 实时存储
         :param tg_msg_id: Telegram 消息ID（数字）
@@ -77,8 +77,11 @@ class MappingManager:
         tg_key = str(tg_msg_id)
         
         mapping_data = {
-            "msgid": int(wx_msg_id),
             "fromwxid": str(from_wx_id),
+            "towxid": str(to_wx_id),
+            "msgid": int(wx_msg_id),
+            "clientmsgid": int(client_msg_id),
+            "createtime": int(create_time),
             "content": str(content)
         }
         

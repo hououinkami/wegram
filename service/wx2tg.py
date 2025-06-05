@@ -186,12 +186,16 @@ def run_server():
 
 def main():
     """主函数"""
+    logger.info("🚀 启动微信消息接收服务...")
+    
+    # 检查配置
     if not PORT or not WXID:
         logger.error("PORT 和 WXID 配置不能为空")
         return
     
-    logger.info("启动微信消息接收服务...")
+    # 直接启动 HTTP 服务器（不创建事件循环）
     run_server()
+
 
 if __name__ == "__main__":
     main()
