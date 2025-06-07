@@ -11,6 +11,7 @@ import json
 import time
 import threading
 from typing import Dict, Any, Set
+from api.base import telegram_api
 from utils import message
 import config
 
@@ -52,6 +53,35 @@ class MessageDeduplicator:
 # 全局去重器
 deduplicator = MessageDeduplicator()
 
+# 登陆检测
+login_status = None
+
+def login_check(callback_data):
+    global login_status
+    
+    current_message = callback_data.get('Message')
+    
+    if current_message == "用户可能退出":
+        # 只有当上一次状态不是离线时才发送离线提示
+        if login_status != "offline":
+            telegram_api(
+                chat_id=config.CHAT_ID,
+                content="🔴 WeChatがオフラインしました",
+            )
+            login_status = "offline"
+        return {"success": True, "message": "用户可能退出"}
+    
+    else:
+        # 当前不是离线状态
+        # 如果上一次是离线状态，发送上线提示
+        if login_status == "offline":
+            telegram_api(
+                chat_id=config.CHAT_ID,
+                content="🟢 WeChatがオンラインになりました",
+            )
+        login_status = "online"
+        return {"success": True, "message": "正常状态"}
+
 class WxMessageHandler(http.server.BaseHTTPRequestHandler):
     """微信消息处理器"""
     
@@ -71,9 +101,12 @@ class WxMessageHandler(http.server.BaseHTTPRequestHandler):
         return self.rfile.read(content_length)
     
     def _process_callback_data(self, callback_data: Dict[str, Any]) -> Dict[str, Any]:
-        logger.warning(f"#####回调数据：{callback_data}")
+        # logger.warning(f"#####回调数据：{callback_data}")
         """处理回调数据"""
         try:
+            # 检查是否在线
+            login_check(callback_data)
+            
             # 检查是否无新消息
             if callback_data.get('Message') != "成功":
                 return {"success": True, "message": "无新消息"}

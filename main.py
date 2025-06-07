@@ -4,6 +4,9 @@
 """
 微信消息接收服务
 """
+# 抑制 urllib3 的 SSL 警告
+import warnings
+warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 
 import logging
 from logging.handlers import RotatingFileHandler
@@ -281,7 +284,7 @@ def main():
     logger.info(f"发现可用服务: {', '.join(available_services)}")
     
     # 需要启动的服务
-    services_to_start = ["wx2tg", "tg2wx", "login"]
+    services_to_start = ["wx2tg", "tg2wx"]
     
     # 检查服务是否可用
     for service_name in services_to_start:

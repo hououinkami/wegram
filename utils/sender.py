@@ -44,8 +44,8 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 return
             
         # 转发消息
-        wx_api_response = forward_telegram_to_wx(chat_id, message)
-
+        wx_api_response = await forward_telegram_to_wx(chat_id, message)
+        
         # 将消息添加进映射
         if wx_api_response:
             add_send_msgid(wx_api_response, message_id)  
@@ -66,13 +66,15 @@ async def forward_telegram_to_wx(chat_id: str, message: dict) -> bool:
             
         elif 'photo' in message:
             # 发送附带文字
-            _send_telegram_text(to_wxid, message.get("caption", ""))
+            if message.get("caption"):
+                _send_telegram_text(to_wxid, message.get("caption"))
             # 图片消息
             return _send_telegram_photo(to_wxid, message['photo'])
             
         elif 'video' in message:
             # 发送附带文字
-            _send_telegram_text(to_wxid, message.get("caption", ""))
+            if message.get("caption"):
+                _send_telegram_text(to_wxid, message.get("caption"))
             # 视频消息
             return _send_telegram_video(to_wxid, message['video'])
         
@@ -85,7 +87,6 @@ async def forward_telegram_to_wx(chat_id: str, message: dict) -> bool:
             return _send_telegram_reply(to_wxid, message)
             
         else:
-            logger.warning(f"不支持的消息类型: {list(message.keys())}")
             return False
             
     except Exception as e:
@@ -197,7 +198,7 @@ def _send_telegram_reply(to_wxid: str, message: dict):
         reply_to_message_id = reply_to_message["message_id"]
         reply_to_wx_msgid = msgid_mapping.tg_to_wx(reply_to_message_id)
         if reply_to_wx_msgid is None:
-            logger.warning(f"警告：找不到TG消息ID {reply_to_message_id} 对应的微信消息映射")
+            logger.warning(f"找不到TG消息ID {reply_to_message_id} 对应的微信消息映射")
             # 处理找不到映射的情况，可能需要跳过或使用默认值
             _send_telegram_text(to_wxid, send_text)
         reply_to_text = reply_to_message.get("text", "")
@@ -250,8 +251,8 @@ def add_send_msgid(wx_api_response, tg_msgid):
                 msg_list = value
     if msg_list:
         to_wx_id = msg_list[0].get('ToUsetName', {}).get('string', '')
-        new_msg_id = (msg_list[0].get("NewMsgId") or msg_list[0].get("newMsgId"))
-        client_msg_id = (msg_list[0].get("ClientMsgid") or msg_list[0].get("clientMsgid"))
+        new_msg_id = (msg_list[0].get("NewMsgId") or msg_list[0].get("Newmsgid"))
+        client_msg_id = (msg_list[0].get("ClientMsgid") or msg_list[0].get('ClientImgId', {}).get('string', ''))
         create_time = (msg_list[0].get("Createtime") or msg_list[0].get("createtime"))
         if new_msg_id:
             msgid_mapping.add(
