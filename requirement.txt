@@ -2,3 +2,6 @@ request
 telethon
 cryptg
 pyaes
+ffmpeg-python
+pilk
+typing-extensions

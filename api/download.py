@@ -174,6 +174,12 @@ def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
             voice_binary_data = base64.b64decode(voice_base64)
             all_binary_data.extend(voice_binary_data)
             logger.info(f"语音下载成功，大小: {len(voice_binary_data)} 字节")
+
+            # 写入文件
+            with open(filepath, 'wb') as f:
+                f.write(all_binary_data)
+            logger.info(f"语音下载完成，保存至: {filepath}, 总大小: {len(all_binary_data)} 字节")
+            return True, filepath
                 
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")

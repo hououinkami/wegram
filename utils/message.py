@@ -5,6 +5,9 @@
 import logging
 import asyncio
 from typing import Dict, Any, Optional
+import pilk
+import ffmpeg
+import os
 
 # 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
@@ -92,14 +95,17 @@ def _handle_voice_message(chat_id: int, sender_name: str, msg_id: str, content: 
         data_json=content,
         from_user_name=message_info['FromUserName']
     )
-    
+
+    ogg_path, duration = silk_to_voice(filepath)
+
     if success:
         return telegram_api(
             chat_id=chat_id,
-            content=filepath,
-            method="sendDocument",
+            content=ogg_path,
+            method="sendVoice",
             additional_payload={
-                "caption": f"{sender_name}"
+                "caption": f"{sender_name}",
+                "duration": duration
             }
         )
     else:
@@ -453,6 +459,10 @@ def process_message(message_data: Dict[str, Any]) -> None:
             logger.error("提取消息信息失败")
             return
         
+        if message_info["FromUserName"] == "weixin":
+            logger.info("跳过微信官方消息")
+            return
+        
         # 简化的异步处理
         try:
             loop = asyncio.get_running_loop()
@@ -464,3 +474,36 @@ def process_message(message_data: Dict[str, Any]) -> None:
             
     except Exception as e:
         logger.error(f"消息处理失败: {e}", exc_info=True)
+
+def silk_to_voice(silk_path):
+    """完整方案：silk -> ogg -> Telegram语音消息"""
+    pcm_path = silk_path + '.pcm'
+    ogg_path = silk_path + '.ogg'
+    
+    try:
+        # silk -> pcm
+        duration = pilk.decode(silk_path, pcm_path)
+        logger.info(f"语音时长: {duration}s")
+        
+        # pcm -> ogg opus
+        (
+            ffmpeg
+            .input(pcm_path, format='s16le', acodec='pcm_s16le', ar=24000, ac=1)
+            .output(ogg_path, acodec='libopus', audio_bitrate='64k')
+            .overwrite_output()
+            .run(quiet=True)
+        )
+        
+        # 清理临时文件
+        os.remove(silk_path)
+        os.remove(pcm_path)
+
+        return ogg_path, int(duration)
+            
+    except Exception as e:
+        print(f"处理失败: {e}")
+        # 清理可能存在的临时文件
+        for temp_file in [silk_path, pcm_path, ogg_path]:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+        return None, None
