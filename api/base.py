@@ -27,39 +27,32 @@ def wechat_api(api_path: str, body: Dict[str, Any] = None, query_params: Dict[st
         return False
 
 # 发送TG消息
-def telegram_api(chat_id, content=None, from_wxid=None,
-                         method="sendMessage", content_param_name=None, parse_mode="MarkdownV2", additional_payload=None):
+def telegram_api(chat_id, content=None, method="sendMessage", additional_payload=None, parse_mode="MarkdownV2", **kwargs):
     # 检查必要参数
     if not chat_id:
         logger.error("未提供有效的 chat_id")
-        return None
-
-    # 检查是否有映射（如果提供了 from_wxid）
-    if from_wxid is not None and chat_id is None:
-        logger.warning(f"发送者 {from_wxid} 在 contact.json 中没有对应的映射")
         return None
     
     # 构建 API URL
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/{method}"
     
     # 根据方法确定内容参数名称
-    if content_param_name is None:
-        # 根据方法自动选择参数名
-        method_param_mapping = {
-            "sendMessage": "text",
-            "sendPhoto": "photo",
-            "sendDocument": "document",
-            "sendVideo": "video",
-            "sendAudio": "audio",
-            "sendVoice": "voice",
-            "sendAnimation": "animation",
-            "sendVideoNote": "video_note",
-            "sendMediaGroup": "media",
-            "sendSticker": "sticker",
-            "sendPoll": "question",
-            "sendLocation": "latitude"  # 注意：location 需要 latitude 和 longitude
-        }
-        content_param_name = method_param_mapping.get(method, "text")
+    method_param_mapping = {
+        "sendMessage": "text",
+        "sendPhoto": "photo",
+        "sendDocument": "document",
+        "sendVideo": "video",
+        "sendAudio": "audio",
+        "sendVoice": "voice",
+        "sendAnimation": "animation",
+        "sendVideoNote": "video_note",
+        "sendMediaGroup": "media",
+        "sendSticker": "sticker",
+        "sendPoll": "question",
+        "sendLocation": "latitude"  # 注意：location 需要 latitude 和 longitude
+    }
+    content_param_name = method_param_mapping.get(method, "text")
+        
     
     # 构建基本 payload
     payload = {
@@ -72,8 +65,7 @@ def telegram_api(chat_id, content=None, from_wxid=None,
         payload[content_param_name] = content
     
     # 合并额外的 payload 参数（如果有）
-    if additional_payload and isinstance(additional_payload, dict):
-        payload.update(additional_payload)
+    payload.update(kwargs)
     
     # 发送请求
     files = None

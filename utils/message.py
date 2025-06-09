@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 import pilk
 import ffmpeg
 import os
+import re
 
 # 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
@@ -33,208 +34,134 @@ def _get_message_handlers():
         19: _forward_chat_history,
         57: _forward_quote,
         51: _forward_channel,
-        10002: _forward_revoke
+        "revokemsg": _forward_revoke,
+        "pat": _forward_pat
     }
 
 def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
     """处理文本消息"""
-    return telegram_api(
-        chat_id=chat_id,
-        content=f"{sender_name}\n{content}",
-    )
+    text = format.escape_markdown_chars(content)
+    send_text = f"{sender_name}\n{text}"
+    return telegram_api(chat_id, send_text)
 
 def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理图片消息"""
-    success, filepath = download.get_image(
-        msg_id=msg_id,
-        from_wxid=from_wxid,
-        data_json=content
-    )
+    success, filepath = download.get_image(msg_id, from_wxid, content)
     
     if success:
-        return telegram_api(
-            chat_id=chat_id,
-            content=filepath,
-            method="sendPhoto",
-            additional_payload={
-                "caption": f"{sender_name}"
-            }
-        )
+        return telegram_api(chat_id, filepath, "sendPhoto", caption=sender_name)
     else:
-        return telegram_api(
-            chat_id=chat_id,
-            content=f"{sender_name}\n\[{config.type(3)}\]"
-        )
+        type_text = format.escape_markdown_chars(f"[{config.type(3)}]")
+        send_text = f"{sender_name}\n{type_text}"
+        return telegram_api(chat_id, send_text)
 
 def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
-    success, filepath = download.get_video(
-        msg_id=msg_id,
-        from_wxid=from_wxid,
-        data_json=content
-    )
+    success, filepath = download.get_video(msg_id, from_wxid, content)
     
     if success:
-        return telegram_api(
-            chat_id=chat_id,
-            content=filepath,
-            method="sendVideo",
-            additional_payload={
-                "caption": f"{sender_name}"
-            }
-        )
+        return telegram_api(chat_id, filepath, "sendVideo", caption=sender_name)
     else:
-        return telegram_api(
-            chat_id=chat_id,
-            content=f"{sender_name}\n\[{config.type(43)}\]"
-        )
+        type_text = format.escape_markdown_chars(f"[{config.type(43)}]")
+        send_text = f"{sender_name}\n{type_text}"
+        return telegram_api(chat_id, send_text)
 
 def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: dict, message_info: dict, **kwargs) -> dict:
     """处理语音消息"""
-    success, filepath = download.get_voice(
-        msg_id=msg_id,
-        data_json=content,
-        from_user_name=message_info['FromUserName']
-    )
-
-    ogg_path, duration = silk_to_voice(filepath)
+    success, filepath = download.get_voice(msg_id, message_info['FromUserName'], content)
 
     if success:
-        return telegram_api(
-            chat_id=chat_id,
-            content=ogg_path,
-            method="sendVoice",
-            additional_payload={
-                "caption": f"{sender_name}",
-                "duration": duration
-            }
-        )
+        ogg_path, duration = silk_to_voice(filepath)
+        if ogg_path and duration:
+            return telegram_api(chat_id, ogg_path, "sendVoice", caption=sender_name, duration=duration)
     else:
-        return telegram_api(
-            chat_id=chat_id,
-            content=f"{sender_name}\n\[{config.type(34)}\]"
-        )
-
+        type_text = format.escape_markdown_chars(f"[{config.type(34)}]")
+        send_text = f"{sender_name}\n{type_text}"
+        return telegram_api(chat_id, send_text)
+    
 def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理文件消息"""
-    success, filepath = download.get_file(
-        msg_id=msg_id,
-        from_wxid=from_wxid,
-        data_json=content
-    )
+    success, filepath = download.get_file(msg_id, from_wxid, content)
     
     if success:
-        return telegram_api(
-            chat_id=chat_id,
-            content=filepath,
-            method="sendDocument",
-            additional_payload={
-                "caption": f"{sender_name}"
-            }
-        )
+        return telegram_api(chat_id, filepath, "sendDocument", caption=sender_name)
     else:
-        return telegram_api(
-            chat_id=chat_id,
-            content=f"{sender_name}\n\[{config.type(6)}\]"
-        )
+        type_text = format.escape_markdown_chars(f"[{config.type(6)}]")
+        send_text = f"{sender_name}\n{type_text}"
+        return telegram_api(chat_id, send_text)
 
 def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理公众号消息"""
     url_items = format.extract_url_items(content)
-    return telegram_api(
-        chat_id=chat_id,
-        content=f"{sender_name}\n{url_items}",
-    )
+    send_text = f"{sender_name}\n{url_items}"
+    return telegram_api(chat_id, send_text)
 
 def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理贴纸消息"""
     success, filepath = download.get_emoji(content)
     
     if success:
-        return telegram_api(
-            chat_id=chat_id,
-            content=filepath,
-            method="sendAnimation",
-            additional_payload={
-                "caption": f"{sender_name}"
-            }
-        )
+        return telegram_api(chat_id, filepath, "sendAnimation", caption=sender_name)
     else:
-        return telegram_api(
-            chat_id=chat_id,
-            content=f"{sender_name}\n\[{config.type(47)}\]"
-        )
+        type_text = format.escape_markdown_chars(f"[{config.type(47)}]")
+        send_text = f"{sender_name}\n{type_text}"
+        return telegram_api(chat_id, send_text)
 
 def _forward_chat_history(chat_id: int, sender_name_no_md: str, content: dict, **kwargs) -> dict:
     """处理聊天记录消息"""
     chat_history = f"{process_chathistory(content)}"
     
     if chat_history:
-        return telegram_api(
-            chat_id=chat_id,
-            content=f"{sender_name_no_md}\n{chat_history}",
-            parse_mode="HTML"
-        )
+        send_text = f"{sender_name_no_md}\n{chat_history}"
+        return telegram_api(chat_id, send_text, parse_mode="HTML")
     else:
-        return telegram_api(
-            chat_id=chat_id,
-            content=f"{sender_name_no_md}\n\[{config.type(19)}\]"
-        )
+        type_text = format.escape_markdown_chars(f"[{config.type(19)}]")
+        send_text = f"{sender_name_no_md}\n{type_text}"
+        return telegram_api(chat_id, send_text)
 
 def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理引用消息"""
-    send_text = format.escape_markdown_chars(content["msg"]["appmsg"]["title"])
+    text = format.escape_markdown_chars(content["msg"]["appmsg"]["title"])
     quote = content["msg"]["appmsg"]["refermsg"]
     quote_newmsgid = quote["svrid"]
     
-    additional_payload = {}
-    if quote_newmsgid:
-        quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid)
-        if quote_tgmsgid:
-            additional_payload = {"reply_to_message_id": quote_tgmsgid}
-    
-    return telegram_api(
-        chat_id=chat_id,
-        content=f"{sender_name}\n{send_text}",
-        additional_payload=additional_payload
-    )
-
-def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
-    """处理撤回消息"""
-    revoke_msg = content["sysmsg"]["revokemsg"]
-    send_text = revoke_msg["replacemsg"]
-    quote_newmsgid = revoke_msg["newmsgid"]
-    
-    additional_payload = {}
-    if quote_newmsgid:
-        quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid)
-        if quote_tgmsgid:
-            additional_payload = {"reply_to_message_id": quote_tgmsgid}
-    
-    return telegram_api(
-        chat_id=chat_id,
-        content=f"{sender_name}\n{send_text}",
-        additional_payload=additional_payload
-    )
+    quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
+    send_text = f"{sender_name}\n{text}"
+    return telegram_api(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
 def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理视频号"""
     try:
         finder_feed = content.get("msg", {}).get("appmsg", {}).get("finderFeed", {})
-        channel_name = format.escape_markdown_chars(finder_feed["nickname"])
-        channel_title = format.escape_markdown_chars(finder_feed["desc"])
+        channel_name = finder_feed["nickname"]
+        channel_title = finder_feed["desc"]
+        channel_content = format.escape_markdown_chars(f"[{config.type(51)}]\n{channel_name}\n{channel_title}")
+        send_text = f"{sender_name}\n{channel_content}"
 
-        return telegram_api(
-            chat_id=chat_id,
-            content=f"{sender_name}\n\[{config.type(51)}\]\n{channel_name}\n{channel_title}",
-        )
+        return telegram_api(chat_id, send_text)
     except (KeyError, TypeError) as e:
-        if content.get("msg", {}).get("appmsg", {}).get("finderFeed"):
-            logger.info(f"解析视频号消息失败: {e}")
-            return telegram_api(
-                chat_id=chat_id,
-                content=f"{sender_name}\n\[{config.type(51)}\]",
-            )
+        send_text = f"{sender_name}\n\[{config.type(51)}\]"
+        return telegram_api(chat_id, send_text)
+        
+def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理撤回消息"""
+    revoke_msg = content["sysmsg"]["revokemsg"]
+    revoke_text = format.escape_markdown_chars(revoke_msg["replacemsg"])
+    quote_newmsgid = revoke_msg["newmsgid"]
+
+    quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
+    send_text = f"{sender_name}\n{revoke_text}"
+    return telegram_api(chat_id, send_text, reply_to_message_id = quote_tgmsgid)
+
+def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理撤回消息"""
+    pat_msg = content["sysmsg"]["pat"]
+    pat_template = pat_msg["template"]
+    pattern = r'\$\{([^}]+)\}'
+    result = re.sub(pattern, lambda m: contact.get_user_info(m.group(1)).name, pat_template)
+    pat_text = format.escape_markdown_chars(result)
+    send_text = f"{sender_name}\n{pat_text}"
+    return telegram_api(chat_id, send_text)
 
 async def _process_message_async(message_info: Dict[str, Any]) -> None:
     """异步处理单条消息"""
@@ -251,7 +178,11 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         # 转发自己的消息
         if from_wxid == config.MY_WXID:
             from_wxid = to_wxid
-            
+        
+        # 处理服务通知
+        if from_wxid.endswith('@app'):
+            from_wxid = "service_notification"
+        
         # 处理群聊消息格式
         if from_wxid.endswith('@chatroom'):
             if ':\n' in content:
@@ -269,13 +200,17 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         if sender_name == "未知用户" and push_content:
             sender_name = push_content.split(" : ")[0]
         
+        # 微信上打开联系人对话是否新建关联群组
+        if msg_type == 51:
+            msg_type = "open_chat"
+
         # 处理消息内容
-        if msg_type == 1:
-            content = format.escape_markdown_chars(content)
-        else:
+        if msg_type != 1:
             content = format.xml_to_json(content)
             if msg_type == 49:
                 msg_type = int(content['msg']['appmsg']['type'])
+            if msg_type == 10002:
+                msg_type = content['sysmsg']['type']
 
         logger.info(f"处理器收到消息: 类型={msg_type}, 发送者={sender_wxid}")
         logger.info(f"调试：：：{content}")
@@ -440,7 +375,6 @@ def process_chathistory(content):
 
 def parse_time_without_seconds(time_str):
         """解析时间并忽略秒数"""
-        import re
         time_str = re.sub(r'(\d{4}-\d{1,2}-\d{1,2} \d{1,2}:\d{1,2}):\d{1,2}', r'\1', time_str)
         
         try:
@@ -476,7 +410,7 @@ def silk_to_voice(silk_path):
     
     finally:
         # 清理可能存在的临时文件
-        for temp_file in [silk_path, pcm_path, ogg_path]:
+        for temp_file in [silk_path, pcm_path]:
             if os.path.exists(temp_file):
                 try:
                     os.remove(temp_file)
@@ -505,9 +439,7 @@ def extract_message(data):
         return None
 
 def process_message(message_data: Dict[str, Any]) -> None:
-    """处理微信消息"""
-    logger.info(f"调试：：：{message_data}")
-    
+    """处理微信消息"""    
     try:
         message_info = extract_message(message_data)
         if not message_info:
