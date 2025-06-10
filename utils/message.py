@@ -15,11 +15,21 @@ logger = logging.getLogger(__name__)
 
 from datetime import datetime
 import config
+from utils.locales import LocaleConfig
 from api import contact, download
 from api.base import telegram_api
 from utils.contact import contact_manager
 from utils.msgid import msgid_mapping
 from utils import format
+
+class Type:
+    def __init__(self, locale='ja'):
+        self.locale = locale
+        self.type_map = LocaleConfig.get_message_types(locale)
+    
+    def __call__(self, value):
+        return self.type_map.get(value)
+type = Type(config.LANG)
 
 def _get_message_handlers():
     """返回消息类型处理器映射"""
@@ -51,7 +61,7 @@ def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, 
     if success:
         return telegram_api(chat_id, filepath, "sendPhoto", caption=sender_name)
     else:
-        type_text = format.escape_markdown_chars(f"[{config.type(3)}]")
+        type_text = format.escape_markdown_chars(f"[{type(3)}]")
         send_text = f"{sender_name}\n{type_text}"
         return telegram_api(chat_id, send_text)
 
@@ -62,7 +72,7 @@ def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, 
     if success:
         return telegram_api(chat_id, filepath, "sendVideo", caption=sender_name)
     else:
-        type_text = format.escape_markdown_chars(f"[{config.type(43)}]")
+        type_text = format.escape_markdown_chars(f"[{type(43)}]")
         send_text = f"{sender_name}\n{type_text}"
         return telegram_api(chat_id, send_text)
 
@@ -75,7 +85,7 @@ def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: dict, m
         if ogg_path and duration:
             return telegram_api(chat_id, ogg_path, "sendVoice", caption=sender_name, duration=duration)
     else:
-        type_text = format.escape_markdown_chars(f"[{config.type(34)}]")
+        type_text = format.escape_markdown_chars(f"[{type(34)}]")
         send_text = f"{sender_name}\n{type_text}"
         return telegram_api(chat_id, send_text)
     
@@ -86,7 +96,7 @@ def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, c
     if success:
         return telegram_api(chat_id, filepath, "sendDocument", caption=sender_name)
     else:
-        type_text = format.escape_markdown_chars(f"[{config.type(6)}]")
+        type_text = format.escape_markdown_chars(f"[{type(6)}]")
         send_text = f"{sender_name}\n{type_text}"
         return telegram_api(chat_id, send_text)
 
@@ -103,7 +113,7 @@ def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwargs) ->
     if success:
         return telegram_api(chat_id, filepath, "sendAnimation", caption=sender_name)
     else:
-        type_text = format.escape_markdown_chars(f"[{config.type(47)}]")
+        type_text = format.escape_markdown_chars(f"[{type(47)}]")
         send_text = f"{sender_name}\n{type_text}"
         return telegram_api(chat_id, send_text)
 
@@ -115,7 +125,7 @@ def _forward_chat_history(chat_id: int, sender_name_no_md: str, content: dict, *
         send_text = f"{sender_name_no_md}\n{chat_history}"
         return telegram_api(chat_id, send_text, parse_mode="HTML")
     else:
-        type_text = format.escape_markdown_chars(f"[{config.type(19)}]")
+        type_text = format.escape_markdown_chars(f"[{type(19)}]")
         send_text = f"{sender_name_no_md}\n{type_text}"
         return telegram_api(chat_id, send_text)
 
@@ -135,12 +145,12 @@ def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwargs) ->
         finder_feed = content.get("msg", {}).get("appmsg", {}).get("finderFeed", {})
         channel_name = finder_feed["nickname"]
         channel_title = finder_feed["desc"]
-        channel_content = format.escape_markdown_chars(f"[{config.type(51)}]\n{channel_name}\n{channel_title}")
+        channel_content = format.escape_markdown_chars(f"[{type(51)}]\n{channel_name}\n{channel_title}")
         send_text = f"{sender_name}\n{channel_content}"
 
         return telegram_api(chat_id, send_text)
     except (KeyError, TypeError) as e:
-        send_text = f"{sender_name}\n\[{config.type(51)}\]"
+        send_text = f"{sender_name}\n\[{type(51)}\]"
         return telegram_api(chat_id, send_text)
         
 def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
@@ -236,7 +246,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             sender_name_no_md = ""
 
         # 跳过未知消息类型
-        if not config.type(msg_type):
+        if not type(msg_type):
             return
         
         # 获取消息处理器
@@ -261,7 +271,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             # 处理其他未知消息类型
             response = telegram_api(
                 chat_id=chat_id,
-                content=f"{sender_name}\n\[{config.type(msg_type)}\]"
+                content=f"{sender_name}\n\[{type(msg_type)}\]"
             )
         
         # 储存消息ID
@@ -461,4 +471,3 @@ def process_message(message_data: Dict[str, Any]) -> None:
             
     except Exception as e:
         logger.error(f"消息处理失败: {e}", exc_info=True)
-
