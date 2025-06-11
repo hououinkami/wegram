@@ -173,6 +173,52 @@ def _forward_voip(chat_id: int, sender_name: str, content: dict, **kwargs) -> di
 
 async def _process_message_async(message_info: Dict[str, Any]) -> None:
     """异步处理单条消息"""
+
+    def _send_message_with_handler(chat_id: int, msg_type: Any, handler_params: dict) -> dict:
+        """使用处理器发送消息的通用方法"""        
+        handlers = _get_message_handlers()
+        
+        if msg_type in handlers:
+            try:
+                return handlers[msg_type](**{**handler_params, 'chat_id': chat_id})
+            except Exception as e:
+                logger.error(f"处理器执行失败 (类型={msg_type}): {e}", exc_info=True)
+                type_text = format.escape_html_chars(f"[{locale.type(msg_type)}]")
+                send_text = f"{handler_params['sender_name']}\n{type_text}"
+                return telegram_api(chat_id, send_text)
+        else:
+            # 处理未知消息类型
+            logger.warning(f"未知消息类型: {msg_type}")
+            type_text = format.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
+            send_text = f"{handler_params['sender_name']}\n{type_text}"
+            return telegram_api(chat_id, send_text)
+    
+    async def _handle_deleted_group(from_wxid: str, handler_params: dict, content: dict, push_content: str, msg_type: Any) -> Optional[dict]:
+        """处理被删除的群组"""
+        try:
+            # 删除联系人信息
+            await contact_manager.delete_contact(from_wxid)
+            logger.info(f"已删除联系人信息: {from_wxid}")
+            
+            # 重新获取或创建聊天群组
+            contact_name, avatar_url = _get_contact_info(from_wxid, content, push_content)
+            
+            # 创建新群组
+            logger.info(f"尝试重新创建群组: {from_wxid}")
+            new_chat_id = await _create_group_for_contact_async(from_wxid, contact_name, avatar_url)
+            
+            if new_chat_id:
+                logger.info(f"群组重新创建成功: {from_wxid} -> {new_chat_id}")
+                # 重新发送消息
+                return _send_message_with_handler(new_chat_id, msg_type, handler_params)
+            else:
+                logger.error(f"群组重新创建失败: {from_wxid}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"处理群组删除异常: {e}", exc_info=True)
+            return None
+
     try:
         msg_type = int(message_info['MsgType'])
         msg_id = message_info['MsgId']
@@ -201,21 +247,15 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                 sender_wxid = message_info['FromUserName'] if message_info['FromUserName'] == config.MY_WXID else ""
         else:
             sender_wxid = from_wxid
+        
+        # 获取联系人信息
+        contact_name, avatar_url = _get_contact_info(from_wxid, content, push_content)
 
         # 获取发送者信息
-        user_info = contact.get_user_info(sender_wxid)
-        sender_name = user_info.name
-        avatar_url = user_info.avatar_url
-        # 企业微信
-        if sender_name == "未知用户" and push_content:
-            sender_name = push_content.split(" : ")[0]
-        if from_wxid.endswith('@openim'):
-            avatar_url = "https://raw.githubusercontent.com/hououinkami/wechat2tg/refs/heads/wx2tg-mac-dev/qywx.jpg"
-            if sender_name == "未知用户":
-                sender_name = "企业微信"
-        # 服务通知
-        if from_wxid == "service_notification":
-            sender_name = content.get('msg', {}).get('appmsg', {}).get('mmreader', {}).get('publisher', {}).get('nickname', '服务通知')
+        if sender_wxid == from_wxid:
+            sender_name = contact_name
+        else:
+            sender_name, _ = _get_contact_info(sender_wxid, content, push_content)
 
         # 微信上打开联系人对话是否新建关联群组
         if msg_type == 51:
@@ -237,13 +277,21 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         logger.info(f"处理器收到消息: 类型={msg_type}, 发送者={sender_wxid}")
         logger.info(f"调试：：：{content}")
         
+        # 避免激活折叠聊天时新建群组
+        if msg_type == "open_chat" and (from_wxid.endswith('@placeholder_foldgroup') or (from_wxid == 'notification_messages')):
+            return
+        
         if not from_wxid or not content:
             logger.warning("缺少发送者ID或消息内容")
             return
 
         # 获取或创建群组
-        chat_id = await _get_or_create_chat(from_wxid, sender_name, user_info.avatar_url)
+        chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
         if not chat_id:
+            return
+        
+        # 跳过激活对话框时发送的不明类型消息
+        if msg_type == "open_chat":
             return
         
         # 获取联系人信息用于显示
@@ -254,17 +302,9 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             sender_name = f"<blockquote expandable>{format.escape_html_chars(sender_name)}</blockquote>"
         else:
             sender_name = ""
-
-        # 跳过激活对话框时发送的不明类型消息
-        if msg_type == "open_chat":
-            return
-        
-        # 获取消息处理器
-        handlers = _get_message_handlers()
         
         # 准备通用参数
         handler_params = {
-            'chat_id': chat_id,
             'sender_name': sender_name,
             'content': content,
             'msg_id': msg_id,
@@ -273,21 +313,24 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             'msg_type': msg_type
         }
         
-        # 调用对应的处理器
-        if msg_type in handlers:
-            try:
-                response = handlers[msg_type](**handler_params)
-            except Exception as e:
-                logger.error(f"处理器执行失败 (类型={msg_type}): {e}", exc_info=True)
-                type_text = format.escape_html_chars(f"[{locale.type(msg_type)}]")
-                send_text = f"{sender_name}\n{type_text}"
-                response = telegram_api(chat_id, send_text)
-        else:
-            # 处理未知消息类型
-            logger.warning(f"未知消息类型: {msg_type}")
-            type_text = format.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
-            send_text = f"{sender_name}\n{type_text}"
-            response = telegram_api(chat_id, send_text)
+        # 发送消息
+        response = _send_message_with_handler(chat_id, msg_type, handler_params)
+        
+        # 检测群组是否被删除
+        if response and not response.get('ok', False):
+            description = response.get('description', '')
+            
+            # 检查是否是群组被删除的错误
+            if description == "Forbidden: the group chat was deleted":
+                logger.warning(f"检测到群组被删除: {from_wxid}, 错误信息: {description}")
+                response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
+                
+                if not response:
+                    return
+            else:
+                # 其他错误类型的处理
+                logger.error(f"Telegram API调用失败: {response}")
+                return
         
         # 储存消息ID
         if response and response.get('ok', False):
@@ -304,6 +347,27 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             
     except Exception as e:
         logger.error(f"异步消息处理失败: {e}", exc_info=True)
+
+def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
+    """获取联系人显示信息，处理特殊情况"""
+    user_info = contact.get_user_info(wxid)
+    contact_name = user_info.name
+    avatar_url = user_info.avatar_url
+    # 企业微信
+    if contact_name == "未知用户" and push_content:
+        contact_name = push_content.split(" : ")[0]
+    if wxid.endswith('@openim'):
+        avatar_url = "https://raw.githubusercontent.com/hououinkami/wechat2tg/refs/heads/wx2tg-mac-dev/qywx.jpg"
+        if contact_name == "未知用户":
+            contact_name = "企业微信"
+    # 服务通知
+    if wxid == "service_notification":
+        if isinstance(content, dict):
+            contact_name = content.get('msg', {}).get('appmsg', {}).get('mmreader', {}).get('publisher', {}).get('nickname', '')
+        else:
+            contact_name = ''
+
+    return contact_name, avatar_url
 
 async def _create_group_for_contact_async(wxid: str, contact_name: str, avatar_url: str = None) -> Optional[int]:
     """异步创建群组"""

@@ -89,7 +89,76 @@ class ContactManager:
             self.wxid_to_contact = {}
             self.chatid_to_wxid = {}
     
-    # 修改这个方法
+    async def _save_contacts(self):
+        """异步保存联系人信息到文件"""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def _write_file():
+                with open(self.contact_file_path, 'w', encoding='utf-8') as file:
+                    json.dump(self.contacts, file, ensure_ascii=False, indent=2)
+            
+            await loop.run_in_executor(None, _write_file)
+            
+            # 更新修改时间
+            self.last_modified_time = await loop.run_in_executor(None, os.path.getmtime, self.contact_file_path)
+            
+            logger.info(f"联系人信息已保存到文件: {self.contact_file_path}")
+            
+        except Exception as e:
+            logger.error(f"保存联系人文件失败: {e}")
+            raise
+    
+    async def delete_contact(self, wxid: str) -> bool:
+        """删除联系人信息"""
+        try:
+            # 先加载最新的联系人信息
+            await self.load_contacts()
+            
+            # 检查联系人是否存在
+            if wxid not in self.wxid_to_contact:
+                logger.warning(f"联系人不存在: {wxid}")
+                return False
+            
+            # 获取要删除的联系人信息
+            contact_to_delete = self.wxid_to_contact[wxid]
+            chat_id = contact_to_delete.get("chatId")
+            
+            # 从内存中删除
+            self.contacts = [contact for contact in self.contacts if contact["wxId"] != wxid]
+            del self.wxid_to_contact[wxid]
+            
+            # 如果有chatId，也从映射中删除
+            if chat_id and chat_id in self.chatid_to_wxid:
+                del self.chatid_to_wxid[chat_id]
+            
+            # 保存到文件
+            await self._save_contacts()
+            
+            logger.info(f"已删除联系人: {wxid} (ChatID: {chat_id})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"删除联系人失败: {wxid}, 错误: {e}")
+            return False
+    
+    async def delete_contact_by_chatid(self, chat_id: int) -> bool:
+        """通过ChatID删除联系人信息"""
+        try:
+            # 先通过chatId获取wxId
+            wxid = await self.get_wxid_by_chatid(chat_id)
+            if not wxid:
+                logger.warning(f"未找到ChatID对应的联系人: {chat_id}")
+                return False
+            
+            # 调用删除方法
+            return await self.delete_contact(wxid)
+            
+        except Exception as e:
+            logger.error(f"通过ChatID删除联系人失败: {chat_id}, 错误: {e}")
+            return False
+    
+    # 异步创建群组
     async def create_group_for_contact_async(self, wxid: str, contact_name: str, bot_token: str = None, 
                                             description: str = "", avatar_url: str = None) -> Optional[Dict]:
         """异步方式创建群组"""

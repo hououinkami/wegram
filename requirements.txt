@@ -5,3 +5,4 @@ pyaes
 ffmpeg-python
 pilk
 typing-extensions
+Pillow

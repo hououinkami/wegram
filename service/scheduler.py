@@ -119,11 +119,9 @@ class DailyRandomScheduler:
                     # 获取今天的随机执行时间
                     target_time = self.get_random_time_today()
                     
-                    logger.info(f"📅 今日执行时间: {target_time.strftime('%H:%M:%S')}")
-                    
                     # 如果目标时间已经过了，立即执行
                     if current_time >= target_time:
-                        self.execute_task()
+                        continue
                     else:
                         # 等待到目标时间
                         wait_seconds = (target_time - current_time).total_seconds()

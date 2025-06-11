@@ -97,7 +97,7 @@ def telegram_api(chat_id, content=None, method="sendMessage", additional_payload
             return response.json()
         else:
             logger.error(f"发送内容失败，状态码: {response.status_code}, 响应: {response.text}")
-            return None
+            return response.json()
     except Exception as e:
         logger.error(f"发送内容时出错: {e}")
         return None
