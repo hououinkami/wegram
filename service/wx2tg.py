@@ -12,7 +12,8 @@ import time
 import threading
 from typing import Dict, Any, Set
 from api.base import telegram_api
-from utils import message
+from utils.message import process_message
+from utils.locales import Locale
 import config
 
 # 配置
@@ -55,6 +56,7 @@ deduplicator = MessageDeduplicator()
 
 # 登陆检测
 login_status = None
+locale = Locale(config.LANG)
 
 def login_check(callback_data):
     global login_status
@@ -64,10 +66,7 @@ def login_check(callback_data):
     if current_message == "用户可能退出":
         # 只有当上一次状态不是离线时才发送离线提示
         if login_status != "offline":
-            telegram_api(
-                chat_id=config.CHAT_ID,
-                content="🔴 WeChatがオフラインしました",
-            )
+            telegram_api(config.CHAT_ID, locale.common['offline'])
             login_status = "offline"
         return {"success": True, "message": "用户可能退出"}
     
@@ -75,10 +74,7 @@ def login_check(callback_data):
         # 当前不是离线状态
         # 如果上一次是离线状态，发送上线提示
         if login_status == "offline":
-            telegram_api(
-                chat_id=config.CHAT_ID,
-                content="🟢 WeChatがオンラインになりました",
-            )
+            telegram_api(config.CHAT_ID, locale.common['online'])
         login_status = "online"
         return {"success": True, "message": "正常状态"}
 
@@ -133,7 +129,7 @@ class WxMessageHandler(http.server.BaseHTTPRequestHandler):
                 
                 # 处理新消息
                 try:
-                    message.process_message(msg)
+                    process_message(msg)
                     processed_count += 1
                 except Exception as e:
                     logger.error(f"处理消息 {msg_id} 失败: {e}")

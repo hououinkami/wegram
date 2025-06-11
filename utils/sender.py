@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 
 import requests
 import base64
-from typing import Dict, Any, Optional, Union
-from utils.contact import contact_manager
+from typing import Dict, Any, Optional
 from api import contact
-from api.base import wechat_api, telegram_api
+from api.base import wechat_api
+from utils.contact import contact_manager
 from utils.msgid import msgid_mapping
 from utils.sticker import get_sticker_info
 import config

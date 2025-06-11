@@ -27,7 +27,7 @@ def wechat_api(api_path: str, body: Dict[str, Any] = None, query_params: Dict[st
         return False
 
 # 发送TG消息
-def telegram_api(chat_id, content=None, method="sendMessage", additional_payload=None, parse_mode="MarkdownV2", **kwargs):
+def telegram_api(chat_id, content=None, method="sendMessage", additional_payload=None, parse_mode="HTML", **kwargs):
     # 检查必要参数
     if not chat_id:
         logger.error("未提供有效的 chat_id")

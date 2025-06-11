@@ -12,14 +12,20 @@ class LocaleConfig:
                 5: "リンク",
                 6: "ファイル",
                 19: "チャット履歴",
-                36: "ミニプログラム",
+                33: "ミニプログラム",
                 57: "引用",
                 51: "チャンネル",
                 66: "ファイル",
                 2000: "送金",
                 2001: "ラッキマネー",
                 "revokemsg": "撤回",
-                "pat": "軽く叩く"
+                "pat": "軽く叩く",
+                "VoIPBubbleMsg": "通話",
+                "unknown": "不明"
+            },
+            'common': {
+                'online': "🟢 WeChatがオンラインしました",
+                'offline': "🔴 WeChatがオフラインしました"
             }
         },
         'zh': {
@@ -34,14 +40,20 @@ class LocaleConfig:
                 5: "链接",
                 6: "文件",
                 19: "聊天记录",
-                36: "小程序",
+                33: "小程序",
                 57: "引用",
                 51: "视频号",
                 66: "文件",
                 2000: "转账",
                 2001: "红包",
                 "revokemsg": "撤回",
-                "pat": "拍一拍"
+                "pat": "拍一拍",
+                "VoIPBubbleMsg": "通话",
+                "unknown": "未知"
+            },
+            'common': {
+                'online': "🟢 WeChat已上线",
+                'offline': "🔴 WeChat已离线"
             }
         }
     }
@@ -49,3 +61,21 @@ class LocaleConfig:
     @classmethod
     def get_message_types(cls, locale='ja'):
         return cls.LOCALES.get(locale, {}).get('message_types', {})
+    
+    @classmethod
+    def get_common(cls, locale='ja'):
+        return cls.LOCALES.get(locale, {}).get('common', {})
+
+class Locale:
+    def __init__(self, locale='ja'):
+        self.locale = locale
+        self.type_map = LocaleConfig.get_message_types(locale)
+        self.common_map = LocaleConfig.get_common(locale)
+    
+    def type(self, value):
+        """获取消息类型"""
+        return self.type_map.get(value)
+    
+    def common(self, key):
+        """获取通用文本"""
+        return self.common_map.get(key)
