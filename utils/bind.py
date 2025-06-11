@@ -429,6 +429,17 @@ class TempTelegramClient:
             if avatar_url:
                 avatar_set = await self._set_group_avatar(client, chat_id, avatar_url)
             
+            # 将群组移动到 WeChat 文件夹
+            moved_to_folder = False
+            try:
+                moved_to_folder = await self._move_chat_to_folder(client, chat_id, config.WECHAT_FOLDER_NAME)
+                if moved_to_folder:
+                    logger.info(f"成功将群组移动到 WeChat 文件夹")
+                else:
+                    logger.info(f"移动群组到文件夹失败，但群组创建成功")
+            except Exception as folder_error:
+                logger.error(f"移动群组到文件夹时出错: {folder_error}")
+
             # 保存映射关系
             await self._save_chat_wxid_mapping(wxid, contact_name, chat_id, avatar_url)
             
@@ -452,6 +463,135 @@ class TempTelegramClient:
                 await client.disconnect()
             # 清理临时session文件
             self._cleanup_temp_session()
+    
+    async def _move_chat_to_folder(self, client, chat_id: int, folder_name: str = config.WECHAT_FOLDER_NAME) -> bool:
+        """将聊天移动到指定文件夹"""
+        try:
+            from telethon.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
+            from telethon.tl.types import InputPeerChat, InputPeerChannel, DialogFilter, TextWithEntities
+            
+            # 获取现有文件夹
+            filters_result = await client(GetDialogFiltersRequest())
+            
+            # 查找目标文件夹（排除默认文件夹）
+            target_filter = None
+            for filter_obj in filters_result.filters:
+                # 跳过默认文件夹类型
+                if filter_obj.__class__.__name__ == 'DialogFilterDefault':
+                    continue
+                if hasattr(filter_obj, 'title'):
+                    # 处理 TextWithEntities 类型的标题
+                    title_text = filter_obj.title.text if hasattr(filter_obj.title, 'text') else str(filter_obj.title)
+                    if title_text == folder_name:
+                        target_filter = filter_obj
+                        break
+            
+            # 获取聊天实体
+            chat_entity = await client.get_entity(chat_id)
+            
+            # 根据聊天类型创建适当的 InputPeer
+            if hasattr(chat_entity, 'access_hash'):
+                # 超级群组或频道
+                input_peer = InputPeerChannel(chat_entity.id, chat_entity.access_hash)
+            else:
+                # 普通群组
+                input_peer = InputPeerChat(abs(chat_id))
+            
+            # 如果文件夹不存在，创建新的
+            if target_filter is None:
+                # 生成新的filter ID
+                existing_ids = []
+                for f in filters_result.filters:
+                    if hasattr(f, 'id') and f.__class__.__name__ != 'DialogFilterDefault':
+                        existing_ids.append(f.id)
+                
+                new_id = max(existing_ids) + 1 if existing_ids else 1
+                
+                # 创建 TextWithEntities 对象作为标题
+                title_obj = TextWithEntities(text=folder_name, entities=[])
+                
+                # 创建新的 DialogFilter
+                target_filter = DialogFilter(
+                    id=new_id,
+                    title=title_obj,  # 使用 TextWithEntities 对象
+                    emoticon="📱",
+                    pinned_peers=[],
+                    include_peers=[input_peer],  # 直接包含我们的聊天
+                    exclude_peers=[],
+                    contacts=False,
+                    non_contacts=False,
+                    groups=True,
+                    broadcasts=False,
+                    bots=False,
+                    exclude_muted=False,
+                    exclude_read=False,
+                    exclude_archived=False
+                )
+                
+                # 创建新文件夹
+                await client(UpdateDialogFilterRequest(
+                    id=new_id,
+                    filter=target_filter
+                ))
+                
+                logger.info(f"成功创建新文件夹 '{folder_name}' 并添加群组")
+                return True
+            
+            else:
+                # 文件夹已存在，检查群组是否已经在其中
+                peer_already_exists = False
+                for existing_peer in target_filter.include_peers:
+                    try:
+                        if hasattr(existing_peer, 'chat_id') and hasattr(input_peer, 'chat_id'):
+                            if existing_peer.chat_id == input_peer.chat_id:
+                                peer_already_exists = True
+                                break
+                        elif hasattr(existing_peer, 'channel_id') and hasattr(input_peer, 'channel_id'):
+                            if existing_peer.channel_id == input_peer.channel_id:
+                                peer_already_exists = True
+                                break
+                    except:
+                        continue
+                
+                if peer_already_exists:
+                    logger.info(f"群组已在文件夹 '{folder_name}' 中")
+                    return True
+                
+                # 添加群组到现有文件夹
+                new_include_peers = list(target_filter.include_peers)
+                new_include_peers.append(input_peer)
+                
+                # 创建更新的文件夹对象，保持原有的 TextWithEntities 标题
+                updated_filter = DialogFilter(
+                    id=target_filter.id,
+                    title=target_filter.title,  # 保持原有的 TextWithEntities 对象
+                    emoticon=getattr(target_filter, 'emoticon', "📱"),
+                    pinned_peers=list(target_filter.pinned_peers),
+                    include_peers=new_include_peers,
+                    exclude_peers=list(target_filter.exclude_peers),
+                    contacts=getattr(target_filter, 'contacts', False),
+                    non_contacts=getattr(target_filter, 'non_contacts', False),
+                    groups=getattr(target_filter, 'groups', True),
+                    broadcasts=getattr(target_filter, 'broadcasts', False),
+                    bots=getattr(target_filter, 'bots', False),
+                    exclude_muted=getattr(target_filter, 'exclude_muted', False),
+                    exclude_read=getattr(target_filter, 'exclude_read', False),
+                    exclude_archived=getattr(target_filter, 'exclude_archived', False)
+                )
+                
+                # 更新文件夹
+                await client(UpdateDialogFilterRequest(
+                    id=target_filter.id,
+                    filter=updated_filter
+                ))
+                
+                logger.info(f"成功将群组添加到现有文件夹 '{folder_name}'")
+                return True
+            
+        except Exception as e:
+            logger.error(f"移动群组到文件夹失败: {e}")
+            logger.exception("详细错误信息:")
+            return False
 
 
 def create_group_sync(wxid: str, contact_name: str, description: str = "", avatar_url: str = None):
