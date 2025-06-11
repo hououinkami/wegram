@@ -106,23 +106,23 @@ class IntegratedTelegramMonitor:
     async def process_polling_update(self, update):
         """处理轮询更新"""
         try:
-                        
             if 'message' not in update:
                     return
             
             message_data = update['message']
             chat = message_data.get('chat', {})
             from_user = message_data.get('from', {})
-                        
-            # 只处理群组消息且是当前用户发送的
-            if (chat.get('type') not in ['group', 'supergroup'] or 
-                from_user.get('id') != self.user_id):
-                return
-            
             chat_id = chat.get('id')
-                        
+            chat_type = chat.get('type')
+
+            # 处理群组消息且是当前用户发送的
+            is_my_group = (chat_type in ['group', 'supergroup'] and from_user.get('id') == self.user_id)
+
+            # 如果两个条件都不满足，则跳过
+            if not (is_my_group):
+                return
+
             if await self.check_bot_in_chat(chat_id):
-                logger.warning(f"调试：：：：：：{update}")
                 try:
                     await process_telegram_update(update)
                 except Exception as e:
@@ -247,6 +247,17 @@ def get_monitor_mode():
     """获取监控模式"""
     return getattr(config, 'MONITOR_MODE', MonitorMode.HYBRID)
 
+def get_user_id():
+    """获取当前用户ID"""
+    global monitor_instance
+    if monitor_instance and monitor_instance.user_id:
+        return monitor_instance.user_id
+    return None
+
+def get_client():
+    """获取监控器实例"""
+    return monitor_instance
+
 def main():
     """主函数"""
     try:
@@ -274,10 +285,6 @@ def main():
         logger.info("收到中断信号，正在停止...")
     except Exception as e:
         logger.error(f"监控失败: {e}")
-
-def get_client():
-    """获取监控器实例"""
-    return monitor_instance
 
 if __name__ == "__main__":
     main()

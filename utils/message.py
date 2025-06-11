@@ -3,12 +3,14 @@
 微信消息处理器 - 处理从主服务接收的消息和Telegram消息
 """
 import logging
-import asyncio
 from typing import Dict, Any, Optional
 import pilk
 import ffmpeg
 import os
 import re
+import asyncio
+from asyncio import Queue
+import threading
 
 # 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
@@ -203,14 +205,18 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         # 获取发送者信息
         user_info = contact.get_user_info(sender_wxid)
         sender_name = user_info.name
+        avatar_url = user_info.avatar_url
         # 企业微信
         if sender_name == "未知用户" and push_content:
             sender_name = push_content.split(" : ")[0]
+        if from_wxid.endswith('@openim'):
+            avatar_url = "https://raw.githubusercontent.com/hououinkami/wechat2tg/refs/heads/wx2tg-mac-dev/qywx.jpg"
+            if sender_name == "未知用户":
+                sender_name = "企业微信"
         # 服务通知
         if from_wxid == "service_notification":
             sender_name = content.get('msg', {}).get('appmsg', {}).get('mmreader', {}).get('publisher', {}).get('nickname', '服务通知')
 
-        
         # 微信上打开联系人对话是否新建关联群组
         if msg_type == 51:
             msg_type = "open_chat"
@@ -491,14 +497,76 @@ def process_message(message_data: Dict[str, Any]) -> None:
             logger.info("跳过微信官方消息")
             return
         
-        # 简化的异步处理
-        try:
-            loop = asyncio.get_running_loop()
-            # 如果有运行的循环，创建异步任务
-            loop.create_task(_process_message_async(message_info))
-        except RuntimeError:
-            # 没有运行的循环时，直接运行
-            asyncio.run(_process_message_async(message_info))
+        message_processor.add_message(message_info)
+
+        # try:
+        #     loop = asyncio.get_running_loop()
+        #     # 如果有运行的循环，创建异步任务
+        #     loop.create_task(_process_message_async(message_info))
+        # except RuntimeError:
+        #     # 没有运行的循环时，直接运行
+        #     asyncio.run(_process_message_async(message_info))
             
     except Exception as e:
         logger.error(f"消息处理失败: {e}", exc_info=True)
+
+class MessageProcessor:
+    def __init__(self):
+        self.queue = None
+        self.loop = None
+        self._shutdown = False
+        self._init_async_env()
+    
+    def _init_async_env(self):
+        """在后台线程中初始化异步环境"""
+        def run_async():
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self.queue = Queue(maxsize=1000)
+            
+            # 启动队列处理器
+            self.loop.create_task(self._process_queue())
+            logger.info("消息处理器已启动")
+            
+            # 运行事件循环
+            self.loop.run_forever()
+        
+        thread = threading.Thread(target=run_async, daemon=True)
+        thread.start()
+        
+        # 等待初始化完成
+        import time
+        for _ in range(50):
+            if self.queue:
+                break
+            time.sleep(0.1)
+    
+    async def _process_queue(self):
+        """处理队列中的消息"""
+        while not self._shutdown:
+            try:
+                # 等待消息
+                message = await asyncio.wait_for(self.queue.get(), timeout=1.0)
+                
+                # 处理消息
+                await _process_message_async(message)
+                self.queue.task_done()
+                
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                logger.error(f"处理消息失败: {e}", exc_info=True)
+    
+    def add_message(self, message_info: Dict[str, Any]):
+        """添加消息到队列"""
+        if not self.loop or not self.queue:
+            logger.error("处理器未就绪")
+            return
+        
+        # 线程安全地添加消息
+        self.loop.call_soon_threadsafe(
+            self.queue.put_nowait, message_info
+        )
+
+# 全局实例
+message_processor = MessageProcessor()

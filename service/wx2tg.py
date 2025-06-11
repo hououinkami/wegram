@@ -14,6 +14,7 @@ from typing import Dict, Any, Set
 from api.base import telegram_api
 from utils.message import process_message
 from utils.locales import Locale
+from service.tg2wx import get_user_id
 import config
 
 # 配置
@@ -63,10 +64,11 @@ def login_check(callback_data):
     
     current_message = callback_data.get('Message')
     
+    tg_user_id = get_user_id()
     if current_message == "用户可能退出":
         # 只有当上一次状态不是离线时才发送离线提示
         if login_status != "offline":
-            telegram_api(config.CHAT_ID, locale.common['offline'])
+            telegram_api(tg_user_id, locale.common['offline'])
             login_status = "offline"
         return {"success": True, "message": "用户可能退出"}
     
@@ -74,7 +76,7 @@ def login_check(callback_data):
         # 当前不是离线状态
         # 如果上一次是离线状态，发送上线提示
         if login_status == "offline":
-            telegram_api(config.CHAT_ID, locale.common['online'])
+            telegram_api(tg_user_id, locale.common['online'])
         login_status = "online"
         return {"success": True, "message": "正常状态"}
 

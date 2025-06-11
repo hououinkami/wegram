@@ -12,6 +12,7 @@ import json
 import threading
 import api.login as login
 from api.base import telegram_api
+from service.tg2wx import get_user_id
 import config
 
 # 全局变量，用于跟踪当前登录状态
@@ -28,7 +29,8 @@ def check_login_status():
     try:
         # 调用A函数获取JSON数据
         response_json = login.get_profile(config.MY_WXID)
-        
+        tg_user_id = get_user_id()
+
         # 检查是否存在"Data"键
         if response_json.get("Data") is not None:
             # 登录状态正常
@@ -37,7 +39,7 @@ def check_login_status():
             # 如果之前是离线状态，发送上线通知
             if is_logged_in is False:
                 telegram_api(
-                    chat_id=config.CHAT_ID,
+                    chat_id=tg_user_id,
                     content="🟢WeChatがオンラインしました",
                 )
 
@@ -50,7 +52,7 @@ def check_login_status():
             # 只有在首次检测到离线或从在线状态变为离线状态时才发送通知
             if is_logged_in is not False:  # None(初始状态)或True(之前在线)
                 telegram_api(
-                    chat_id=config.CHAT_ID,
+                    chat_id=tg_user_id,
                     content="🔴WeChatがオフラインしました",
                 )
                 # push_qr_code()
@@ -81,12 +83,13 @@ def push_qr_code():
     try:
         qr_json = login.get_qr_code()
         data = json.loads(qr_json) if isinstance(qr_json, str) else qr_json
-
+        tg_user_id = get_user_id()
+        
         if data.get("Success") and "Data" in data:
             qr_url = data["Data"].get("QrUrl", "")
             if qr_url:
                 result = telegram_api(
-                    chat_id=config.CHAT_ID,
+                    chat_id=tg_user_id,
                     content=qr_url,
                     method="sendPhoto",
                     additional_payload={
