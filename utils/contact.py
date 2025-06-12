@@ -173,8 +173,6 @@ class ContactManager:
                 wxid, contact_name, description, avatar_url
             )
             
-            logger.info(f"群组创建结果: {result}")
-            
             # 创建成功后重新加载联系人信息
             if result.get('success'):
                 await self.load_contacts()

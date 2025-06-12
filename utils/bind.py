@@ -46,7 +46,6 @@ class TempTelegramClient:
             if os.path.exists(journal_path):
                 shutil.copy2(journal_path, temp_path + '-journal')
             
-            logger.info(f"已创建临时session副本: {temp_path}")
             self.temp_session_path = temp_path
             return temp_path
             
@@ -63,7 +62,6 @@ class TempTelegramClient:
                 journal_path = self.temp_session_path + '-journal'
                 if os.path.exists(journal_path):
                     os.unlink(journal_path)
-                logger.info(f"已清理临时session文件: {self.temp_session_path}")
             except Exception as e:
                 logger.warning(f"清理临时session文件失败: {e}")
             finally:
@@ -72,8 +70,6 @@ class TempTelegramClient:
     async def _process_image_from_url(self, url: str) -> Optional[BytesIO]:
         """从URL下载图片并处理为BytesIO对象"""
         try:
-            logger.info(f"开始下载图片: {url}")
-            
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
@@ -82,8 +78,6 @@ class TempTelegramClient:
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=30))
             response.raise_for_status()
-            
-            logger.info(f"成功下载图片，大小: {len(response.content)} bytes")
             
             # 处理图片
             processed_image = await loop.run_in_executor(
@@ -106,7 +100,6 @@ class TempTelegramClient:
             
             # 获取原始尺寸
             width, height = img.size
-            logger.info(f"原始图片尺寸: {width}x{height}, 格式: {img.format}")
             
             # 检查是否需要处理
             needs_processing = False
@@ -321,16 +314,13 @@ class TempTelegramClient:
                 if hasattr(config, 'BOT_TOKEN') and config.BOT_TOKEN:
                     # BOT_TOKEN格式: bot_id:token
                     bot_id = config.BOT_TOKEN.split(':')[0]
-                    bot_entity = await client.get_entity(int(bot_id))
-                    logger.info(f"通过Token解析获取机器人ID: {bot_id}")
-                
+                    bot_entity = await client.get_entity(int(bot_id)) 
                 # 尝试从监控服务获取
                 else:
                     from service.tg2wx import get_client
                     monitor = get_client()
                     if monitor and hasattr(monitor, 'target_bot_id'):
                         bot_entity = await client.get_entity(monitor.target_bot_id)
-                        logger.info(f"从监控服务获取机器人ID: {monitor.target_bot_id}")
                     else:
                         raise Exception("无法获取机器人信息，请在config中设置BOT_USERNAME或确保BOT_TOKEN格式正确")
                         
@@ -364,7 +354,6 @@ class TempTelegramClient:
             
             # 创建群组
             group_name = f"{contact_name}"
-            logger.info(f"开始创建群组: {group_name}")
             
             result = await client(CreateChatRequest(
                 users=[bot_entity], 
@@ -570,12 +559,11 @@ class TempTelegramClient:
                     filter=updated_filter
                 ))
                 
-                logger.info(f"成功将群组添加到现有文件夹 '{folder_name}'")
                 return True
             
         except Exception as e:
             logger.error(f"移动群组到文件夹失败: {e}")
-            logger.exception("详细错误信息:")
+            
             return False
 
 

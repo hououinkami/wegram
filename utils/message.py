@@ -275,11 +275,8 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                 msg_type = content['sysmsg']['type']
         
         # 避免激活折叠聊天时新建群组
-        if msg_type == "open_chat" and (from_wxid.endswith('@placeholder_foldgroup') or (from_wxid == 'notification_messages')):
+        if from_wxid.endswith('@placeholder_foldgroup') or from_wxid == 'notification_messages':
             return
-        
-        logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
-        logger.info(f"💬 内容: {content}")
 
         # 获取或创建群组
         chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
@@ -288,6 +285,11 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         if not chat_id or msg_type == "open_chat":
             return
         
+        # 输出信息便于调试
+        if msg_type not in [1, 5, 19, 57]:
+            logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
+            logger.info(f"💬 内容: {content}")
+
         # 获取联系人信息用于显示
         contact_dic = await contact_manager.get_contact(from_wxid)
         
@@ -366,8 +368,6 @@ def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
 async def _create_group_for_contact_async(wxid: str, contact_name: str, avatar_url: str = None) -> Optional[int]:
     """异步创建群组"""
     try:
-        logger.info(f"开始为 {wxid} 创建群组，名称: {contact_name}")
-        
         if not wxid or not contact_name:
             logger.error(f"参数无效: wxid={wxid}, contact_name={contact_name}")
             return None
@@ -380,7 +380,6 @@ async def _create_group_for_contact_async(wxid: str, contact_name: str, avatar_u
         
         if result and result.get('success'):
             chat_id = result['chat_id']
-            logger.info(f"群组创建成功: {wxid} -> {chat_id}")
             return chat_id
         else:
             error_msg = result.get('error', '未知错误') if result else '返回结果为空'
@@ -409,7 +408,6 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str)
         return None
     
     # 创建群组
-    logger.info(f"未找到映射关系，为 {from_wxid} 创建群组")
     chat_id = await _create_group_for_contact_async(from_wxid, sender_name, avatar_url)
     if not chat_id:
         logger.warning(f"无法创建聊天群组: {from_wxid}")
@@ -551,8 +549,8 @@ def process_message(message_data: Dict[str, Any]) -> None:
             logger.error("提取消息信息失败")
             return
         
+        # 忽略微信官方信息
         if message_info["FromUserName"] == "weixin":
-            logger.info("跳过微信官方消息")
             return
         
         message_processor.add_message(message_info)
