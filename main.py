@@ -79,6 +79,10 @@ def setup_logging():
     for logger_name in logging.root.manager.loggerDict:
         logger = logging.getLogger(logger_name)
         logger.propagate = True
+    
+    logging.getLogger('telethon').setLevel(logging.WARNING)
+    logging.getLogger('telethon.client.updates').setLevel(logging.ERROR)
+    logging.getLogger('telethon.network').setLevel(logging.WARNING)
 
     return logging.getLogger()
 

@@ -273,25 +273,19 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             # 系统信息
             if msg_type == 10002:
                 msg_type = content['sysmsg']['type']
-
-        logger.info(f"处理器收到消息: 类型={msg_type}, 发送者={sender_wxid}")
-        logger.info(f"调试：：：{content}")
         
         # 避免激活折叠聊天时新建群组
         if msg_type == "open_chat" and (from_wxid.endswith('@placeholder_foldgroup') or (from_wxid == 'notification_messages')):
             return
         
-        if not from_wxid or not content:
-            logger.warning("缺少发送者ID或消息内容")
-            return
+        logger.info(f"处理器收到消息: 类型={msg_type}, 来自={from_wxid}, 发送者={sender_wxid}")
+        logger.info(f"内容={content}")
 
         # 获取或创建群组
         chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
-        if not chat_id:
-            return
-        
+
         # 跳过激活对话框时发送的不明类型消息
-        if msg_type == "open_chat":
+        if not chat_id or msg_type == "open_chat":
             return
         
         # 获取联系人信息用于显示

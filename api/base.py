@@ -17,7 +17,6 @@ def wechat_api(api_path: str, body: Dict[str, Any] = None, query_params: Dict[st
             params=query_params  # URL 查询参数
         )
         if response.status_code == 200:
-            logger.info(f"API调用成功: {api_path}")
             return response.json()
         else:
             logger.error(f"API调用失败，状态码: {response.status_code}, 响应: {response.text}")
@@ -93,7 +92,6 @@ def telegram_api(chat_id, content=None, method="sendMessage", additional_payload
         if files is None:
             response = requests.post(url, json=payload)
         if response.status_code == 200:
-            logger.info(f"内容已成功发送到 Telegram 群组 {chat_id}")
             return response.json()
         else:
             logger.error(f"发送内容失败，状态码: {response.status_code}, 响应: {response.text}")
