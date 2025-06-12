@@ -10,11 +10,14 @@ import requests
 import base64
 from typing import Dict, Any, Optional
 from api import contact
-from api.base import wechat_api
+from api.base import wechat_api, telegram_api
 from utils.contact import contact_manager
 from utils.msgid import msgid_mapping
 from utils.sticker import get_sticker_info
+from utils.locales import Locale
 import config
+
+locale = Locale(config.LANG)
 
 # ==================== Telegram相关方法 ====================
 # 处理Telegram更新中的消息
@@ -34,7 +37,7 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         
         # 判断消息类型并处理
         if "text" in message:        
-            # 处理特殊命令
+            # 更新联系人信息
             if "/update" in message["text"]:
                 to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
                 if not to_wxid:
@@ -43,6 +46,18 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 contact.update_info(chat_id, user_info.name, user_info.avatar_url)
                 return
             
+            # 删除联系人数据
+            if "/unbind" in message["text"]:
+                to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
+                await contact_manager.delete_contact(to_wxid)
+                return
+            
+            # 撤回
+            if "/rm" in message["text"] or "/revoke" in message["text"]:
+                if "reply_to_message" in message:
+                    _revoke_telegram(chat_id, message)
+                    return
+
         # 转发消息
         wx_api_response = await forward_telegram_to_wx(chat_id, message)
         
@@ -60,9 +75,34 @@ async def forward_telegram_to_wx(chat_id: str, message: dict) -> bool:
     
     try:
         # 判断消息类型并处理
-        if 'text' in message and not "reply_to_message" in message:
-            # 文本消息
-            return _send_telegram_text(to_wxid, message['text'])
+        if 'text' in message:      
+            text = message.get('text', '')
+
+            # 判断是否为单纯文本信息
+            msg_entities = message.get('entities', [])
+            is_url = False
+            if msg_entities and len(msg_entities) > 0:
+                entity = msg_entities[0]
+                # 查找第一个链接实体
+                for item in msg_entities:
+                    if item.get('type') in ['text_link', 'url']:
+                        entity = item
+                        is_url = True
+                        break
+    
+            if "reply_to_message" in message:
+                # 回复消息
+                return _send_telegram_reply(to_wxid, message)
+            elif "entities" in message and is_url:
+                # 链接消息
+                return _send_telegram_link(to_wxid, message)
+            elif "entities" in message and entity.get('type') == "expandable_blockquote":
+                # 转发群聊消息时去除联系人
+                text = text.split('\n', 1)[1] 
+                return _send_telegram_text(to_wxid, text)
+            else:
+                # 纯文本消息
+                return _send_telegram_text(to_wxid, text)
             
         elif 'photo' in message:
             # 发送附带文字
@@ -82,10 +122,6 @@ async def forward_telegram_to_wx(chat_id: str, message: dict) -> bool:
             # 贴纸消息
             return _send_telegram_sticker(to_wxid, message['sticker'])
 
-        elif "reply_to_message" in message:
-            # 回复消息
-            return _send_telegram_reply(to_wxid, message)
-            
         else:
             return False
             
@@ -214,6 +250,68 @@ def _send_telegram_reply(to_wxid: str, message: dict):
         logger.error(f"处理回复消息时出错: {e}")
         return False
 
+def _send_telegram_link(to_wxid: str, message: dict):
+    """处理链接信息"""    
+    text = message.get('text', '')
+
+    msg_entities = message.get('entities', [])
+    if msg_entities and len(msg_entities) > 0:
+        entity = msg_entities[0]
+        # 查找第一个链接实体
+        for item in msg_entities:
+            if item.get('type') in ['text_link', 'url']:
+                entity = item
+                break
+
+        if entity.get('type') == 'text_link' and entity.get('url'):
+            link_title = message.get('text', '')
+            link_url = entity.get('url')
+            link_desc = ''
+        elif entity.get('type') == 'url':
+            link_title = '非公众号链接'
+            offset = entity.get('offset', 0)
+            length = entity.get('length', 0)
+            link_url = message.get('text', '')[offset:offset + length]
+            link_desc = link_url
+        
+        if link_title and link_url:
+            text = f"<appmsg><title>{link_title}</title><des>{link_desc}</des><type>5</type><url>{link_url}</url><thumburl></thumburl></appmsg>"
+
+        playload = {
+            "ToWxid": to_wxid,
+            "Type": 49,
+            "Wxid": config.MY_WXID,
+            "Xml": text
+        }
+        return wechat_api('/Msg/SendApp', playload)
+
+def _revoke_telegram(chat_id, message: dict):
+
+    try:
+        delete_message = message["reply_to_message"]
+        delete_message_id = delete_message["message_id"]
+        delete_wx_msgid = msgid_mapping.tg_to_wx(delete_message_id)
+
+        if not delete_wx_msgid:
+            return telegram_api(chat_id, locale.common('revoke'))
+        
+        to_wxid = delete_wx_msgid["towxid"]
+        new_msg_id = delete_wx_msgid["msgid"]
+        client_msg_id = delete_wx_msgid["clientmsgid"]
+        create_time = delete_wx_msgid["createtime"]
+        
+        playload = {
+            "ClientMsgId": client_msg_id,
+            "CreateTime": create_time,
+            "NewMsgId": new_msg_id,
+            "ToUserName": to_wxid,
+            "Wxid": config.MY_WXID
+        }
+        wechat_api("/Msg/Revoke", playload)
+        
+    except Exception as e:
+        logger.error(f"处理消息删除逻辑时出错: {e}")
+
 # 获取文件的 Base64 编码
 def get_file_base64(file_id):
     # Step 1: 获取文件路径
@@ -250,10 +348,15 @@ def add_send_msgid(wx_api_response, tg_msgid):
             if isinstance(value, list) and value:
                 msg_list = value
     if msg_list:
-        to_wx_id = msg_list[0].get('ToUsetName', {}).get('string', '')
-        new_msg_id = (msg_list[0].get("NewMsgId") or msg_list[0].get("Newmsgid"))
-        client_msg_id = (msg_list[0].get("ClientMsgid") or msg_list[0].get('ClientImgId', {}).get('string', ''))
-        create_time = (msg_list[0].get("Createtime") or msg_list[0].get("createtime"))
+        response_data = msg_list[0]
+    else:
+        response_data = data
+
+    if response_data:
+        to_wx_id = multi_get(response_data, 'ToUsetName.string', 'toUserName')
+        new_msg_id = multi_get(response_data, 'NewMsgId', 'Newmsgid', 'newMsgId')
+        client_msg_id = multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
+        create_time = multi_get(response_data, 'Createtime', 'createtime', 'createTime')
         if new_msg_id:
             msgid_mapping.add(
                 tg_msg_id=tg_msgid,
@@ -269,6 +372,26 @@ def add_send_msgid(wx_api_response, tg_msgid):
     else:
         logger.info("消息列表为空")
 
+def multi_get(data, *keys, default=''):
+    """从多个键中获取第一个有效值"""
+    for key in keys:
+        if '.' in key:
+            # 处理嵌套键如 'ToUserName.string'
+            parts = key.split('.')
+            value = data
+            for part in parts:
+                if isinstance(value, dict):
+                    value = value.get(part, {})
+                else:
+                    value = {}
+                    break
+            if value and value != {}:
+                return value
+        else:
+            value = data.get(key)
+            if value:
+                return value
+    return default
 
 # ==================== Telethon相关方法 ====================
 from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
@@ -325,7 +448,6 @@ async def forward_telethon_to_wx(chat_id: str, message, client) -> bool:
         message: telethon消息对象
         client: telethon客户端实例
     """
-    logger.warning(f"{message}")
     to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
     
     if not to_wxid:

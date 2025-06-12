@@ -118,7 +118,7 @@ class IntegratedTelegramMonitor:
             # 处理群组消息且是当前用户发送的
             is_my_group = (chat_type in ['group', 'supergroup'] and from_user.get('id') == self.user_id)
 
-            # 如果两个条件都不满足，则跳过
+            # 如果条件都不满足，则跳过
             if not (is_my_group):
                 return
 

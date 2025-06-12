@@ -161,7 +161,7 @@ def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) -> dic
     pat_template = pat_msg["template"]
     pattern = r'\$\{([^}]+)\}'
     result = re.sub(pattern, lambda m: contact.get_user_info(m.group(1)).name, pat_template)
-    pat_text = format.escape_html_chars(result)
+    pat_text = f"[{format.escape_html_chars(result)}]"
     send_text = f"{sender_name}\n{pat_text}"
     return telegram_api(chat_id, send_text)
 
@@ -282,7 +282,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
 
         # 跳过激活对话框时发送的不明类型消息
-        if not chat_id or msg_type == "open_chat":
+        if not chat_id or msg_type in ['open_chat', 'bizlivenotify']:
             return
         
         # 输出信息便于调试

@@ -80,7 +80,7 @@ class MappingManager:
             "fromwxid": str(from_wx_id),
             "towxid": str(to_wx_id),
             "msgid": int(wx_msg_id),
-            "clientmsgid": int(client_msg_id),
+            "clientmsgid": int(client_msg_id) if str(client_msg_id).isdigit() else client_msg_id,
             "createtime": int(create_time),
             "content": str(content)
         }
