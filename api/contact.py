@@ -5,6 +5,7 @@ import config
 import os
 from io import BytesIO
 from api.base import wechat_api
+from utils.bind import TempTelegramClient
 
 # 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
@@ -66,12 +67,14 @@ def update_info(chat_id, title=None, photo_url=None):
             # 下载图片
             photo_response = requests.get(photo_url)
             photo_response.raise_for_status()  # 确保请求成功
-            photo_content = BytesIO(photo_response.content)
             
+            # 处理图片尺寸
+            processed_photo_content = TempTelegramClient._process_avatar_image(photo_response.content)
+
             # 发送请求更新头像
             set_photo_url = f"{base_url}/setChatPhoto"
             files = {
-                'photo': ('group_photo.jpg', photo_content, 'image/jpeg')
+                'photo': ('group_photo.jpg', processed_photo_content, 'image/jpeg')
             }
             data = {
                 'chat_id': chat_id

@@ -5,6 +5,8 @@ import tempfile
 import requests
 import logging
 import shutil
+from io import BytesIO
+from PIL import Image
 from typing import Optional, Dict
 from telethon import TelegramClient
 from telethon.tl.functions.messages import CreateChatRequest
@@ -67,8 +69,8 @@ class TempTelegramClient:
             finally:
                 self.temp_session_path = None
 
-    async def _download_image_from_url(self, url: str) -> Optional[str]:
-        """从URL下载图片到临时文件"""
+    async def _process_image_from_url(self, url: str) -> Optional[BytesIO]:
+        """从URL下载图片并处理为BytesIO对象"""
         try:
             logger.info(f"开始下载图片: {url}")
             
@@ -76,42 +78,90 @@ class TempTelegramClient:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             
+            # 下载图片
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=30))
             response.raise_for_status()
             
-            # 获取文件扩展名
-            content_type = response.headers.get('content-type', '').lower()
-            if 'image/jpeg' in content_type or 'image/jpg' in content_type:
-                ext = '.jpg'
-            elif 'image/png' in content_type:
-                ext = '.png'
-            elif 'image/webp' in content_type:
-                ext = '.webp'
-            elif 'image/gif' in content_type:
-                ext = '.gif'
-            else:
-                url_lower = url.lower()
-                if url_lower.endswith(('.jpg', '.jpeg')):
-                    ext = '.jpg'
-                elif url_lower.endswith('.png'):
-                    ext = '.png'
-                elif url_lower.endswith('.webp'):
-                    ext = '.webp'
-                elif url_lower.endswith('.gif'):
-                    ext = '.gif'
-                else:
-                    ext = '.jpg'
+            logger.info(f"成功下载图片，大小: {len(response.content)} bytes")
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
-                temp_file.write(response.content)
-                logger.info(f"成功下载图片到: {temp_file.name}, 大小: {len(response.content)} bytes")
-                return temp_file.name
-                
+            # 处理图片
+            processed_image = await loop.run_in_executor(
+                None, 
+                self._process_avatar_image, 
+                response.content
+            )
+            
+            return processed_image
+            
         except Exception as e:
-            logger.error(f"下载图片失败: {e}")
+            logger.error(f"下载处理图片失败: {e}")
             return None
-    
+
+    def _process_avatar_image(self, image_data: bytes, min_size: int = 512) -> BytesIO:
+        """处理头像图片内容"""
+        try:            
+            # 打开图片
+            img = Image.open(BytesIO(image_data))
+            
+            # 获取原始尺寸
+            width, height = img.size
+            logger.info(f"原始图片尺寸: {width}x{height}, 格式: {img.format}")
+            
+            # 检查是否需要处理
+            needs_processing = False
+            
+            # 转换为RGB（如果是RGBA或其他格式）
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+                needs_processing = True
+                logger.info(f"转换 {img.mode} 到 RGB")
+            
+            # 如果图片太小，放大到最小尺寸
+            if width < min_size or height < min_size:
+                logger.info(f"图片尺寸过小，将处理到至少 {min_size}x{min_size}")
+                # 保持纵横比，放大到最小尺寸
+                ratio = max(min_size / width, min_size / height)
+                new_width = int(width * ratio)
+                new_height = int(height * ratio)
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                logger.info(f"放大后尺寸: {new_width}x{new_height}")
+                needs_processing = True
+            
+            # 裁剪为正方形（如果不是正方形）
+            if img.width != img.height:
+                size = min(img.size)
+                left = (img.width - size) // 2
+                top = (img.height - size) // 2
+                img = img.crop((left, top, left + size, top + size))
+                logger.info(f"裁剪后尺寸: {size}x{size}")
+                needs_processing = True
+            
+            # 强制处理为 JPEG 格式（Telegram 头像要求）
+            needs_processing = True
+            
+            # 保存处理后的图片到BytesIO
+            output = BytesIO()
+            img.save(output, format='JPEG', quality=95)
+            output.seek(0)
+            return output
+            
+        except Exception as e:
+            logger.error(f"图片处理失败: {e}")
+            # 尝试简单的格式转换作为fallback
+            try:
+                img = Image.open(BytesIO(image_data))
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                output = BytesIO()
+                img.save(output, format='JPEG', quality=95)
+                output.seek(0)
+                return output
+            except Exception as fallback_error:
+                logger.error(f"Fallback处理也失败: {fallback_error}")
+                return BytesIO(image_data)
+
     async def _set_group_avatar(self, client, chat_id: int, avatar_url: str) -> bool:
         """设置群组头像"""
         if not avatar_url:
@@ -120,23 +170,26 @@ class TempTelegramClient:
         try:
             logger.info(f"开始设置群组头像: {avatar_url}")
             
-            temp_image_path = await self._download_image_from_url(avatar_url)
+            # 下载并处理图片
+            processed_image_data = await self._process_image_from_url(avatar_url)
             
-            if not temp_image_path:
-                logger.error("下载头像图片失败")
+            if not processed_image_data:
+                logger.error("下载或处理头像图片失败")
                 return False
             
-            # 处理图片尺寸
-            processed_image_path = None
             try:
-                processed_image_path = await self._process_avatar_image_file(temp_image_path)
-                if not processed_image_path:
-                    logger.warning("图片处理失败，使用原图")
-                    processed_image_path = temp_image_path
-                
                 if chat_id < 0:  # 普通群组ID是负数
                     original_chat_id = abs(chat_id)
-                    uploaded_photo = await client.upload_file(processed_image_path)
+                    
+                    # 确保BytesIO指针在开始位置
+                    processed_image_data.seek(0)
+                    
+                    # 直接使用 BytesIO 上传，指定正确的文件名
+                    uploaded_photo = await client.upload_file(
+                        processed_image_data,
+                        file_name="avatar.jpg"
+                    )
+                    
                     await client(EditChatPhotoRequest(
                         chat_id=original_chat_id,
                         photo=InputChatUploadedPhoto(uploaded_photo)
@@ -145,81 +198,13 @@ class TempTelegramClient:
                 
                 return True
                 
-            finally:
-                # 清理临时文件
-                for temp_file in [temp_image_path, processed_image_path]:
-                    if temp_file and os.path.exists(temp_file):
-                        try:
-                            os.unlink(temp_file)
-                            logger.info(f"已清理临时文件: {temp_file}")
-                        except Exception as e:
-                            logger.error(f"清理临时文件失败: {e}")
+            except Exception as e:
+                logger.error(f"上传头像失败: {e}")
+                return False
                             
         except Exception as e:
             logger.error(f"设置群组头像失败: {e}")
             return False
-
-    async def _process_avatar_image_file(self, image_path: str, min_size: int = 512) -> str:
-        """处理头像图片文件尺寸"""
-        try:
-            import asyncio
-            from PIL import Image
-            import tempfile
-            import os
-            
-            def process_image():
-                try:
-                    # 检查原图尺寸
-                    with Image.open(image_path) as img:
-                        width, height = img.size
-                        logger.info(f"原始图片尺寸: {width}x{height}")
-                        
-                        # 如果尺寸已经足够，直接返回原文件
-                        if width >= min_size and height >= min_size:
-                            logger.info("图片尺寸符合要求，无需处理")
-                            return image_path
-                        
-                        # 需要处理的情况
-                        logger.info(f"图片尺寸过小，将处理到至少 {min_size}x{min_size}")
-                        
-                        # 转换为RGB（如果是RGBA）
-                        if img.mode == 'RGBA':
-                            img = img.convert('RGB')
-                        
-                        # 如果图片太小，放大到最小尺寸
-                        if width < min_size or height < min_size:
-                            # 保持纵横比，放大到最小尺寸
-                            ratio = max(min_size / width, min_size / height)
-                            new_width = int(width * ratio)
-                            new_height = int(height * ratio)
-                            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                            logger.info(f"放大后尺寸: {new_width}x{new_height}")
-                        
-                        # 裁剪为正方形（取中心部分）
-                        size = min(img.size)
-                        left = (img.width - size) // 2
-                        top = (img.height - size) // 2
-                        img = img.crop((left, top, left + size, top + size))
-                        logger.info(f"裁剪后尺寸: {size}x{size}")
-                        
-                        # 保存处理后的图片到临时文件
-                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
-                            img.save(temp_file.name, format='JPEG', quality=95)
-                            logger.info(f"处理后的图片保存到: {temp_file.name}")
-                            return temp_file.name
-                            
-                except Exception as e:
-                    logger.error(f"图片处理过程中出错: {e}")
-                    return None
-            
-            # 在线程池中处理图片（避免阻塞）
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, process_image)
-            return result
-            
-        except Exception as e:
-            logger.error(f"图片处理失败: {e}")
-            return None
     
     async def _save_chat_wxid_mapping(self, wxid: str, name: str, chat_id: int, avatar_url: str = None):
         """保存群组ID和微信ID的映射关系到contact.json"""

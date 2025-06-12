@@ -278,8 +278,8 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         if msg_type == "open_chat" and (from_wxid.endswith('@placeholder_foldgroup') or (from_wxid == 'notification_messages')):
             return
         
-        logger.info(f"处理器收到消息: 类型={msg_type}, 来自={from_wxid}, 发送者={sender_wxid}")
-        logger.info(f"内容={content}")
+        logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
+        logger.info(f"💬 内容: {content}")
 
         # 获取或创建群组
         chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
