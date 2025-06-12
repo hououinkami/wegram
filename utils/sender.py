@@ -16,6 +16,9 @@ from utils.msgid import msgid_mapping
 from utils.sticker import get_sticker_info
 from utils.locales import Locale
 import config
+from pathlib import Path
+import pilk
+import ffmpeg
 
 locale = Locale(config.LANG)
 
@@ -121,6 +124,10 @@ async def forward_telegram_to_wx(chat_id: str, message: dict) -> bool:
         elif 'sticker' in message:
             # 贴纸消息
             return _send_telegram_sticker(to_wxid, message['sticker'])
+        
+        elif 'voice' in message:
+            # 语音消息
+            return _send_telegram_voice(to_wxid, message['voice'])
 
         else:
             return False
@@ -222,6 +229,79 @@ def _send_telegram_sticker(to_wxid: str, sticker: dict) -> bool:
     except Exception as e:
         logger.error(f"处理贴纸时出错: {e}")
         return False
+
+def _send_telegram_voice(to_wxid: str, voice: dict):
+    """发送语音消息到微信"""
+    if not voice:
+        logger.error("未收到语音数据")
+        return False
+
+    # 语音信息
+    file_id = voice.get('file_id')
+    duration = voice.get('duration', 0)
+    file_size = voice.get('file_size', 0)
+    download_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "download")
+    voice_dir = os.path.join(download_dir, "voice")
+    
+    local_voice_path = None
+    silk_path = None
+    
+    try:
+        # 确保语音目录存在
+        os.makedirs(voice_dir, exist_ok=True)
+        
+        # 1. 下载Telegram语音文件
+        local_voice_path = _download_telegram_voice(file_id, voice_dir)
+        if not local_voice_path:
+            logger.error("下载Telegram语音文件失败")
+            return False
+        
+        # 2. 转换为SILK格式
+        silk_path = _convert_voice_to_silk(local_voice_path, file_id, voice_dir)
+        if not silk_path:
+            logger.error("转换语音文件为SILK格式失败")
+            return False
+        
+        # 3. 生成base64
+        silk_base64 = local_file_to_base64(silk_path)
+        if not silk_base64:
+            logger.error("转换SILK文件为base64失败")
+            return False
+        
+        logger.info(f"SILK文件转换完成 - base64长度: {len(silk_base64)} 字符")
+
+        # 4. 发送SILK语音到微信
+        voice_time = duration * 1000  # 如果微信API需要毫秒
+        
+        payload = {
+            "Base64": silk_base64,
+            "ToWxid": to_wxid,
+            "Type": 4,
+            "VoiceTime": voice_time,
+            "Wxid": config.MY_WXID
+        }
+        
+        return wechat_api("/Msg/SendVoice", payload)
+    
+    except Exception as e:
+        logger.error(f"处理Telegram语音消息失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+    finally:
+        # 清理临时文件
+        files_to_clean = [
+            (local_voice_path, "原始语音文件"),
+            (silk_path, "SILK文件")
+        ]
+        
+        for file_path, file_type in files_to_clean:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"清理{file_type}: {file_path}")
+                except Exception as e:
+                    logger.warning(f"清理{file_type}失败 {file_path}: {e}")
 
 def _send_telegram_reply(to_wxid: str, message: dict):
     """发送回复消息到微信"""
@@ -337,6 +417,171 @@ def get_file_base64(file_id):
     file_base64 = base64.b64encode(file_response.content).decode('utf-8')
     return file_base64
 
+def local_file_to_base64(file_path: str) -> str:
+    """将本地文件转换为base64编码"""
+    try:
+        if not os.path.exists(file_path):
+            logger.error(f"文件不存在: {file_path}")
+            return None
+            
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+            
+        file_base64 = base64.b64encode(file_content).decode('utf-8')
+        return file_base64
+        
+    except Exception as e:
+        logger.error(f"转换文件为base64失败 {file_path}: {e}")
+        return None
+
+def _download_telegram_voice(file_id: str, voice_dir: str) -> str:
+    """
+    下载Telegram语音文件
+    
+    Args:
+        file_id: Telegram文件ID
+        voice_dir: 语音文件保存目录
+        
+    Returns:
+        str: 下载成功返回本地文件路径，失败返回None
+    """
+    try:
+        tg_base_url = f"https://api.telegram.org/bot{config.BOT_TOKEN}"
+        
+        # 1. 获取文件信息
+        get_file_url = f"{tg_base_url}/getFile"
+        response = requests.get(get_file_url, params={"file_id": file_id})
+        
+        if not response.ok:
+            logger.error(f"获取文件信息失败: {response.text}")
+            return None
+        
+        file_info = response.json()
+        if not file_info.get("ok"):
+            logger.error(f"Telegram API错误: {file_info}")
+            return None
+        
+        file_path = file_info["result"]["file_path"]
+        
+        # 2. 构建下载URL和本地路径
+        download_url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_path}"
+        
+        # 生成本地文件名（使用file_id作为文件名，保持原扩展名）
+        file_extension = Path(file_path).suffix or ".ogg"
+        local_filename = f"{file_id}{file_extension}"
+        local_voice_path = os.path.join(voice_dir, local_filename)
+        
+        # 3. 下载文件
+        with requests.get(download_url, stream=True, timeout=30) as r:
+            r.raise_for_status()
+            with open(local_voice_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        
+        # 4. 验证下载的文件
+        downloaded_size = os.path.getsize(local_voice_path)
+        logger.info(f"语音文件下载完成 - 路径: {local_voice_path}, 大小: {downloaded_size} bytes")
+        
+        if downloaded_size == 0:
+            logger.error("下载的语音文件为空")
+            os.remove(local_voice_path)
+            return None
+        
+        return local_voice_path
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"下载语音文件失败: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"下载过程中出现异常: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+def _convert_voice_to_silk(input_path: str, file_id: str, voice_dir: str) -> str:
+    """
+    将语音文件转换为SILK格式
+    
+    Args:
+        input_path: 输入语音文件路径
+        file_id: 文件ID（用于生成输出文件名）
+        voice_dir: 输出目录
+        
+    Returns:
+        str: 转换成功返回SILK文件路径，失败返回None
+    """
+    pcm_path = None
+    try:
+        # 1. 转换为PCM格式
+        pcm_filename = f"{file_id}.pcm"
+        pcm_path = os.path.join(voice_dir, pcm_filename)
+        
+        # 使用ffmpeg转换
+        try:
+            (
+                ffmpeg
+                .input(input_path)
+                .output(
+                    pcm_path,
+                    format='s16le',          # 输出格式：16位小端PCM
+                    acodec='pcm_s16le',      # 音频编码器
+                    ar=44100,                # 采样率44100Hz
+                    ac=1                     # 单声道
+                )
+                .overwrite_output()          # 覆盖输出文件
+                .run(quiet=True)             # 静默运行，不输出到控制台
+            )
+            
+            # 验证PCM文件
+            if not os.path.exists(pcm_path):
+                logger.error("PCM文件未生成")
+                return None
+            
+            pcm_size = os.path.getsize(pcm_path)
+            logger.info(f"PCM转换完成 - 大小: {pcm_size} bytes")
+
+        except ffmpeg.Error as e:
+            logger.error(f"ffmpeg转换失败: {e.stderr.decode() if e.stderr else str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"ffmpeg转换过程中出现异常: {e}")
+            return None
+        
+        # 2. 转换为SILK格式
+        silk_filename = f"{file_id}.silk"
+        silk_path = os.path.join(voice_dir, silk_filename)
+        
+        # 使用pilk转换
+        silk_duration = pilk.encode(
+            pcm_path, 
+            silk_path, 
+            pcm_rate=44100, 
+            tencent=True
+        )
+        
+        # 验证SILK文件
+        if not os.path.exists(silk_path):
+            logger.error("SILK文件未生成")
+            return None
+        
+        silk_size = os.path.getsize(silk_path)
+        logger.info(f"SILK转换完成 - 路径: {silk_path}, 大小: {silk_size} bytes, 时长: {silk_duration}ms")
+        
+        return silk_path
+        
+    except Exception as e:
+        logger.error(f"转换过程中出现异常: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+    finally:
+        # 清理PCM临时文件
+        if pcm_path and os.path.exists(pcm_path):
+            try:
+                os.remove(pcm_path)
+                logger.debug(f"清理PCM临时文件: {pcm_path}")
+            except Exception as e:
+                logger.warning(f"清理PCM临时文件失败 {pcm_path}: {e}")
 
 # 添加msgid映射
 def add_send_msgid(wx_api_response, tg_msgid):
@@ -353,10 +598,10 @@ def add_send_msgid(wx_api_response, tg_msgid):
         response_data = data
 
     if response_data:
-        to_wx_id = multi_get(response_data, 'ToUsetName.string', 'toUserName')
+        to_wx_id = multi_get(response_data, 'ToUsetName.string', 'toUserName', 'ToUserName')
         new_msg_id = multi_get(response_data, 'NewMsgId', 'Newmsgid', 'newMsgId')
         client_msg_id = multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
-        create_time = multi_get(response_data, 'Createtime', 'createtime', 'createTime')
+        create_time = multi_get(response_data, 'Createtime', 'createtime', 'createTime', 'CreateTime')
         if new_msg_id:
             msgid_mapping.add(
                 tg_msg_id=tg_msgid,
