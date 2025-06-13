@@ -40,8 +40,9 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         
         # 判断消息类型并处理
         if "text" in message:
+            message_text = message["text"]
             # 更新联系人信息
-            if "/update" in message["text"]:
+            if "/update" in message_text:
                 to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
                 if not to_wxid:
                     return False
@@ -50,16 +51,21 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 return
             
             # 删除联系人数据
-            if "/unbind" in message["text"]:
+            if "/unbind" in message_text:
                 to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
                 await contact_manager.delete_contact(to_wxid)
                 return
             
             # 撤回
-            if "/rm" in message["text"] or "/revoke" in message["text"]:
+            if message_text in ["/rm", "/revoke"]:
                 if "reply_to_message" in message:
                     _revoke_telegram(chat_id, message)
                     return
+                
+            # 发送微信emoji
+            if message_text.startswith('/'):
+                emoji_text = '[' + message_text[1:] + ']'
+                message["text"] = emoji_text
 
         # 转发消息
         wx_api_response = await forward_telegram_to_wx(chat_id, message)
@@ -366,15 +372,16 @@ def _send_telegram_link(to_wxid: str, message: dict):
         return wechat_api('/Msg/SendApp', playload)
 
 def _revoke_telegram(chat_id, message: dict):
-
     try:
         delete_message = message["reply_to_message"]
         delete_message_id = delete_message["message_id"]
         delete_wx_msgid = msgid_mapping.tg_to_wx(delete_message_id)
 
+        # 撤回失败时发送提示
         if not delete_wx_msgid:
             return telegram_api(chat_id, locale.common('revoke'))
         
+        # 撤回
         to_wxid = delete_wx_msgid["towxid"]
         new_msg_id = delete_wx_msgid["msgid"]
         client_msg_id = delete_wx_msgid["clientmsgid"]
@@ -388,6 +395,14 @@ def _revoke_telegram(chat_id, message: dict):
             "Wxid": config.MY_WXID
         }
         wechat_api("/Msg/Revoke", playload)
+
+        # 删除撤回命令对应的消息
+        delete_api = f"https://api.telegram.org/bot{config.BOT_TOKEN}/deleteMessage"
+        data = {
+            'chat_id': chat_id,
+            'message_id': message["message_id"]
+        }
+        requests.post(delete_api, data=data)
         
     except Exception as e:
         logger.error(f"处理消息删除逻辑时出错: {e}")
@@ -445,11 +460,9 @@ def _download_telegram_voice(file_id: str, voice_dir: str) -> str:
     Returns:
         str: 下载成功返回本地文件路径，失败返回None
     """
-    try:
-        tg_base_url = f"https://api.telegram.org/bot{config.BOT_TOKEN}"
-        
+    try:        
         # 1. 获取文件信息
-        get_file_url = f"{tg_base_url}/getFile"
+        get_file_url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/getFile"
         response = requests.get(get_file_url, params={"file_id": file_id})
         
         if not response.ok:
