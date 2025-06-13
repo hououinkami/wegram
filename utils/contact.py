@@ -19,7 +19,7 @@ class ContactManager:
     def __init__(self):
         self.contacts = []
         self.wxid_to_contact = {}
-        self.chatid_to_wxid = {} 
+        self.chatid_to_wxid = {}
         self.last_modified_time = 0
         self.contact_file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contact.json")
         
@@ -159,8 +159,7 @@ class ContactManager:
             return False
     
     # 异步创建群组
-    async def create_group_for_contact_async(self, wxid: str, contact_name: str, bot_token: str = None, 
-                                            description: str = "", avatar_url: str = None) -> Optional[Dict]:
+    async def create_group_for_contact_async(self, wxid: str, contact_name: str, bot_token: str = None, description: str = "", avatar_url: str = None) -> Optional[Dict]:
         """异步方式创建群组"""
         logger.info(f"开始创建群组: {contact_name}")
         

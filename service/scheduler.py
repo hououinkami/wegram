@@ -108,7 +108,7 @@ class DailyRandomScheduler:
             logger.error(f"❌ 执行任务时发生错误: {e}")
     
     def scheduler_loop(self):
-        """调度器主循环"""        
+        """调度器主循环"""
         while self.is_running:
             try:
                 current_time = datetime.now()

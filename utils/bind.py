@@ -81,8 +81,8 @@ class TempTelegramClient:
             
             # 处理图片
             processed_image = await loop.run_in_executor(
-                None, 
-                self._process_avatar_image, 
+                None,
+                self._process_avatar_image,
                 response.content
             )
             
@@ -94,7 +94,7 @@ class TempTelegramClient:
 
     def _process_avatar_image(self, image_data: bytes, min_size: int = 512) -> BytesIO:
         """处理头像图片内容"""
-        try:            
+        try:
             # 打开图片
             img = Image.open(BytesIO(image_data))
             
@@ -271,7 +271,7 @@ class TempTelegramClient:
             logger.error(f"检查映射失败: {e}")
             return None
         
-    async def create_group_with_bot(self, wxid: str, contact_name: str, 
+    async def create_group_with_bot(self, wxid: str, contact_name: str,
                                description: str = "", avatar_url: str = None) -> Dict:
         """创建群组并添加机器人"""
         client = None
@@ -282,11 +282,11 @@ class TempTelegramClient:
             if existing_contact:
                 logger.info(f"该微信ID {wxid} 已有群组映射，群组ID: {existing_contact.get('chatId')}")
                 return {
-                    'success': True, 
-                    'chat_id': existing_contact.get('chatId'), 
+                    'success': True,
+                    'chat_id': existing_contact.get('chatId'),
                     'group_name': existing_contact.get('name'),
-                    'group_type': 'group', 
-                    'bot_invited': True, 
+                    'group_type': 'group',
+                    'bot_invited': True,
                     'bot_is_admin': True,
                     'avatar_set': True,
                     'already_exists': True
@@ -299,8 +299,8 @@ class TempTelegramClient:
             
             # 使用临时session创建客户端
             client = TelegramClient(
-                temp_session_path, 
-                config.API_ID, 
+                temp_session_path,
+                config.API_ID,
                 config.API_HASH,
                 device_model=getattr(config, 'DEVICE_MODEL', 'WeGram')
             )
@@ -314,7 +314,7 @@ class TempTelegramClient:
                 if hasattr(config, 'BOT_TOKEN') and config.BOT_TOKEN:
                     # BOT_TOKEN格式: bot_id:token
                     bot_id = config.BOT_TOKEN.split(':')[0]
-                    bot_entity = await client.get_entity(int(bot_id)) 
+                    bot_entity = await client.get_entity(int(bot_id))
                 # 尝试从监控服务获取
                 else:
                     from service.tg2wx import get_client
@@ -356,7 +356,7 @@ class TempTelegramClient:
             group_name = f"{contact_name}"
             
             result = await client(CreateChatRequest(
-                users=[bot_entity], 
+                users=[bot_entity],
                 title=group_name
             ))
             
@@ -373,8 +373,8 @@ class TempTelegramClient:
                 await asyncio.sleep(1)
                 dialogs = await client.get_dialogs(limit=20)
                 for dialog in dialogs:
-                    if (dialog.title == group_name and 
-                        dialog.is_group and 
+                    if (dialog.title == group_name and
+                        dialog.is_group and
                         not dialog.is_channel):
                         chat_id = dialog.id
                         break
@@ -418,11 +418,11 @@ class TempTelegramClient:
             await self._save_chat_wxid_mapping(wxid, contact_name, chat_id, avatar_url)
             
             return {
-                'success': True, 
-                'chat_id': chat_id, 
+                'success': True,
+                'chat_id': chat_id,
                 'group_name': group_name,
-                'group_type': 'group', 
-                'bot_invited': True, 
+                'group_type': 'group',
+                'bot_invited': True,
                 'bot_is_admin': bot_is_admin,
                 'avatar_set': avatar_set,
                 'mapping_updated': True

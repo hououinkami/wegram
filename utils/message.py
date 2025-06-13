@@ -187,7 +187,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
     """异步处理单条消息"""
 
     def _send_message_with_handler(chat_id: int, msg_type: Any, handler_params: dict) -> dict:
-        """使用处理器发送消息的通用方法"""        
+        """使用处理器发送消息的通用方法"""
         handlers = _get_message_handlers()
         
         if msg_type in handlers:
@@ -437,7 +437,7 @@ def process_chathistory(content):
     count = chat_json['datalist']['count']
     
     # 提取所有 sourcetime 并转换为 datetime 对象
-    data_items = chat_json['datalist']['dataitem']        
+    data_items = chat_json['datalist']['dataitem']
     sourcetimes_dt = [parse_time_without_seconds(item['sourcetime']) for item in data_items]
     
     # 确定日期范围
@@ -554,7 +554,7 @@ def extract_message(data):
         return None
 
 def process_message(message_data: Dict[str, Any]) -> None:
-    """处理微信消息"""    
+    """处理微信消息"""
     try:
         message_info = extract_message(message_data)
         if not message_info:

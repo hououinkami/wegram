@@ -39,7 +39,7 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             return
         
         # 判断消息类型并处理
-        if "text" in message:        
+        if "text" in message:
             # 更新联系人信息
             if "/update" in message["text"]:
                 to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
@@ -66,7 +66,7 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         
         # 将消息添加进映射
         if wx_api_response:
-            add_send_msgid(wx_api_response, message_id)  
+            add_send_msgid(wx_api_response, message_id)
 
 # 转发函数
 async def forward_telegram_to_wx(chat_id: str, message: dict) -> bool:
@@ -78,7 +78,7 @@ async def forward_telegram_to_wx(chat_id: str, message: dict) -> bool:
     
     try:
         # 判断消息类型并处理
-        if 'text' in message:      
+        if 'text' in message:
             text = message.get('text', '')
 
             # 判断是否为单纯文本信息
@@ -101,7 +101,7 @@ async def forward_telegram_to_wx(chat_id: str, message: dict) -> bool:
                 return _send_telegram_link(to_wxid, message)
             elif "entities" in message and entity.get('type') == "expandable_blockquote":
                 # 转发群聊消息时去除联系人
-                text = text.split('\n', 1)[1] 
+                text = text.split('\n', 1)[1]
                 return _send_telegram_text(to_wxid, text)
             else:
                 # 纯文本消息
@@ -331,7 +331,7 @@ def _send_telegram_reply(to_wxid: str, message: dict):
         return False
 
 def _send_telegram_link(to_wxid: str, message: dict):
-    """处理链接信息"""    
+    """处理链接信息"""
     text = message.get('text', '')
 
     msg_entities = message.get('entities', [])
@@ -795,7 +795,7 @@ async def _send_telethon_photo(to_wxid: str, photo, client) -> bool:
         return False
 
 async def _send_telethon_video(to_wxid: str, video, client) -> bool:
-    """发送视频消息到微信"""    
+    """发送视频消息到微信"""
     temp_path = None
     try:
         if not client:
@@ -888,7 +888,7 @@ async def _send_telethon_sticker(to_wxid: str, sticker, client) -> bool:
         file_unique_id = str(document.id)
         logger.info(f"贴纸document_id: {file_unique_id}")
         
-        try:       
+        try:
             sticker_info = get_sticker_info(file_unique_id)
             
             if sticker_info:
