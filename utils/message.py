@@ -25,6 +25,7 @@ from utils.msgid import msgid_mapping
 from utils import format
 
 locale = Locale(config.LANG)
+black_list = ['open_chat', 'bizlivenotify', 74]
 
 def _get_message_handlers():
     """返回消息类型处理器映射"""
@@ -40,6 +41,7 @@ def _get_message_handlers():
         57: _forward_quote,
         33: _forward_miniprogram,
         51: _forward_channel,
+        2000: _forward_transfer,
         "revokemsg": _forward_revoke,
         "pat": _forward_pat,
         "VoIPBubbleMsg": _forward_voip
@@ -144,7 +146,17 @@ def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwargs) ->
         return telegram_api(chat_id, send_text)
     except (KeyError, TypeError) as e:
         raise Exception("视频号信息提取失败")
-        
+
+def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理转账"""
+    try:
+        money = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {}).get('feedesc')
+        channel_content = format.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{money}")
+        send_text = f"{sender_name}\n{channel_content}"
+        return telegram_api(chat_id, send_text)
+    except (KeyError, TypeError) as e:
+        raise Exception("转账信息提取失败")
+    
 def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理撤回消息"""
     revoke_msg = content["sysmsg"]["revokemsg"]
@@ -188,7 +200,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                 return telegram_api(chat_id, send_text)
         else:
             # 处理未知消息类型
-            logger.warning(f"未知消息类型: {msg_type}")
+            logger.warning(f"❓未知消息类型: {msg_type}")
             type_text = format.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
             send_text = f"{handler_params['sender_name']}\n{type_text}"
             return telegram_api(chat_id, send_text)
@@ -281,8 +293,8 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         # 获取或创建群组
         chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
 
-        # 跳过激活对话框时发送的不明类型消息
-        if not chat_id or msg_type in ['open_chat', 'bizlivenotify']:
+        # 跳过指定的不明类型消息
+        if not chat_id or msg_type in black_list:
             return
         
         # 输出信息便于调试
@@ -554,14 +566,6 @@ def process_message(message_data: Dict[str, Any]) -> None:
             return
         
         message_processor.add_message(message_info)
-
-        # try:
-        #     loop = asyncio.get_running_loop()
-        #     # 如果有运行的循环，创建异步任务
-        #     loop.create_task(_process_message_async(message_info))
-        # except RuntimeError:
-        #     # 没有运行的循环时，直接运行
-        #     asyncio.run(_process_message_async(message_info))
             
     except Exception as e:
         logger.error(f"消息处理失败: {e}", exc_info=True)
