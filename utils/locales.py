@@ -28,7 +28,10 @@ class LocaleConfig:
                 'offline': "🔴 WeChatがオフラインしました",
                 'revoke': "❌ 撤回失敗",
                 'receive_on': "✅ 転送オン",
-                'receive_off': "❌ 転送オフ"
+                'receive_off': "❌ 転送オフ",
+                'unbind': "連絡先から削除しました",
+                "twice_login_success": "✅ 二次ログイン成功",
+                "twice_login_fail": "❌ 二次ログイン失敗"
             }
         },
         'zh': {
@@ -59,7 +62,10 @@ class LocaleConfig:
                 'offline': "🔴 WeChat已离线",
                 'revoke': "❌ 撤回失败",
                 'receive_on': "✅ 转发开启",
-                'receive_off': "❌ 转发关闭"
+                'receive_off': "❌ 转发关闭",
+                'unbind': "从联系人文件中删除成功",
+                "twice_login_success": "✅ 二次登录成功",
+                "twice_login_fail": "❌ 二次登录失敗"
             }
         }
     }

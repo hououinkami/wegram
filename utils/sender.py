@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 import requests
 import base64
 from typing import Dict, Any, Optional
-from api import contact
+from api import contact, login
 from api.base import wechat_api, telegram_api, telegram_message
 from utils.contact import contact_manager
 from utils.msgid import msgid_mapping
@@ -47,13 +47,21 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 if not to_wxid:
                     return False
                 user_info = contact.get_user_info(to_wxid)
+                # 更新TG群组
                 contact.update_info(chat_id, user_info.name, user_info.avatar_url)
+                # 更新映射文件
+                await contact_manager.update_contact_by_chatid(chat_id, {
+                    "name": user_info.name,
+                    "avatarLink": user_info.avatar_url
+                })
                 return
             
             # 删除联系人数据
             if message_text.startswith("/unbind"):
                 to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
-                await contact_manager.delete_contact(to_wxid)
+                unbind_result = await contact_manager.delete_contact(to_wxid)
+                if unbind_result:
+                    telegram_api(chat_id, locale.common("unbind"))
                 return
             
             # 撤回
@@ -64,14 +72,23 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             
             # 是否接受信息
             if message_text.startswith("/message"):
-                await contact_manager.update_contact_by_chatid(chat_id, "isReceive", None)
-                contact = await contact_manager.get_contact_by_chatid(chat_id)
-                if contact["isReceive"]:
+                await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
+                contact_now = await contact_manager.get_contact_by_chatid(chat_id)
+                if contact_now["isReceive"]:
                     telegram_api(chat_id, locale.common("receive_on"))
                 else:
                     telegram_api(chat_id, locale.common("receive_off"))
                 return
-
+            
+            # 执行二次登录
+            if message_text.startswith("/login"):
+                relogin = login.twice_login(config.MY_WXID)
+                if relogin.get('Message') == "登录成功":
+                    telegram_api(chat_id, locale.common("twice_login_success"))
+                else:
+                    telegram_api(chat_id, locale.common("twice_login_fail"))
+                return
+            
             # 发送微信emoji
             if message_text.startswith('/'):
                 emoji_text = '[' + message_text[1:] + ']'

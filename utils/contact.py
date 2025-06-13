@@ -158,7 +158,7 @@ class ContactManager:
             logger.error(f"通过ChatID删除联系人失败: {chat_id}, 错误: {e}")
             return False
     
-    async def update_contact_by_chatid(self, chat_id: int, key: str, value: any) -> bool:
+    async def update_contact_by_chatid(self, chat_id: int, updates: dict) -> bool:
         """通过ChatID更新联系人的指定字段"""
         try:
             # 先加载最新的联系人信息
@@ -179,23 +179,26 @@ class ContactManager:
             if contact_index == -1:
                 return False
             
-            # 特殊处理 isReceive 和 isGroup 字段 - 切换布尔值
-            if key in ["isReceive", "isGroup"]:
-                current_value = self.contacts[contact_index].get(key, False)
-                value = not current_value  # 切换布尔值
-            
-            # 更新指定字段
-            self.contacts[contact_index][key] = value
-            
-            # 同步更新内存中的映射
-            self.wxid_to_contact[wxid][key] = value
+            # 批量更新字段
+            for key, value in updates.items():
+                # 特殊处理切换布尔值
+                if value == "toggle" and key in ["isReceive", "isGroup"]:
+                    current_value = self.contacts[contact_index].get(key, False)
+                    value = not current_value
+                elif key in ["isReceive", "isGroup"] and isinstance(value, str):
+                    # 如果传入字符串，转换为布尔值
+                    value = value.lower() in ['true', '1', 'yes', 'on']
+                
+                # 更新字段
+                self.contacts[contact_index][key] = value
+                self.wxid_to_contact[wxid][key] = value
             
             # 保存到文件
             await self._save_contacts()
             return True
             
         except Exception as e:
-            logger.error(f"更新联系人字段失败 - ChatID: {chat_id}, 字段: {key}, 值: {value}, 错误: {e}")
+            logger.error(f"更新联系人字段失败 - ChatID: {chat_id}, 更新: {updates}, 错误: {e}")
             return False
     
     # 异步创建群组

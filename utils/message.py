@@ -213,11 +213,11 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             logger.info(f"已删除联系人信息: {from_wxid}")
             
             # 重新获取或创建聊天群组
-            contact_name, avatar_url = _get_contact_info(from_wxid, content, push_content)
+            contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
             
             # 创建新群组
             logger.info(f"尝试重新创建群组: {from_wxid}")
-            new_chat_id = await _create_group_for_contact_async(from_wxid, contact_name, avatar_url)
+            new_chat_id = await _create_group_for_contact(from_wxid, contact_name, avatar_url)
             
             if new_chat_id:
                 logger.info(f"群组重新创建成功: {from_wxid} -> {new_chat_id}")
@@ -261,13 +261,13 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             sender_wxid = from_wxid
         
         # 获取联系人信息
-        contact_name, avatar_url = _get_contact_info(from_wxid, content, push_content)
+        contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
 
         # 获取发送者信息
         if sender_wxid == from_wxid:
             sender_name = contact_name
         else:
-            sender_name, _ = _get_contact_info(sender_wxid, content, push_content)
+            sender_name, _ = await _get_contact_info(sender_wxid, content, push_content)
 
         # 微信上打开联系人对话是否新建关联群组
         if msg_type == 51:
@@ -356,15 +356,19 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"异步消息处理失败: {e}", exc_info=True)
 
-def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
+async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
     """获取联系人显示信息，处理特殊情况"""
-    user_info = contact.get_user_info(wxid)
-
-    if not user_info.name:   
-        return
+    # 先读取已保存的联系人
+    contact_saved = await contact_manager.get_contact(wxid)
+    if contact_saved:
+        contact_name = contact_saved["name"]
+        avatar_url = contact_saved["avatarLink"]
     
+    # 直接利用API获取联系人
+    user_info = contact.get_user_info(wxid)
     contact_name = user_info.name
     avatar_url = user_info.avatar_url
+
     # 企业微信
     if contact_name == "未知用户" and push_content:
         contact_name = push_content.split(" : ")[0]
@@ -372,6 +376,7 @@ def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
         avatar_url = "https://raw.githubusercontent.com/hououinkami/wechat2tg/refs/heads/wx2tg-mac-dev/qywx.jpg"
         if contact_name == "未知用户":
             contact_name = "企业微信"
+            
     # 服务通知
     if wxid == "service_notification":
         if isinstance(content, dict):
@@ -381,7 +386,7 @@ def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
 
     return contact_name, avatar_url
 
-async def _create_group_for_contact_async(wxid: str, contact_name: str, avatar_url: str = None) -> Optional[int]:
+async def _create_group_for_contact(wxid: str, contact_name: str, avatar_url: str = None) -> Optional[int]:
     """异步创建群组"""
     try:
         if not wxid or not contact_name:
@@ -424,7 +429,7 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str)
         return None
     
     # 创建群组
-    chat_id = await _create_group_for_contact_async(from_wxid, sender_name, avatar_url)
+    chat_id = await _create_group_for_contact(from_wxid, sender_name, avatar_url)
     if not chat_id:
         logger.warning(f"无法创建聊天群组: {from_wxid}")
         return None

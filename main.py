@@ -288,7 +288,7 @@ def main():
     logger.info(f"发现可用服务: {', '.join(available_services)}")
     
     # 需要启动的服务
-    services_to_start = ["wx2tg", "tg2wx", "scheduler"]
+    services_to_start = ["wx2tg", "tg2wx", "login", "scheduler"]
     
     # 检查服务是否可用
     for service_name in services_to_start:
