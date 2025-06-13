@@ -10,7 +10,7 @@ import requests
 import base64
 from typing import Dict, Any, Optional
 from api import contact
-from api.base import wechat_api, telegram_api
+from api.base import wechat_api, telegram_api, telegram_message
 from utils.contact import contact_manager
 from utils.msgid import msgid_mapping
 from utils.sticker import get_sticker_info
@@ -42,7 +42,7 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         if "text" in message:
             message_text = message["text"]
             # 更新联系人信息
-            if "/update" in message_text:
+            if message_text.startswith('/update'):
                 to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
                 if not to_wxid:
                     return False
@@ -51,21 +51,36 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 return
             
             # 删除联系人数据
-            if "/unbind" in message_text:
+            if message_text.startswith("/unbind"):
                 to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
                 await contact_manager.delete_contact(to_wxid)
                 return
             
             # 撤回
-            if message_text in ["/rm", "/revoke"]:
+            if message_text.startswith("/rm") or message_text.startswith("/revoke"):
                 if "reply_to_message" in message:
                     _revoke_telegram(chat_id, message)
                     return
-                
+            
+            # 是否接受信息
+            if message_text.startswith("/message"):
+                await contact_manager.update_contact_by_chatid(chat_id, "isReceive", None)
+                contact = await contact_manager.get_contact_by_chatid(chat_id)
+                if contact["isReceive"]:
+                    telegram_api(chat_id, locale.common("receive_on"))
+                else:
+                    telegram_api(chat_id, locale.common("receive_off"))
+                return
+
             # 发送微信emoji
             if message_text.startswith('/'):
                 emoji_text = '[' + message_text[1:] + ']'
                 message["text"] = emoji_text
+                # 同时编辑TG中的消息内容
+                telegram_message('edit', chat_id, message_id, emoji_text)
+
+            if message_text in ["微笑", "撇嘴", "色", "发呆", "得意", "流泪", "害羞", "闭嘴", "睡", "大哭", "尴尬", "发怒", "调皮", "呲牙", "惊讶", "难过", "囧", "抓狂", "吐", "偷笑", "愉快", "白眼", "傲慢", "困", "惊恐", "憨笑", "悠闲", "咒骂", "疑问", "嘘", "晕", "衰", "骷髅", "敲打", "再见", "擦汗", "抠鼻", "鼓掌", "坏笑", "右哼哼", "鄙视", "委屈", "快哭了", "阴险", "亲亲", "可怜", "笑脸", "生病", "脸红", "破涕为笑", "恐惧", "失望", "无语", "嘿哈", "捂脸", "奸笑", "机智", "皱眉", "耶", "吃瓜", "加油", "汗", "天啊", "Emm", "社会社会", "旺柴", "好的", "打脸", "哇", "翻白眼", "666", "让我看看", "叹气", "苦涩", "裂开", "嘴唇", "爱心", "心碎", "拥抱", "强", "弱", "握手", "胜利", "抱拳", "勾引", "拳头", "OK", "合十", "啤酒", "咖啡", "蛋糕", "玫瑰", "凋谢", "菜刀", "炸弹", "便便", "月亮", "太阳", "庆祝", "礼物", "红包", "发", "福", "烟花", "爆竹", "猪头", "跳跳", "发抖", "转圈", "Smile", "Grimace", "Drool", "Scowl", "Chill", "Sob", "Shy", "Shutup", "Sleep", "Cry", "Awkward", "Pout", "Wink", "Grin", "Surprised", "Frown", "Tension", "Scream", "Puke", "Chuckle", "Joyful", "Slight", "Smug", "Drowsy", "Panic", "Laugh", "Loafer", "Scold", "Doubt", "Shhh", "Dizzy", "BadLuck", "Skull", "Hammer", "Bye", "Relief", "DigNose", "Clap", "Trick", "Bah！R", "Lookdown", "Wronged", "Puling", "Sly", "Kiss", "Whimper", "Happy", "Sick", "Flushed", "Lol", "Terror", "Let Down", "Duh", "Hey", "Facepalm", "Smirk", "Smart", "Concerned", "Yeah!", "Onlooker", "GoForIt", "Sweats", "OMG", "Respect", "Doge", "NoProb", "MyBad", "Wow", "Boring", "Awesome", "LetMeSee", "Sigh", "Hurt", "Broken", "Lip", "Heart", "BrokenHeart", "Hug", "Strong", "Weak", "Shake", "Victory", "Salute", "Beckon", "Fist", "Worship", "Beer", "Coffee", "Cake", "Rose", "Wilt", "Cleaver", "Bomb", "Poop", "Moon", "Sun", "Party", "Gift", "Packet", "Rich", "Blessing", "Fireworks", "Firecracker", "Pig", "Waddle", "Tremble", "Twirl"]:
+                message["text"] = f"[{message_text}]"
 
         # 转发消息
         wx_api_response = await forward_telegram_to_wx(chat_id, message)
@@ -397,12 +412,7 @@ def _revoke_telegram(chat_id, message: dict):
         wechat_api("/Msg/Revoke", playload)
 
         # 删除撤回命令对应的消息
-        delete_api = f"https://api.telegram.org/bot{config.BOT_TOKEN}/deleteMessage"
-        data = {
-            'chat_id': chat_id,
-            'message_id': message["message_id"]
-        }
-        requests.post(delete_api, data=data)
+        telegram_message('delete', chat_id, message["message_id"])
         
     except Exception as e:
         logger.error(f"处理消息删除逻辑时出错: {e}")

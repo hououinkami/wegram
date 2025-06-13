@@ -158,6 +158,46 @@ class ContactManager:
             logger.error(f"通过ChatID删除联系人失败: {chat_id}, 错误: {e}")
             return False
     
+    async def update_contact_by_chatid(self, chat_id: int, key: str, value: any) -> bool:
+        """通过ChatID更新联系人的指定字段"""
+        try:
+            # 先加载最新的联系人信息
+            await self.load_contacts()
+            
+            # 通过chatId获取wxId
+            wxid = self.chatid_to_wxid.get(int(chat_id))
+            if not wxid:
+                return False
+            
+            # 找到联系人在列表中的索引
+            contact_index = -1
+            for i, contact in enumerate(self.contacts):
+                if contact["wxId"] == wxid:
+                    contact_index = i
+                    break
+            
+            if contact_index == -1:
+                return False
+            
+            # 特殊处理 isReceive 和 isGroup 字段 - 切换布尔值
+            if key in ["isReceive", "isGroup"]:
+                current_value = self.contacts[contact_index].get(key, False)
+                value = not current_value  # 切换布尔值
+            
+            # 更新指定字段
+            self.contacts[contact_index][key] = value
+            
+            # 同步更新内存中的映射
+            self.wxid_to_contact[wxid][key] = value
+            
+            # 保存到文件
+            await self._save_contacts()
+            return True
+            
+        except Exception as e:
+            logger.error(f"更新联系人字段失败 - ChatID: {chat_id}, 字段: {key}, 值: {value}, 错误: {e}")
+            return False
+    
     # 异步创建群组
     async def create_group_for_contact_async(self, wxid: str, contact_name: str, bot_token: str = None, description: str = "", avatar_url: str = None) -> Optional[Dict]:
         """异步方式创建群组"""

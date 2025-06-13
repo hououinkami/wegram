@@ -359,6 +359,10 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
 def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
     """获取联系人显示信息，处理特殊情况"""
     user_info = contact.get_user_info(wxid)
+
+    if not user_info.name:   
+        return
+    
     contact_name = user_info.name
     avatar_url = user_info.avatar_url
     # 企业微信

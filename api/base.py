@@ -105,3 +105,49 @@ def telegram_api(chat_id, content=None, method="sendMessage", additional_payload
             for file in files.values():
                 if hasattr(file, 'close'):
                     file.close()
+
+def telegram_message(method, chat_id, message_id, text=None, parse_mode=None, reply_markup=None):
+    """
+    Telegram消息操作函数
+    
+    Args:
+        bot_token: Bot令牌
+        method: 操作方法 ('edit' 或 'delete')
+        chat_id: 聊天ID
+        message_id: 消息ID
+        text: 消息文本（编辑时必需）
+        parse_mode: 解析模式 ('HTML', 'Markdown', 'MarkdownV2')
+        reply_markup: 内联键盘字典
+        
+    Returns:
+        dict: API响应结果
+    """
+    base_url = f"https://api.telegram.org/bot{config.BOT_TOKEN}"
+    
+    if method == 'edit':
+        if not text:
+            return {"ok": False, "error": "编辑消息需要提供text参数"}
+        
+        url = f"{base_url}/editMessageText"
+        data = {
+            'chat_id': chat_id,
+            'message_id': message_id,
+            'text': text
+        }
+        
+        if parse_mode:
+            data['parse_mode'] = parse_mode
+        if reply_markup:
+            data['reply_markup'] = json.dumps(reply_markup)
+            
+    elif method == 'delete':
+        url = f"{base_url}/deleteMessage"
+        data = {
+            'chat_id': chat_id,
+            'message_id': message_id
+        }
+    else:
+        return {"ok": False, "error": f"不支持的方法: {method}"}
+    
+    response = requests.post(url, data=data)
+    return response.json()

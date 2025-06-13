@@ -38,11 +38,12 @@ def get_user_info(towxids):
                 avatar_url = (contact_list[0].get("BigHeadImgUrl") or 
                               contact_list[0].get("SmallHeadImgUrl") or 
                               "")
-                return UserInfo(name, avatar_url) 
+                return UserInfo(name, avatar_url)
         except (KeyError, IndexError) as e:
             logger.error(f"解析联系人信息时出错: {str(e)}")
     else:
-        logger.error(f"API请求失败: {result.get('Message', '未知错误')}")
+        error_msg = result.get('Message', '未知错误')
+        logger.error(f"API请求失败: {error_msg}")
     return None
 
 

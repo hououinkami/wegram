@@ -26,7 +26,9 @@ class LocaleConfig:
             'common': {
                 'online': "🟢 WeChatがオンラインしました",
                 'offline': "🔴 WeChatがオフラインしました",
-                'revoke': "❌ 撤回失敗"
+                'revoke': "❌ 撤回失敗",
+                'receive_on': "✅ 転送オン",
+                'receive_off': "❌ 転送オフ"
             }
         },
         'zh': {
@@ -55,7 +57,9 @@ class LocaleConfig:
             'common': {
                 'online': "🟢 WeChat已上线",
                 'offline': "🔴 WeChat已离线",
-                'revoke': "❌ 撤回失败"
+                'revoke': "❌ 撤回失败",
+                'receive_on': "✅ 转发开启",
+                'receive_off': "❌ 转发关闭"
             }
         }
     }
