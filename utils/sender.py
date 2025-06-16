@@ -172,6 +172,10 @@ async def forward_telegram_to_wx(chat_id: str, message) -> bool:
         elif message.voice:
             # 语音消息
             return await _send_telegram_voice(to_wxid, message.voice)
+        
+        elif message.location:
+            # 定位消息
+            return await _send_telegram_location(to_wxid, message)
 
         else:
             return False
@@ -341,6 +345,35 @@ async def _send_telegram_voice(to_wxid: str, voice):
                     logger.debug(f"清理{file_type}: {file_path}")
                 except Exception as e:
                     logger.warning(f"清理{file_type}失败 {file_path}: {e}")
+
+async def _send_telegram_location(to_wxid: str, message) -> bool:
+    """发送定位消息到微信"""
+    # 获取定位信息
+    if message.venue:
+        venue = message.venue
+        location = venue.location
+        latitude = location.latitude
+        longitude = location.longitude
+        title = venue.title
+        address = venue.address
+    elif message.location:
+        location = message.location
+        latitude = location.latitude
+        longitude = location.longitude
+        title = ""
+        address = ""
+
+    payload = {
+        "Infourl": "",
+        "Label": address,
+        "Poiname": title,
+        "Scale": 0,
+        "ToWxid": to_wxid,
+        "Wxid": config.MY_WXID,
+        "X": latitude,
+        "Y": longitude
+    }
+    return await wechat_api("/Msg/ShareLocation", payload)
 
 async def _send_telegram_reply(to_wxid: str, message):
     """发送回复消息到微信"""

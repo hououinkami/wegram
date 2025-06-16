@@ -38,6 +38,7 @@ def _get_message_handlers():
         57: _forward_quote,
         33: _forward_miniprogram,
         51: _forward_channel,
+        48: _forward_location,
         2000: _forward_transfer,
         "revokemsg": _forward_revoke,
         "pat": _forward_pat,
@@ -152,6 +153,19 @@ async def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwar
     except (KeyError, TypeError) as e:
         raise Exception("视频号信息提取失败")
 
+async def _forward_location(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理定位"""
+    try:
+        location = content.get('msg', {}).get('location', {})
+        latitude = float(location.get('x'))
+        longitude = float(location.get('y'))
+        label = location.get('label', '')
+        poiname = location.get('poiname', '')
+        
+        return await telegram_sender.send_location(chat_id, latitude, longitude, poiname, label)
+    except (KeyError, TypeError) as e:
+        raise Exception("定位信息提取失败")
+
 async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理转账"""
     try:
@@ -220,6 +234,10 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             logger.warning(f"❓未知消息类型: {msg_type}")
             type_text = format.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
             send_text = f"{handler_params['sender_name']}\n{type_text}"
+
+            #调试输出
+            logger.info(f"💬 类型: {msg_type}, 来自: {handler_params['from_wxid']}")
+            logger.info(f"💬 内容: {handler_params['content']}")
             
             return await telegram_sender.send_text(chat_id, send_text)
     
@@ -313,7 +331,6 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             return
         
         # 不发送自己在微信上的撤回动作
-
         if sender_wxid == config.MY_WXID and msg_type == "revokemsg":
             return
         

@@ -508,6 +508,138 @@ class TelegramSender:
             reply_to_message_id=reply_to_message_id,
             reply_markup=reply_markup
         )
+    
+    async def send_location(self, chat_id: Optional[int] = None,
+                        latitude: float = None,
+                        longitude: float = None,
+                        title: str = "",
+                        address: str = "",
+                        foursquare_id: Optional[str] = None,
+                        foursquare_type: Optional[str] = None,
+                        google_place_id: Optional[str] = None,
+                        google_place_type: Optional[str] = None,
+                        reply_to_message_id: Optional[int] = None,
+                        reply_markup: Optional[InlineKeyboardMarkup] = None):
+        """
+        发送场所信息（包含标题和地址的位置）
+        
+        Args:
+            chat_id: 聊天ID，为空时使用默认值
+            latitude: 纬度（必需）
+            longitude: 经度（必需）
+            title: 场所标题（必需）
+            address: 场所地址（必需）
+            foursquare_id: Foursquare ID
+            foursquare_type: Foursquare 类型
+            google_place_id: Google Places ID
+            google_place_type: Google Places 类型
+            reply_to_message_id: 回复的消息ID
+            reply_markup: 内联键盘
+            
+        Returns:
+            Message: 发送的消息对象
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None:
+            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
+        
+        if latitude is None or longitude is None:
+            raise ValueError("必须提供 latitude 和 longitude 参数")
+        
+        if not title.strip():
+            raise ValueError("必须提供 title 参数")
+        
+        if not address.strip():
+            raise ValueError("必须提供 address 参数")
+        
+        # 验证纬度和经度范围
+        if not (-90 <= latitude <= 90):
+            raise ValueError("纬度必须在 -90 到 90 度之间")
+        
+        if not (-180 <= longitude <= 180):
+            raise ValueError("经度必须在 -180 到 180 度之间")
+        
+        return await self._retry_operation(
+            self.bot.send_venue,
+            chat_id=target_chat_id,
+            latitude=latitude,
+            longitude=longitude,
+            title=title,
+            address=address,
+            foursquare_id=foursquare_id,
+            foursquare_type=foursquare_type,
+            google_place_id=google_place_id,
+            google_place_type=google_place_type,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup
+        )
+
+    async def send_realtime_location(self, chat_id: Optional[int] = None, 
+                        latitude: float = None, 
+                        longitude: float = None,
+                        live_period: Optional[int] = None,
+                        heading: Optional[int] = None,
+                        proximity_alert_radius: Optional[int] = None,
+                        reply_to_message_id: Optional[int] = None,
+                        reply_markup: Optional[InlineKeyboardMarkup] = None):
+        """
+        发送地理位置
+        
+        Args:
+            chat_id: 聊天ID，为空时使用默认值
+            latitude: 纬度（必需）
+            longitude: 经度（必需）
+            live_period: 实时位置更新周期（秒），范围 60-86400
+            heading: 移动方向（度），范围 1-360，仅适用于实时位置
+            proximity_alert_radius: 接近警报半径（米），范围 1-100000
+            reply_to_message_id: 回复的消息ID
+            reply_markup: 内联键盘
+            
+        Returns:
+            Message: 发送的消息对象
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None:
+            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
+        
+        if latitude is None or longitude is None:
+            raise ValueError("必须提供 latitude 和 longitude 参数")
+        
+        # 验证纬度和经度范围
+        if not (-90 <= latitude <= 90):
+            raise ValueError("纬度必须在 -90 到 90 度之间")
+        
+        if not (-180 <= longitude <= 180):
+            raise ValueError("经度必须在 -180 到 180 度之间")
+        
+        # 验证实时位置参数
+        if live_period is not None:
+            if not (60 <= live_period <= 86400):
+                raise ValueError("live_period 必须在 60 到 86400 秒之间")
+        
+        # 验证移动方向
+        if heading is not None:
+            if not (1 <= heading <= 360):
+                raise ValueError("heading 必须在 1 到 360 度之间")
+            if live_period is None:
+                logger.warning("heading 参数仅在设置 live_period 时有效")
+        
+        # 验证接近警报半径
+        if proximity_alert_radius is not None:
+            if not (1 <= proximity_alert_radius <= 100000):
+                raise ValueError("proximity_alert_radius 必须在 1 到 100000 米之间")
+        
+        return await self._retry_operation(
+            self.bot.send_location,
+            chat_id=target_chat_id,
+            latitude=latitude,
+            longitude=longitude,
+            live_period=live_period,
+            heading=heading,
+            proximity_alert_radius=proximity_alert_radius,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup
+        )
 
     async def edit_message_text(self, chat_id: Optional[int] = None, text: str = "",  
                                message_id: Optional[int] = None,
