@@ -312,8 +312,13 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         if not chat_id or msg_type in black_list:
             return
         
+        # 不发送自己在微信上的撤回动作
+
+        if sender_wxid == config.MY_WXID and msg_type == "revokemsg":
+            return
+        
         # 输出信息便于调试
-        types_keys = [k for k in locale.type_map.keys() if isinstance(k, int)]
+        types_keys = [k for k in locale.type_map.keys()]
         if msg_type not in types_keys:
             logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
             logger.info(f"💬 内容: {content}")

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import config
 from api.base import wechat_api
 from api.bot import telegram_sender
-from service.userbot import get_user_id
+from service.telethon_client import get_user_id
 from utils.plugin import get_60s
 
 logger = logging.getLogger(__name__)

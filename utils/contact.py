@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Dict, Optional
 
-from utils.bind import create_group_sync
+from utils.bind import create_group
 
 logger = logging.getLogger(__name__)
 
@@ -197,12 +197,7 @@ class ContactManager:
         """异步方式创建群组"""        
         try:
             # 使用线程池执行同步版本，避免事件循环冲突
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, 
-                create_group_sync, 
-                wxid, contact_name, description, avatar_url
-            )
+            result = await create_group(wxid, contact_name, description, avatar_url)
             
             # 创建成功后重新加载联系人信息
             if result.get('success'):

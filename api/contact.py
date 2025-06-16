@@ -5,7 +5,7 @@ import requests
 import config
 from api.base import wechat_api
 from api.bot import telegram_sender
-from utils.bind import TempTelegramClient
+from utils.bind import GroupManager
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ async def update_info(chat_id, title=None, photo_url=None):
             photo_response.raise_for_status()
             
             # 处理图片尺寸
-            processed_photo_content = TempTelegramClient._process_avatar_image(photo_response.content)
+            processed_photo_content = GroupManager._process_avatar_image(photo_response.content)
             
             result = await telegram_sender.set_chat_photo(chat_id, processed_photo_content)
             results['photo_update'] = {

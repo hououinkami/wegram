@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-from typing import Dict, List
+from typing import List
 
 import config
 
@@ -92,8 +92,8 @@ class ServiceManager:
         self.shutdown_event = asyncio.Event()
         
         # 服务配置
-        self.services_to_start = ["userbot", "login", "wx2tg", "tg2wx", "scheduler"]
-        self.async_services = ["userbot", "login", "wx2tg", "tg2wx", "scheduler"]  # 需要异步运行的服务
+        self.services_to_start = ["telethon_monitor", "login", "wx2tg", "tg2wx", "scheduler"]
+        self.async_services = ["telethon_monitor", "login", "wx2tg", "tg2wx", "scheduler"] # 需要异步运行的服务
     
     def start_file_monitor(self):
         """启动文件监控"""

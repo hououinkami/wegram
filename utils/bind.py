@@ -14,11 +14,11 @@ from telethon.tl.functions.messages import CreateChatRequest, EditChatAdminReque
 from telethon.tl.types import InputChatUploadedPhoto, InputPeerChat, InputPeerChannel, DialogFilter, TextWithEntities
 
 import config
-from service.userbot import get_client
+from service.telethon_client import get_client
 
 logger = logging.getLogger(__name__)
 
-class TempTelegramClient:
+class GroupManager:
     """临时 Telegram 客户端，用于执行特定操作"""
     
     def __init__(self):
@@ -543,19 +543,14 @@ class TempTelegramClient:
             
             return False
 
-
-def create_group_sync(wxid: str, contact_name: str, description: str = "", avatar_url: str = None):
-    """同步方式创建群组"""
-    temp_client = TempTelegramClient()
-    
-    # 在新的事件循环中运行
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+async def create_group(wxid: str, contact_name: str, description: str = "", avatar_url: str = None):
+    """异步方式创建群组"""
+    temp_client = GroupManager()
     
     try:
-        result = loop.run_until_complete(
-            temp_client.create_group_with_bot(wxid, contact_name, description, avatar_url)
-        )
+        result = await temp_client.create_group_with_bot(wxid, contact_name, description, avatar_url)
         return result
-    finally:
-        loop.close()
+    except Exception as e:
+        logger.error(f"异步创建群组失败: {e}")
+        return {'success': False, 'error': str(e)}
+

@@ -3,9 +3,11 @@ import logging
 import os
 from typing import Dict, Optional
 
-from telethon import TelegramClient, events
+from telethon import events
 
 import config
+from service.telethon_client import get_client_instance, create_client, get_client, get_user_id
+from utils.sender import revoke_telethon
 
 logger = logging.getLogger(__name__)
 
@@ -13,14 +15,7 @@ logger = logging.getLogger(__name__)
 monitor: Optional['TelethonMonitor'] = None
 
 class TelethonMonitor:
-    def __init__(self, session_path: str, api_id: int, api_hash: str, 
-                device_model: str = "WeGram"):
-        self.session_path = session_path
-        self.api_id = api_id
-        self.api_hash = api_hash
-        self.device_model = device_model
-        self.client = None
-        self.user_id = None
+    def __init__(self):
         self.is_running = False
         
         # 群组缓存：记录已检查过的群组
@@ -31,27 +26,14 @@ class TelethonMonitor:
         self.target_bot_id = bot_token.split(':')[0] if ':' in bot_token else None
     
     async def initialize(self):
-        """初始化Telethon客户端"""
-        try:
-            self.client = TelegramClient(
-                self.session_path, 
-                self.api_id, 
-                self.api_hash, 
-                device_model=self.device_model
-            )
-            await self.client.start()
-            
-            me = await self.client.get_me()
-            self.user_id = me.id
-            logger.info(f"🔗 Telethon已连接 - 用户: {me.first_name} (ID: {self.user_id})")
-            
-            # 更新全局实例
-            global monitor
-            monitor = self
-            
-        except Exception as e:
-            logger.error(f"Telethon初始化失败: {e}")
-            raise
+        """初始化监控器（确保客户端已连接）"""
+        client_instance = get_client_instance()
+        if not client_instance or not client_instance.is_initialized:
+            raise RuntimeError("Telethon客户端未初始化，请先调用create_client")
+        
+        # 更新全局实例
+        global monitor
+        monitor = self
     
     async def check_bot_in_chat(self, chat_id: int) -> bool:
         """检查群组是否包含目标BOT"""
@@ -59,7 +41,11 @@ class TelethonMonitor:
             return self.chat_cache[chat_id]
         
         try:
-            chat = await self.client.get_entity(chat_id)
+            client = get_client()
+            if not client:
+                return False
+                
+            chat = await client.get_entity(chat_id)
             
             # 跳过私聊
             if not hasattr(chat, 'participants_count'):
@@ -79,8 +65,12 @@ class TelethonMonitor:
     async def _check_participants(self, chat) -> bool:
         """检查群组成员中是否有目标BOT"""
         try:
+            client = get_client()
+            if not client:
+                return False
+                
             # 分批检查，避免大群组问题
-            participants = await self.client.get_participants(chat, limit=500)
+            participants = await client.get_participants(chat, limit=500)
             
             for participant in participants:
                 if (participant.bot and self.target_bot_id and 
@@ -97,8 +87,9 @@ class TelethonMonitor:
     async def process_new_message(self, event):
         """处理新消息事件"""
         try:
+            user_id = get_user_id()
             # 只处理当前用户在群组中发送的消息
-            if event.sender_id != self.user_id or not event.is_group:
+            if event.sender_id != user_id or not event.is_group:
                 return
             
             # 检查群组是否包含目标BOT
@@ -107,7 +98,7 @@ class TelethonMonitor:
                 chat = await event.get_chat()
                 
                 logger.debug(f"📝 [Telethon] 处理新消息: {message.text or '[媒体]'}")
-                # await process_telethon_update(message, chat, self.client)
+                # await process_telethon_update(message, chat, get_client())
             
         except Exception as e:
             logger.error(f"处理Telethon新消息出错: {e}")
@@ -116,27 +107,32 @@ class TelethonMonitor:
         """处理删除消息事件"""
         try:
             logger.debug(f"🗑️ [Telethon] 检测到消息删除事件")
-            # await revoke_message(event)
+            await revoke_telethon(event)
             
         except Exception as e:
             logger.error(f"处理删除消息出错: {e}")
     
     async def start_monitoring(self, handle_new_messages: bool = True, handle_deleted_messages: bool = True):
         """开始监控"""
-        if not self.client:
+        # 确保监控器已初始化
+        if not get_monitor():
             await self.initialize()
+        
+        client = get_client()
+        if not client:
+            raise RuntimeError("无法获取Telethon客户端，请确保客户端已初始化")
         
         self.is_running = True
         
         # 注册事件处理器
         if handle_new_messages:
-            @self.client.on(events.NewMessage)
+            @client.on(events.NewMessage)
             async def handle_new_message(event):
                 await self.process_new_message(event)
             logger.info("📝 已启用Telethon新消息监听")
         
         if handle_deleted_messages:
-            @self.client.on(events.MessageDeleted)
+            @client.on(events.MessageDeleted)
             async def handle_deleted_message(event):
                 await self.process_deleted_message(event)
             logger.info("🗑️ 已启用Telethon消息删除监听")
@@ -145,7 +141,7 @@ class TelethonMonitor:
         
         try:
             # 保持客户端运行
-            await self.client.run_until_disconnected()
+            await client.run_until_disconnected()
         except Exception as e:
             logger.error(f"Telethon监控运行出错: {e}")
         finally:
@@ -154,8 +150,9 @@ class TelethonMonitor:
     async def stop_monitoring(self):
         """停止监控"""
         self.is_running = False
-        if self.client and self.client.is_connected():
-            await self.client.disconnect()
+        client_instance = get_client_instance()
+        if client_instance:
+            await client_instance.disconnect()
         logger.info("🛑 Telethon监控已停止")
     
     def clear_cache(self):
@@ -165,27 +162,13 @@ class TelethonMonitor:
     
     def get_client(self):
         """获取Telethon客户端"""
-        return self.client
+        return get_client()
     
     def get_user_id(self):
         """获取当前用户ID"""
-        return self.user_id
+        return get_user_id()
 
 # ==================== 便捷函数 ====================
-def get_user_id() -> Optional[int]:
-    """获取当前用户ID"""
-    global monitor
-    if monitor and monitor.user_id:
-        return monitor.user_id
-    return None
-
-def get_client():
-    """获取Telethon客户端"""
-    global monitor
-    if monitor and monitor.client:
-        return monitor.client
-    return None
-
 def get_monitor() -> Optional[TelethonMonitor]:
     """获取监控器实例"""
     global monitor
@@ -195,6 +178,13 @@ def is_monitoring() -> bool:
     """检查是否正在监控"""
     global monitor
     return monitor.is_running if monitor else False
+
+async def create_monitor() -> TelethonMonitor:
+    """创建监控器实例"""
+    global monitor
+    monitor = TelethonMonitor()
+    await monitor.initialize()
+    return monitor
 
 # ==================== 独立运行 ====================
 async def main():
@@ -210,25 +200,27 @@ async def main():
             logger.error(f"Session文件不存在: {SESSION_PATH}.session")
             return
         
-        # 创建Telethon监控器
-        global monitor
-        monitor = TelethonMonitor(
+        # 创建Telethon客户端
+        await create_client(
             SESSION_PATH, 
             config.API_ID, 
             config.API_HASH, 
             config.DEVICE_MODEL
         )
         
+        # 创建监控器
+        monitor_instance = await create_monitor()
+        
         # 启动监控
-        await monitor.start_monitoring(
+        await monitor_instance.start_monitoring(
             handle_new_messages=False,
-            handle_deleted_messages=False
+            handle_deleted_messages=True
         )
         
     except KeyboardInterrupt:
         logger.info("收到中断信号，正在停止Telethon监控...")
-        if monitor:
-            await monitor.stop_monitoring()
+        if get_monitor():
+            await get_monitor().stop_monitoring()
     except Exception as e:
         logger.error(f"Telethon监控失败: {e}")
 

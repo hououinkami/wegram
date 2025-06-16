@@ -3,6 +3,7 @@ import base64
 import logging
 import os
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +15,7 @@ import config
 from api import contact, login
 from api.base import wechat_api
 from api.bot import telegram_sender
+from service.telethon_client import get_client
 from utils.contact import contact_manager
 from utils.locales import Locale
 from utils.msgid import msgid_mapping
@@ -30,6 +32,7 @@ async def process_telegram_update(update: Update) -> None:
     if update.message:
         message = update.message
         message_id = message.message_id
+        message_date = message.date
         chat_id = str(message.chat.id)
         user_id = message.from_user.id
         is_bot = message.from_user.is_bot
@@ -102,7 +105,11 @@ async def process_telegram_update(update: Update) -> None:
         
         # 将消息添加进映射
         if wx_api_response:
-            add_send_msgid(wx_api_response, message_id)
+            # 获取自己发送的消息对应Telethon的MsgID
+            telethon_client = get_client()
+            telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), message.text, message_date)
+
+            add_send_msgid(wx_api_response, message_id, telethon_msg_id)
 
 # 转发函数
 async def forward_telegram_to_wx(chat_id: str, message) -> bool:
@@ -639,7 +646,7 @@ async def _convert_voice_to_silk(input_path: str, file_id: str, voice_dir: str) 
                 logger.warning(f"清理PCM临时文件失败 {pcm_path}: {e}")
 
 # 添加msgid映射
-def add_send_msgid(wx_api_response, tg_msgid):
+def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
     data = wx_api_response.get("Data", {})
     msg_list = data.get("List", [])
     if msg_list == []:
@@ -665,7 +672,8 @@ def add_send_msgid(wx_api_response, tg_msgid):
                 wx_msg_id=new_msg_id,
                 client_msg_id=client_msg_id,
                 create_time=create_time,
-                content=""
+                content="",
+                telethon_msg_id=telethon_msg_id
             )
         else:
             logger.warning(f"NewMsgId 不存在: {response_data}")
@@ -692,3 +700,50 @@ def multi_get(data, *keys, default=''):
             if value is not None:
                 return value
     return default
+
+async def get_telethon_msg_id(client, chat_id, text=None, send_time=None, tolerance=2):
+    """根据时间和文本获取Telethon消息ID"""    
+    # 转换时间格式
+    if isinstance(send_time, (int, float)):
+        target_time = datetime.fromtimestamp(send_time, tz=timezone.utc)
+    else:
+        target_time = send_time.replace(tzinfo=timezone.utc) if send_time.tzinfo is None else send_time
+    
+    # 获取自己发送的最近消息
+    messages = await client.get_messages(chat_id, limit=5, from_user='me')
+    
+    for msg in messages:
+        msg_time = msg.date.replace(tzinfo=timezone.utc) if msg.date.tzinfo is None else msg.date
+        time_diff = abs((msg_time - target_time).total_seconds())
+        
+        # 检查时间和文本匹配
+        if time_diff == 0:
+            return msg.id
+        elif time_diff <= tolerance:
+            if text is None or msg.text == text:
+                return msg.id
+    
+    return None
+
+async def revoke_telethon(event):
+    try:
+        for deleted_id in event.deleted_ids:
+            wx_msg = msgid_mapping.telethon_to_wx(deleted_id)
+            if not wx_msg:
+                return
+            to_wxid = wx_msg["towxid"]
+            new_msg_id = wx_msg["msgid"]
+            client_msg_id = wx_msg["clientmsgid"]
+            create_time = wx_msg["createtime"]
+            # 这里实现具体的删除处理逻辑
+            playload = {
+                "ClientMsgId": client_msg_id,
+                "CreateTime": create_time,
+                "NewMsgId": new_msg_id,
+                "ToUserName": to_wxid,
+                "Wxid": config.MY_WXID
+            }
+            await wechat_api("/Msg/Revoke", playload)
+        
+    except Exception as e:
+        logger.error(f"处理消息删除逻辑时出错: {e}")

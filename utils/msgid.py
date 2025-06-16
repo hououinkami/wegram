@@ -65,7 +65,7 @@ class MappingManager:
             with open(file_path, "w", encoding='utf-8') as f:
                 json.dump({"tgToWxMapping": {}}, f, ensure_ascii=False)
 
-    def add(self, tg_msg_id, from_wx_id, to_wx_id, wx_msg_id, client_msg_id, create_time, content):
+    def add(self, tg_msg_id, from_wx_id, to_wx_id, wx_msg_id, client_msg_id, create_time, content, telethon_msg_id: int = 0):
         """
         添加TG消息ID到微信消息的映射 - 实时存储
         :param tg_msg_id: Telegram 消息ID（数字）
@@ -82,7 +82,8 @@ class MappingManager:
             "msgid": int(wx_msg_id),
             "clientmsgid": int(client_msg_id) if str(client_msg_id).isdigit() else 0,
             "createtime": int(create_time) if str(create_time).isdigit() else 0,
-            "content": str(content)
+            "content": str(content),
+            "telethonmsgid": int(telethon_msg_id)
         }
         
         try:
@@ -243,6 +244,50 @@ class MappingManager:
                     logger.error(f"读取文件 {file_path} 失败: {e}")
         
         return None
+    
+    def telethon_to_wx(self, telethon_msg_id):
+        """
+        根据Telethon消息ID反向查找微信消息对象
+        :param telethon_msg_id: Telethon消息ID
+        :return: 完整的微信消息字典或 None
+        """
+        telethon_msg_id_int = int(telethon_msg_id)
+        
+        # 1. 首先检查内存缓存
+        with self.cache_lock:
+            for tg_key, wx_msg in self.memory_cache.items():
+                if not isinstance(wx_msg, dict):
+                    continue
+                    
+                telethon_id = wx_msg.get("telethonmsgid")
+                if telethon_id == telethon_msg_id_int:
+                    return wx_msg
+        
+        # 2. 检查文件
+        today = datetime.now()
+        for i in range(3):
+            date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+            file_path = self._get_file_path(date)
+            
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, "r", encoding='utf-8') as f:
+                        data = json.load(f)
+                        
+                    if "tgToWxMapping" in data:
+                        for tg_key, wx_msg in data["tgToWxMapping"].items():
+                            if not isinstance(wx_msg, dict):
+                                continue
+                                
+                            telethon_id = wx_msg.get("telethonmsgid")
+                            if telethon_id == telethon_msg_id_int:
+                                return wx_msg
+                                
+                except Exception as e:
+                    logger.error(f"读取文件失败: {e}")
+        
+        return None
+
 
     def get_tg_id_by_wx_user(self, from_wx_id):
         """

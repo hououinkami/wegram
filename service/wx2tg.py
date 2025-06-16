@@ -8,7 +8,7 @@ from aiohttp import web
 
 import config
 from api.bot import telegram_sender
-from service.userbot import get_user_id
+from service.telethon_client import get_user_id
 from utils.locales import Locale
 from utils.message import process_message
 
