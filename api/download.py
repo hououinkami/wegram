@@ -1,10 +1,12 @@
-import math
-import requests
-import os
 import base64
 import json
 import logging
+import math
+import os
 from typing import Tuple
+
+import aiohttp
+
 import config
 from api.base import wechat_api
 
@@ -20,8 +22,8 @@ EMOJI_DIR = os.path.join(DOWNLOAD_DIR, "sticker")
 FILE_DIR = os.path.join(DOWNLOAD_DIR, "file")
 VOICE_DIR = os.path.join(DOWNLOAD_DIR, "voice")
 
-def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
-    return chunked_download(
+async def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
+    return await chunked_download(
         api_path="/Tools/DownloadImg",
         msg_id=msg_id,
         from_wxid=from_wxid,
@@ -31,8 +33,8 @@ def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         save_dir=IMAGE_DIR
     )
 
-def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
-    return chunked_download(
+async def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
+    return await chunked_download(
         api_path="/Tools/DownloadVideo",
         msg_id=msg_id,
         from_wxid=from_wxid,
@@ -42,8 +44,8 @@ def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         save_dir=VIDEO_DIR
     )
 
-def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
-    return chunked_download(
+async def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
+    return await chunked_download(
         api_path="/Tools/DownloadFile",
         msg_id=msg_id,
         from_wxid=from_wxid,
@@ -53,7 +55,7 @@ def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         save_dir=FILE_DIR
     )
     
-def get_emoji(data_json) -> Tuple[bool, str]:
+async def get_emoji(data_json) -> Tuple[bool, str]:
     try:
         md5 = data_json["msg"]["emoji"]["md5"]
         data_length = int(data_json["msg"]["emoji"]["len"])
@@ -65,11 +67,10 @@ def get_emoji(data_json) -> Tuple[bool, str]:
 
         # 检查文件是否已存在
         if os.path.exists(filepath):
-            logger.info(f"文件已存在，跳过下载: {filepath}")
             return True, filepath
         
         # 利用API请求下载
-        def get_url_by_api():
+        async def get_url_by_api():
             # 构建请求参数
             payload = {
                 "Md5": md5,
@@ -77,13 +78,14 @@ def get_emoji(data_json) -> Tuple[bool, str]:
             }
 
             # 发送请求
-            response_data = wechat_api("/Tools/EmojiDownload", payload)
+            response_data = await wechat_api("/Tools/EmojiDownload", payload)
             
             # 检查响应数据结构
             if (response_data and "Data" in response_data):
                 # 检查是否有直接的url
                 if "url" in response_data["Data"]:
                     url = response_data["Data"]["url"]
+                    return url
                 # 检查是否有emojiList结构
                 elif "emojiList" in response_data["Data"] and response_data["Data"]["emojiList"] and len(response_data["Data"]["emojiList"]) > 0:
                     if "url" in response_data["Data"]["emojiList"][0]:
@@ -100,29 +102,29 @@ def get_emoji(data_json) -> Tuple[bool, str]:
                 return False, "响应数据格式不正确"
         
         if url == "":
-            url = get_url_by_api()
+            url = await get_url_by_api()
         
         # 确保目录存在
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
         # 下载文件
-        file_response = requests.get(url, stream=True)
-        if file_response.status_code == 200:
-            with open(filepath, 'wb') as f:
-                for chunk in file_response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            logger.info(f"表情包已下载到: {filepath}")
-            return True, filepath
-        else:
-            error_msg = f"下载URL失败，HTTP状态码: {file_response.status_code}"
-            logger.error(error_msg)
-            return False, error_msg
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as file_response:
+                if file_response.status == 200:
+                    with open(filepath, 'wb') as f:
+                        async for chunk in file_response.content.iter_chunked(8192):
+                            f.write(chunk)
+                    return True, filepath
+                else:
+                    error_msg = f"下载URL失败，HTTP状态码: {file_response.status}"
+                    logger.error(error_msg)
+                    return False, error_msg
                 
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")
         return False, f"下载失败: {str(e)}"
 
-def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
+async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
     try:
         md5 = data_json["msg"]["voicemsg"]["aeskey"]
         data_length = int(data_json["msg"]["voicemsg"]["length"])
@@ -134,7 +136,6 @@ def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
 
         # 检查文件是否已存在
         if os.path.exists(filepath):
-            logger.info(f"文件已存在，跳过下载: {filepath}")
             return True, filepath
         
         # 构建请求参数
@@ -147,8 +148,8 @@ def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
         }
 
         # 发送请求
-        response_data = wechat_api("/Tools/DownloadVoice", payload)
-        logger.warning(f"语音：：：{response_data}")
+        response_data = await wechat_api("/Tools/DownloadVoice", payload)
+        
         # 检查响应数据结构
         if (response_data and "Data" in response_data):
             # 检查是否有直接的url
@@ -173,12 +174,10 @@ def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
             # 解码base64为二进制数据
             voice_binary_data = base64.b64decode(voice_base64)
             all_binary_data.extend(voice_binary_data)
-            logger.info(f"语音下载成功，大小: {len(voice_binary_data)} 字节")
 
             # 写入文件
             with open(filepath, 'wb') as f:
                 f.write(all_binary_data)
-            logger.info(f"语音下载完成，保存至: {filepath}, 总大小: {len(all_binary_data)} 字节")
             return True, filepath
                 
     except Exception as e:
@@ -186,7 +185,7 @@ def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
         return False, f"下载失败: {str(e)}"
 
 # 分段下载函数
-def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict, file_key: str, file_extension: str, save_dir: str) -> Tuple[bool, str]:
+async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict, file_key: str, file_extension: str, save_dir: str) -> Tuple[bool, str]:
     try:
         # 提取文件信息
         file_info = data_json["msg"][file_key]
@@ -203,7 +202,6 @@ def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict
         
         # 检查文件是否已存在
         if os.path.exists(filepath):
-            logger.info(f"文件已存在，跳过下载: {filepath}")
             return True, filepath
         
         # 确保保存目录存在
@@ -229,7 +227,7 @@ def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict
                         "FileNo": cdnurl,
                         "Wxid": WXID
                     }
-                    response_data = wechat_api("/Tools/CdnDownloadImage", cdn_body)
+                    response_data = await wechat_api("/Tools/CdnDownloadImage", cdn_body)
                 
                     # 检查响应数据结构
                     if (response_data and "Data" in response_data and "Image" in response_data["Data"]):
@@ -243,9 +241,7 @@ def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict
                         cdn_binary_data = base64.b64decode(cdn_base64)
                         all_binary_data.extend(cdn_binary_data)
                         cdn_success = True
-                        logger.info(f"CDN下载成功，大小: {len(cdn_binary_data)} 字节")
             except Exception as e:
-                logger.info(f"CDN下载失败，将使用分段下载: {str(e)}")
                 cdn_success = False
 
         # 如果CDN下载失败或不是图片，使用分段下载
@@ -253,8 +249,6 @@ def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict
             # 配置分段大小
             chunk_size = 256 * 256
             total_chunks = math.ceil(data_length / chunk_size)
-            
-            logger.info(f"开始下载文件: {filename}, 初始大小: {data_length}, 分段数: {total_chunks}")
             
             # 初始化分段参数
             chunk_index = 1
@@ -293,7 +287,7 @@ def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict
                     }
                 
                 # 发送请求
-                response_data = wechat_api(api_path, payload)
+                response_data = await wechat_api(api_path, payload)
                 
                 # 解析响应JSON
                 try:
@@ -342,13 +336,12 @@ def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict
                                 }
                             
                             # 发送临时请求
-                            temp_data = wechat_api(api_path, temp_payload)
+                            temp_data = await wechat_api(api_path, temp_payload)
                             
                             # 尝试获取totalLen
                             if 'Data' in temp_data and 'totalLen' in temp_data['Data']:
                                 # 更新data_length
                                 new_data_length = temp_data['Data']['totalLen']
-                                logger.info(f"获取到新的数据长度: {new_data_length}，原长度: {data_length}")
                                 
                                 # 使用新的data_length重新计算参数
                                 data_length = new_data_length
@@ -356,7 +349,6 @@ def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict
                                 next_chunk_size = min(chunk_size, data_length)
                                 
                                 # 重新开始下载
-                                logger.info(f"使用新的数据长度重新开始下载，总大小: {data_length}, 分段数: {total_chunks}")
                                 continue
                             else:
                                 logger.error("临时请求未能获取到totalLen，终止下载")
@@ -386,7 +378,6 @@ def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict
         with open(filepath, 'wb') as f:
             f.write(all_binary_data)
             
-        logger.info(f"文件下载完成，保存至: {filepath}, 总大小: {len(all_binary_data)} 字节")
         return True, filepath
         
     except Exception as e:

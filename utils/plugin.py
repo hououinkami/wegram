@@ -1,7 +1,7 @@
 import logging
+
 import requests
-import json
-from datetime import datetime
+
 from utils.format import escape_html_chars
 
 logger = logging.getLogger(__name__)
@@ -21,9 +21,7 @@ def get_60s(format_type="text"):
     """
     url="https://60s-api.viki.moe/v2/60s"
 
-    try:
-        logger.info(f"正在请求API: {url}")
-        
+    try:       
         # 发送GET请求
         response = requests.get(url, timeout=10)
         
@@ -76,13 +74,13 @@ def get_60s(format_type="text"):
                     return text_format.strip()
                     
             else:
-                logger.info("❌ API响应中没有找到data字段")
+                logger.error("❌ API响应中没有找到data字段")
                 return None
                 
         else:
-            logger.info(f"❌ 请求失败，状态码: {response.status_code}")
+            logger.error(f"❌ 请求失败，状态码: {response.status_code}")
             return None
             
     except Exception as e:
-        logger.info(f"❌ 错误: {e}")
+        logger.error(f"❌ 错误: {e}")
         return None

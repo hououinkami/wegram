@@ -1,14 +1,46 @@
-#!/usr/bin/env python3
-import logging
-import requests
+import asyncio
 import json
+import logging
+from typing import Any, Dict, Optional
+
+import aiohttp
+import requests
+
 import config
-from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
 # API请求函数
-def wechat_api(api_path: str, body: Dict[str, Any] = None, query_params: Dict[str, Any] = None):
+async def wechat_api(api_path: str, body: Optional[Dict[str, Any]] = None, query_params: Optional[Dict[str, Any]] = None):
+    api_url = f"{config.BASE_URL}{api_path}"
+    try:
+        # 设置超时时间
+        timeout = aiohttp.ClientTimeout(total=30)  # 30秒超时
+        
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                url=api_url,
+                json=body,  # 请求体数据
+                params=query_params  # URL 查询参数
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    response_text = await response.text()
+                    logger.error(f"API调用失败，状态码: {response.status}, 响应: {response_text}")
+                    return False
+                    
+    except asyncio.TimeoutError:
+        logger.error(f"API调用超时: {api_url}")
+        return False
+    except aiohttp.ClientError as e:
+        logger.error(f"HTTP客户端错误: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"调用微信API时出错: {e}")
+        return False
+
+def wechat_api_sync(api_path: str, body: Dict[str, Any] = None, query_params: Dict[str, Any] = None):
     api_url = f"{config.BASE_URL}{api_path}"
     try:
         response = requests.post(
@@ -25,7 +57,7 @@ def wechat_api(api_path: str, body: Dict[str, Any] = None, query_params: Dict[st
         logger.error(f"调用微信API时出错: {e}")
         return False
 
-# 发送TG消息
+# 发送TG消息(停用)
 def telegram_api(chat_id, content=None, method="sendMessage", additional_payload=None, parse_mode="HTML", **kwargs):
     # 检查必要参数
     if not chat_id:
@@ -106,6 +138,7 @@ def telegram_api(chat_id, content=None, method="sendMessage", additional_payload
                 if hasattr(file, 'close'):
                     file.close()
 
+# 消息处理（停用）
 def telegram_message(method, chat_id, message_id, text=None, parse_mode=None, reply_markup=None):
     """
     Telegram消息操作函数

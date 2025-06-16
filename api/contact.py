@@ -1,13 +1,12 @@
 import logging
+
 import requests
-import json
+
 import config
-import os
-from io import BytesIO
 from api.base import wechat_api
+from api.bot import telegram_sender
 from utils.bind import TempTelegramClient
 
-# 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
 
 # 获取用户信息
@@ -16,7 +15,7 @@ class UserInfo:
         self.name = name
         self.avatar_url = avatar_url
 
-def get_user_info(towxids):
+async def get_user_info(towxids):
     # 构建请求体
     body = {
         "Wxid": config.MY_WXID,
@@ -25,7 +24,7 @@ def get_user_info(towxids):
     }
     
     # 发送请求
-    result = wechat_api("/Friend/GetContractDetail", body)
+    result = await wechat_api("/Friend/GetContractDetail", body)
     
     # 解析响应获取备注名
     if result.get("Success"):
@@ -48,42 +47,46 @@ def get_user_info(towxids):
 
 
 # 更新群组信息
-def update_info(chat_id, title=None, photo_url=None):
-    base_url = f"https://api.telegram.org/bot{config.BOT_TOKEN}"
+async def update_info(chat_id, title=None, photo_url=None):
+    """更新群组信息（标题和头像）"""
     results = {}
     
     # 更新群组名称
     if title:
-        set_title_url = f"{base_url}/setChatTitle"
-        title_params = {
-            'chat_id': chat_id,
-            'title': title
-        }
-        title_response = requests.post(set_title_url, data=title_params)
-        results['title_update'] = title_response.json()
+        try:
+            result = await telegram_sender.set_chat_title(chat_id, title)
+            results['title_update'] = {
+                'ok': True, 
+                'description': 'Title updated successfully',
+                'result': result
+            }
+        except Exception as e:
+            results['title_update'] = {
+                'ok': False, 
+                'error': str(e)
+            }
     
     # 更新群组头像
     if photo_url:
         try:
             # 下载图片
             photo_response = requests.get(photo_url)
-            photo_response.raise_for_status()  # 确保请求成功
+            photo_response.raise_for_status()
             
             # 处理图片尺寸
             processed_photo_content = TempTelegramClient._process_avatar_image(photo_response.content)
-
-            # 发送请求更新头像
-            set_photo_url = f"{base_url}/setChatPhoto"
-            files = {
-                'photo': ('group_photo.jpg', processed_photo_content, 'image/jpeg')
+            
+            result = await telegram_sender.set_chat_photo(chat_id, processed_photo_content)
+            results['photo_update'] = {
+                'ok': True, 
+                'description': 'Photo updated successfully',
+                'result': result
             }
-            data = {
-                'chat_id': chat_id
-            }
-            photo_update_response = requests.post(set_photo_url, data=data, files=files)
-            results['photo_update'] = photo_update_response.json()
             
         except Exception as e:
-            results['photo_update'] = {'ok': False, 'error': str(e)}
+            results['photo_update'] = {
+                'ok': False, 
+                'error': str(e)
+            }
     
     return results

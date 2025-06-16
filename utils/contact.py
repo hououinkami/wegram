@@ -1,17 +1,11 @@
-#!/usr/bin/env python3
-"""
-独立的Telegram群组创建模块
-复用监控服务中的客户端和bot实例
-"""
-
+import asyncio
+import json
 import logging
 import os
-import json
-import asyncio
 from typing import Dict, Optional
+
 from utils.bind import create_group_sync
 
-# 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
 
 # 异步版本的ContactManager类
@@ -103,8 +97,6 @@ class ContactManager:
             # 更新修改时间
             self.last_modified_time = await loop.run_in_executor(None, os.path.getmtime, self.contact_file_path)
             
-            logger.info(f"联系人信息已保存到文件: {self.contact_file_path}")
-            
         except Exception as e:
             logger.error(f"保存联系人文件失败: {e}")
             raise
@@ -135,7 +127,6 @@ class ContactManager:
             # 保存到文件
             await self._save_contacts()
             
-            logger.info(f"已删除联系人: {wxid} (ChatID: {chat_id})")
             return True
             
         except Exception as e:
@@ -203,9 +194,7 @@ class ContactManager:
     
     # 异步创建群组
     async def create_group_for_contact_async(self, wxid: str, contact_name: str, bot_token: str = None, description: str = "", avatar_url: str = None) -> Optional[Dict]:
-        """异步方式创建群组"""
-        logger.info(f"开始创建群组: {contact_name}")
-        
+        """异步方式创建群组"""        
         try:
             # 使用线程池执行同步版本，避免事件循环冲突
             loop = asyncio.get_event_loop()

@@ -1,9 +1,9 @@
-import logging
-logger = logging.getLogger(__name__)
-
 import json
+import logging
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
+
+logger = logging.getLogger(__name__)
 
 # 解析XML内容
 def xml_to_json(xml_string, as_string=False):

@@ -1,28 +1,25 @@
-#!/usr/bin/env python3
-"""
-微信消息处理器 - 处理从主服务接收的消息和Telegram消息
-"""
+import asyncio
 import logging
-from typing import Dict, Any, Optional
-import pilk
-import ffmpeg
 import os
 import re
-import asyncio
-from asyncio import Queue
 import threading
-
-# 获取模块专用的日志记录器
-logger = logging.getLogger(__name__)
-
+from asyncio import Queue
 from datetime import datetime
+from typing import Any, Dict, Optional
+
+import ffmpeg
+import pilk
+from telegram.error import TelegramError
+
 import config
-from utils.locales import Locale
 from api import contact, download
-from api.base import telegram_api
-from utils.contact import contact_manager
-from utils.msgid import msgid_mapping
+from api.bot import telegram_sender
 from utils import format
+from utils.contact import contact_manager
+from utils.locales import Locale
+from utils.msgid import msgid_mapping
+
+logger = logging.getLogger(__name__)
 
 locale = Locale(config.LANG)
 black_list = ['open_chat', 'bizlivenotify', 74]
@@ -47,78 +44,83 @@ def _get_message_handlers():
         "VoIPBubbleMsg": _forward_voip
     }
 
-def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
     """处理文本消息"""
     text = format.escape_html_chars(content)
     send_text = f"{sender_name}\n{text}"
-    return telegram_api(chat_id, send_text)
+    
+    # 异步调用 telegram_api
+    return await telegram_sender.send_text(chat_id, send_text)
 
-def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
+async def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理图片消息"""
-    success, filepath = download.get_image(msg_id, from_wxid, content)
+    # 异步下载图片
+    success, filepath = await download.get_image(msg_id, from_wxid, content)
     
     if success:
-        return telegram_api(chat_id, filepath, "sendPhoto", caption=sender_name)
+        return await telegram_sender.send_photo(chat_id, filepath, sender_name)
     else:
         raise Exception("图片下载失败")
 
-def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
+async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
-    success, filepath = download.get_video(msg_id, from_wxid, content)
-    
+    success, filepath = await download.get_video(msg_id, from_wxid, content)
     if success:
-        return telegram_api(chat_id, filepath, "sendVideo", caption=sender_name)
+        return await telegram_sender.send_video(chat_id, filepath, sender_name)
     else:
         raise Exception("视频下载失败")
 
-def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: dict, message_info: dict, **kwargs) -> dict:
+async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: dict, message_info: dict, **kwargs) -> dict:
     """处理语音消息"""
-    success, filepath = download.get_voice(msg_id, message_info['FromUserName'], content)
+    success, filepath = await download.get_voice(msg_id, message_info['FromUserName'], content)
 
     if not success:
         raise Exception("语音下载失败")
         
-    ogg_path, duration = silk_to_voice(filepath)
+    loop = asyncio.get_event_loop()
+    ogg_path, duration = await loop.run_in_executor(None, silk_to_voice, filepath)
     if not ogg_path or not duration:
         raise Exception("语音转换失败")
     
-    return telegram_api(chat_id, ogg_path, "sendVoice", caption=sender_name, duration=duration)
-    
-def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
+    return await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
+
+async def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理文件消息"""
-    success, filepath = download.get_file(msg_id, from_wxid, content)
+    success, filepath = await download.get_file(msg_id, from_wxid, content)
     
     if success:
-        return telegram_api(chat_id, filepath, "sendDocument", caption=sender_name)
+        return await telegram_sender.send_document(chat_id, filepath, sender_name)
     else:
         raise Exception("文件下载失败")
 
-def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理公众号消息"""
     url_items = format.extract_url_items(content)
     send_text = f"{sender_name}\n{url_items}"
-    return telegram_api(chat_id, send_text)
 
-def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    return await telegram_sender.send_text(chat_id, send_text)
+
+async def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理贴纸消息"""
-    success, filepath = download.get_emoji(content)
+    success, filepath = await download.get_emoji(content)
     
     if success:
-        return telegram_api(chat_id, filepath, "sendAnimation", caption=sender_name)
+        return await telegram_sender.send_animation(chat_id, filepath, sender_name)
     else:
         raise Exception("贴纸下载失败")
 
-def _forward_chat_history(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_chat_history(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理聊天记录消息"""
-    chat_history = f"{process_chathistory(content)}"
+    loop = asyncio.get_event_loop()
+    chat_history = await loop.run_in_executor(None, process_chathistory, content)
     
     if chat_history:
         send_text = f"{sender_name}\n{chat_history}"
-        return telegram_api(chat_id, send_text)
+        return await telegram_sender.send_text(chat_id, send_text)
     else:
         raise Exception("聊天记录处理失败")
 
-def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理引用消息"""
     text = format.escape_html_chars(content["msg"]["appmsg"]["title"])
     quote = content["msg"]["appmsg"]["refermsg"]
@@ -126,16 +128,18 @@ def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs) -> d
     
     quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
     send_text = f"{sender_name}\n{text}"
-    return telegram_api(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
+    
+    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
-def _forward_miniprogram(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_miniprogram(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理小程序消息"""
     mini_name = content.get('msg', {}).get('appmsg', {}).get('sourcedisplayname', '')
     mini_title = content.get('msg', {}).get('appmsg', {}).get('title', '')
     send_text = f"{sender_name}\n[{locale.type(kwargs.get('msg_type'))}]\n{mini_name}\n{mini_title}"
-    return telegram_api(chat_id, send_text)
+    
+    return await telegram_sender.send_text(chat_id, send_text)
 
-def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理视频号"""
     try:
         finder_feed = content.get("msg", {}).get("appmsg", {}).get("finderFeed", {})
@@ -143,21 +147,23 @@ def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwargs) ->
         channel_title = finder_feed["desc"]
         channel_content = format.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{channel_name}\n{channel_title}")
         send_text = f"{sender_name}\n{channel_content}"
-        return telegram_api(chat_id, send_text)
+        
+        return await telegram_sender.send_text(chat_id, send_text)
     except (KeyError, TypeError) as e:
         raise Exception("视频号信息提取失败")
 
-def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理转账"""
     try:
         money = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {}).get('feedesc')
         channel_content = format.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{money}")
         send_text = f"{sender_name}\n{channel_content}"
-        return telegram_api(chat_id, send_text)
+        
+        return await telegram_sender.send_text(chat_id, send_text)
     except (KeyError, TypeError) as e:
         raise Exception("转账信息提取失败")
-    
-def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+  
+async def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理撤回消息"""
     revoke_msg = content["sysmsg"]["revokemsg"]
     revoke_text = format.escape_html_chars(revoke_msg["replacemsg"])
@@ -165,64 +171,73 @@ def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> 
 
     quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
     send_text = f"{sender_name}\n{revoke_text}"
-    return telegram_api(chat_id, send_text, reply_to_message_id = quote_tgmsgid)
+    
+    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
-def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
-    """处理撤回消息"""
+async def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理拍一拍消息"""
     pat_msg = content["sysmsg"]["pat"]
     pat_template = pat_msg["template"]
     pattern = r'\$\{([^}]+)\}'
-    result = re.sub(pattern, lambda m: contact.get_user_info(m.group(1)).name, pat_template)
+
+    # 处理模板中的用户信息替换
+    matches = re.findall(pattern, pat_template)
+    result = pat_template
+    for match in matches:
+        user_info = await contact.get_user_info(match)
+        result = result.replace(f"${{{match}}}", user_info.name)
+    
     pat_text = f"[{format.escape_html_chars(result)}]"
     send_text = f"{sender_name}\n{pat_text}"
-    return telegram_api(chat_id, send_text)
+    
+    return await telegram_sender.send_text(chat_id, send_text)
 
-def _forward_voip(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_voip(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理通话消息"""
     voip_msg = content["voipmsg"]["VoIPBubbleMsg"]["msg"]
     send_text = f"{sender_name}\n{voip_msg}"
-    return telegram_api(chat_id, send_text)
+    
+    return await telegram_sender.send_text(chat_id, send_text)
 
 async def _process_message_async(message_info: Dict[str, Any]) -> None:
     """异步处理单条消息"""
 
-    def _send_message_with_handler(chat_id: int, msg_type: Any, handler_params: dict) -> dict:
+    async def _send_message_with_handler(chat_id: int, msg_type: Any, handler_params: dict) -> dict:
         """使用处理器发送消息的通用方法"""
         handlers = _get_message_handlers()
         
         if msg_type in handlers:
             try:
-                return handlers[msg_type](**{**handler_params, 'chat_id': chat_id})
+                return await handlers[msg_type](**{**handler_params, 'chat_id': chat_id})
             except Exception as e:
                 logger.error(f"处理器执行失败 (类型={msg_type}): {e}", exc_info=True)
                 type_text = format.escape_html_chars(f"[{locale.type(msg_type)}]")
                 send_text = f"{handler_params['sender_name']}\n{type_text}"
-                return telegram_api(chat_id, send_text)
+                
+                return await telegram_sender.send_text(chat_id, send_text)
         else:
             # 处理未知消息类型
             logger.warning(f"❓未知消息类型: {msg_type}")
             type_text = format.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
             send_text = f"{handler_params['sender_name']}\n{type_text}"
-            return telegram_api(chat_id, send_text)
+            
+            return await telegram_sender.send_text(chat_id, send_text)
     
     async def _handle_deleted_group(from_wxid: str, handler_params: dict, content: dict, push_content: str, msg_type: Any) -> Optional[dict]:
         """处理被删除的群组"""
         try:
             # 删除联系人信息
             await contact_manager.delete_contact(from_wxid)
-            logger.info(f"已删除联系人信息: {from_wxid}")
             
             # 重新获取或创建聊天群组
             contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
             
             # 创建新群组
-            logger.info(f"尝试重新创建群组: {from_wxid}")
             new_chat_id = await _create_group_for_contact(from_wxid, contact_name, avatar_url)
             
             if new_chat_id:
-                logger.info(f"群组重新创建成功: {from_wxid} -> {new_chat_id}")
                 # 重新发送消息
-                return _send_message_with_handler(new_chat_id, msg_type, handler_params)
+                return await _send_message_with_handler(new_chat_id, msg_type, handler_params)
             else:
                 logger.error(f"群组重新创建失败: {from_wxid}")
                 return None
@@ -298,7 +313,8 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             return
         
         # 输出信息便于调试
-        if msg_type not in [1, 5, 19, 57]:
+        types_keys = [k for k in locale.type_map.keys() if isinstance(k, int)]
+        if msg_type not in types_keys:
             logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
             logger.info(f"💬 内容: {content}")
 
@@ -321,38 +337,47 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             'msg_type': msg_type
         }
         
-        # 发送消息
-        response = _send_message_with_handler(chat_id, msg_type, handler_params)
-        
         # 检测群组是否被删除
-        if response and not response.get('ok', False):
-            description = response.get('description', '')
+        try:
+            # 发送消息
+            response = await _send_message_with_handler(chat_id, msg_type, handler_params)
+            # 储存消息ID - PTB直接返回Message对象
+            if response:
+                tg_msgid = response.message_id  # 直接访问属性，不是字典
+                msgid_mapping.add(
+                    tg_msg_id=tg_msgid,
+                    from_wx_id=sender_wxid,
+                    to_wx_id=to_wxid,
+                    wx_msg_id=new_msg_id,
+                    client_msg_id=0,
+                    create_time=create_time,
+                    content=content if msg_type == 1 else ""
+                )
+                
+        except TelegramError as e:
+            error_msg = str(e).lower()
             
             # 检查是否是群组被删除的错误
-            if description == "Forbidden: the group chat was deleted":
-                logger.warning(f"检测到群组被删除: {from_wxid}, 错误信息: {description}")
+            if ("the group chat was deleted" in error_msg or 
+                "chat not found" in error_msg or
+                "group chat was deactivated" in error_msg):
+                logger.warning(f"检测到群组被删除: {from_wxid}, 错误信息: {e}")
                 response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
                 
                 if not response:
                     return
+            elif ("bot was kicked" in error_msg or 
+                  "not a member" in error_msg):
+                logger.warning(f"Bot被踢出群组或不是成员: {from_wxid}, 错误信息: {e}")
+                # 可以选择是否调用删除群组处理
+                response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
+                if not response:
+                    return
             else:
-                # 其他错误类型的处理
-                logger.error(f"Telegram API调用失败: {response}")
+                # 其他Telegram错误类型的处理
+                logger.error(f"Telegram API调用失败: {e}")
                 return
-        
-        # 储存消息ID
-        if response and response.get('ok', False):
-            tg_msgid = response['result']['message_id']
-            msgid_mapping.add(
-                tg_msg_id=tg_msgid,
-                from_wx_id=sender_wxid,
-                to_wx_id=to_wxid,
-                wx_msg_id=new_msg_id,
-                client_msg_id=0,
-                create_time=create_time,
-                content=content if msg_type == 1 else ""
-            )
-            
+                
     except Exception as e:
         logger.error(f"异步消息处理失败: {e}", exc_info=True)
 
@@ -364,8 +389,8 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
         contact_name = contact_saved["name"]
         avatar_url = contact_saved["avatarLink"]
     
-    # 直接利用API获取联系人
-    user_info = contact.get_user_info(wxid)
+    # 异步获取联系人信息
+    user_info = await contact.get_user_info(wxid)
     contact_name = user_info.name
     avatar_url = user_info.avatar_url
 
@@ -424,8 +449,9 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str)
     
     # 检查是否允许自动创建群组
     auto_create = getattr(config, 'AUTO_CREATE_GROUPS', True)
+
+    # 指定不创建群组的情况
     if not auto_create or from_wxid == config.MY_WXID:
-        logger.info(f"自动创建群组已禁用，跳过: {from_wxid}")
         return None
     
     # 创建群组
@@ -436,7 +462,7 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str)
     
     return chat_id
 
-# 处理聊天记录
+# 处理聊天记录 - 保持同步，因为主要是数据处理
 def process_chathistory(content):
     chat_data = format.xml_to_json(content["msg"]["appmsg"]["recorditem"])
     chat_json = chat_data["recordinfo"]
@@ -498,24 +524,23 @@ def process_chathistory(content):
     return f"<blockquote expandable>{chat_history}</blockquote>"
 
 def parse_time_without_seconds(time_str):
-        """解析时间并忽略秒数"""
-        time_str = re.sub(r'(\d{4}-\d{1,2}-\d{1,2} \d{1,2}:\d{1,2}):\d{1,2}', r'\1', time_str)
-        
-        try:
-            return datetime.strptime(time_str, "%Y-%m-%d %H:%M")
-        except ValueError:
-            logger.warning(f"无法解析时间格式: {time_str}，使用当前时间")
-            return datetime.now()
+    """解析时间并忽略秒数"""
+    time_str = re.sub(r'(\d{4}-\d{1,2}-\d{1,2} \d{1,2}:\d{1,2}):\d{1,2}', r'\1', time_str)
+    
+    try:
+        return datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+    except ValueError:
+        logger.warning(f"无法解析时间格式: {time_str}，使用当前时间")
+        return datetime.now()
 
 def silk_to_voice(silk_path):
-    """转换微信语音为Telegram语音"""
+    """转换微信语音为Telegram语音 - 保持同步，因为是CPU密集型任务"""
     pcm_path = silk_path + '.pcm'
     ogg_path = silk_path + '.ogg'
     
     try:
         # silk -> pcm
         duration = pilk.decode(silk_path, pcm_path)
-        logger.info(f"语音时长: {duration}s")
         
         # pcm -> ogg opus
         (
@@ -529,8 +554,8 @@ def silk_to_voice(silk_path):
         return ogg_path, int(duration)
             
     except Exception as e:
-       logger.error(f"语音转换失败: {e}")
-       return None, None
+        logger.error(f"语音转换失败: {e}")
+        return None, None
     
     finally:
         # 清理可能存在的临时文件
@@ -540,8 +565,8 @@ def silk_to_voice(silk_path):
                     os.remove(temp_file)
                 except OSError as e:
                     logger.warning(f"清理临时文件失败 {temp_file}: {e}")
-        
-# 提取回调信息
+      
+# 提取回调信息 - 保持同步，纯数据处理
 def extract_message(data):
     try:
         # 提取所需字段
@@ -562,8 +587,8 @@ def extract_message(data):
         logger.error(f"提取消息信息失败: {e}")
         return None
 
-def process_message(message_data: Dict[str, Any]) -> None:
-    """处理微信消息"""
+async def process_message(message_data: Dict[str, Any]) -> None:
+    """处理微信消息 - 异步版本"""
     try:
         message_info = extract_message(message_data)
         if not message_info:
@@ -574,7 +599,7 @@ def process_message(message_data: Dict[str, Any]) -> None:
         if message_info["FromUserName"] == "weixin":
             return
         
-        message_processor.add_message(message_info)
+        await message_processor.add_message_async(message_info)
             
     except Exception as e:
         logger.error(f"消息处理失败: {e}", exc_info=True)
@@ -584,31 +609,32 @@ class MessageProcessor:
         self.queue = None
         self.loop = None
         self._shutdown = False
+        self._task = None
+        self._init_complete = asyncio.Event()
         self._init_async_env()
     
     def _init_async_env(self):
-        """在后台线程中初始化异步环境"""
+        """在后台线程中初始化异步环境"""       
         def run_async():
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
             self.queue = Queue(maxsize=1000)
             
             # 启动队列处理器
-            self.loop.create_task(self._process_queue())
+            self._task = self.loop.create_task(self._process_queue())
             logger.info("消息处理器已启动")
             
+            # 标记初始化完成
+            self.loop.call_soon_threadsafe(self._init_complete.set)
+            
             # 运行事件循环
-            self.loop.run_forever()
+            try:
+                self.loop.run_forever()
+            except Exception as e:
+                logger.error(f"消息处理器事件循环异常: {e}")
         
         thread = threading.Thread(target=run_async, daemon=True)
         thread.start()
-        
-        # 等待初始化完成
-        import time
-        for _ in range(50):
-            if self.queue:
-                break
-            time.sleep(0.1)
     
     async def _process_queue(self):
         """处理队列中的消息"""
@@ -627,15 +653,90 @@ class MessageProcessor:
                 logger.error(f"处理消息失败: {e}", exc_info=True)
     
     def add_message(self, message_info: Dict[str, Any]):
-        """添加消息到队列"""
+        """添加消息到队列 - 同步版本（兼容性）"""
         if not self.loop or not self.queue:
             logger.error("处理器未就绪")
             return
         
         # 线程安全地添加消息
-        self.loop.call_soon_threadsafe(
-            self.queue.put_nowait, message_info
-        )
+        try:
+            self.loop.call_soon_threadsafe(
+                self.queue.put_nowait, message_info
+            )
+        except Exception as e:
+            logger.error(f"添加消息到队列失败: {e}")
+    
+    async def add_message_async(self, message_info: Dict[str, Any]):
+        """添加消息到队列"""
+        # 等待初始化完成
+        if not self._init_complete.is_set():
+            await asyncio.wait_for(self._init_complete.wait(), timeout=5.0)
+        
+        if not self.queue:
+            logger.error("处理器未就绪")
+            return
+        
+        try:
+            # 如果在同一个事件循环中，直接添加
+            if asyncio.get_event_loop() == self.loop:
+                await self.queue.put(message_info)
+            else:
+                # 跨线程调用
+                future = asyncio.run_coroutine_threadsafe(
+                    self.queue.put(message_info), self.loop
+                )
+                await asyncio.wrap_future(future)
+        except Exception as e:
+            logger.error(f"异步添加消息到队列失败: {e}")
+    
+    async def shutdown(self):
+        """优雅关闭处理器"""
+        logger.info("正在关闭消息处理器...")
+        self._shutdown = True
+        
+        if self.queue:
+            # 等待队列处理完成
+            try:
+                await asyncio.wait_for(self.queue.join(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("等待队列处理完成超时")
+        
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        
+        logger.info("消息处理器已关闭")
+    
+    def get_queue_size(self) -> int:
+        """获取队列大小"""
+        if self.queue:
+            return self.queue.qsize()
+        return 0
 
 # 全局实例
 message_processor = MessageProcessor()
+
+# 为了向后兼容，保留原有的同步接口
+def add_message_sync(message_info: Dict[str, Any]):
+    """同步添加消息接口（向后兼容）"""
+    message_processor.add_message(message_info)
+
+# 优雅关闭函数
+async def shutdown_message_processor():
+    """关闭消息处理器"""
+    await message_processor.shutdown()
+
+# 获取处理器状态
+def get_processor_status() -> Dict[str, Any]:
+    """获取处理器状态"""
+    return {
+        "queue_size": message_processor.get_queue_size(),
+        "is_running": message_processor.loop is not None and message_processor.loop.is_running(),
+        "is_shutdown": message_processor._shutdown
+    }

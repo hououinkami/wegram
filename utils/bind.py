@@ -1,19 +1,20 @@
 import asyncio
-import os
 import json
-import tempfile
-import requests
 import logging
+import os
 import shutil
+import tempfile
 from io import BytesIO
+from typing import Dict, Optional
+
+import requests
 from PIL import Image
-from typing import Optional, Dict
 from telethon import TelegramClient
-from telethon.tl.functions.messages import CreateChatRequest
-from telethon.tl.functions.messages import EditChatAdminRequest, EditChatPhotoRequest
-from telethon.tl.types import InputChatUploadedPhoto
+from telethon.tl.functions.messages import CreateChatRequest, EditChatAdminRequest, EditChatPhotoRequest, GetDialogFiltersRequest, UpdateDialogFilterRequest
+from telethon.tl.types import InputChatUploadedPhoto, InputPeerChat, InputPeerChannel, DialogFilter, TextWithEntities
 
 import config
+from service.userbot import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -108,17 +109,14 @@ class TempTelegramClient:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
                 needs_processing = True
-                logger.info(f"转换 {img.mode} 到 RGB")
             
             # 如果图片太小，放大到最小尺寸
             if width < min_size or height < min_size:
-                logger.info(f"图片尺寸过小，将处理到至少 {min_size}x{min_size}")
                 # 保持纵横比，放大到最小尺寸
                 ratio = max(min_size / width, min_size / height)
                 new_width = int(width * ratio)
                 new_height = int(height * ratio)
                 img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                logger.info(f"放大后尺寸: {new_width}x{new_height}")
                 needs_processing = True
             
             # 裁剪为正方形（如果不是正方形）
@@ -127,7 +125,6 @@ class TempTelegramClient:
                 left = (img.width - size) // 2
                 top = (img.height - size) // 2
                 img = img.crop((left, top, left + size, top + size))
-                logger.info(f"裁剪后尺寸: {size}x{size}")
                 needs_processing = True
             
             # 强制处理为 JPEG 格式（Telegram 头像要求）
@@ -161,8 +158,6 @@ class TempTelegramClient:
             return True
         
         try:
-            logger.info(f"开始设置群组头像: {avatar_url}")
-            
             # 下载并处理图片
             processed_image_data = await self._process_image_from_url(avatar_url)
             
@@ -187,7 +182,6 @@ class TempTelegramClient:
                         chat_id=original_chat_id,
                         photo=InputChatUploadedPhoto(uploaded_photo)
                     ))
-                    logger.info(f"成功设置群组头像")
                 
                 return True
                 
@@ -225,7 +219,6 @@ class TempTelegramClient:
             # 检查是否已存在该映射
             for contact in contacts:
                 if contact.get('wxId') == wxid and contact.get('chatId') == chat_id:
-                    logger.info(f"映射已存在: {wxid} -> {chat_id}")
                     return
             
             new_contact = {
@@ -240,8 +233,6 @@ class TempTelegramClient:
             
             contacts.append(new_contact)
             await loop.run_in_executor(None, _write_contacts, contacts)
-                
-            logger.info(f"已保存映射: {wxid} -> {chat_id}")
             
         except Exception as e:
             logger.error(f"保存映射关系失败: {e}")
@@ -280,7 +271,6 @@ class TempTelegramClient:
             existing_contact = await self._check_existing_mapping(wxid)
             
             if existing_contact:
-                logger.info(f"该微信ID {wxid} 已有群组映射，群组ID: {existing_contact.get('chatId')}")
                 return {
                     'success': True,
                     'chat_id': existing_contact.get('chatId'),
@@ -317,7 +307,6 @@ class TempTelegramClient:
                     bot_entity = await client.get_entity(int(bot_id))
                 # 尝试从监控服务获取
                 else:
-                    from service.tg2wx import get_client
                     monitor = get_client()
                     if monitor and hasattr(monitor, 'target_bot_id'):
                         bot_entity = await client.get_entity(monitor.target_bot_id)
@@ -330,7 +319,6 @@ class TempTelegramClient:
                 if hasattr(config, 'BOT_TOKEN') and config.BOT_TOKEN:
                     try:
                         # 通过API获取机器人信息
-                        import requests
                         bot_token = config.BOT_TOKEN
                         response = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10)
                         if response.status_code == 200:
@@ -338,7 +326,6 @@ class TempTelegramClient:
                             if bot_info.get('ok'):
                                 bot_username = bot_info['result']['username']
                                 bot_entity = await client.get_entity(bot_username)
-                                logger.info(f"通过API获取机器人用户名: @{bot_username}")
                             else:
                                 raise Exception(f"Bot API返回错误: {bot_info}")
                         else:
@@ -382,8 +369,6 @@ class TempTelegramClient:
             if chat_id is None:
                 raise Exception("无法获取创建的群组ID")
             
-            logger.info(f"成功创建普通群组，ID: {chat_id}")
-            
             # 设置 bot 为管理员
             bot_is_admin = False
             try:
@@ -393,7 +378,6 @@ class TempTelegramClient:
                     user_id=bot_entity,
                     is_admin=True
                 ))
-                logger.info(f"成功设置 bot 为管理员")
                 bot_is_admin = True
             except Exception as e:
                 logger.error(f"设置 bot 为管理员失败: {e}")
@@ -407,10 +391,8 @@ class TempTelegramClient:
             moved_to_folder = False
             try:
                 moved_to_folder = await self._move_chat_to_folder(client, chat_id, config.WECHAT_FOLDER_NAME)
-                if moved_to_folder:
-                    logger.info(f"成功将群组移动到 WeChat 文件夹")
-                else:
-                    logger.info(f"移动群组到文件夹失败，但群组创建成功")
+                if not moved_to_folder:
+                    logger.warning(f"移动群组到文件夹失败，但群组创建成功")
             except Exception as folder_error:
                 logger.error(f"移动群组到文件夹时出错: {folder_error}")
 
@@ -440,10 +422,7 @@ class TempTelegramClient:
     
     async def _move_chat_to_folder(self, client, chat_id: int, folder_name: str = config.WECHAT_FOLDER_NAME) -> bool:
         """将聊天移动到指定文件夹"""
-        try:
-            from telethon.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
-            from telethon.tl.types import InputPeerChat, InputPeerChannel, DialogFilter, TextWithEntities
-            
+        try:            
             # 获取现有文件夹
             filters_result = await client(GetDialogFiltersRequest())
             
@@ -508,7 +487,6 @@ class TempTelegramClient:
                     filter=target_filter
                 ))
                 
-                logger.info(f"成功创建新文件夹 '{folder_name}' 并添加群组")
                 return True
             
             else:
@@ -528,7 +506,6 @@ class TempTelegramClient:
                         continue
                 
                 if peer_already_exists:
-                    logger.info(f"群组已在文件夹 '{folder_name}' 中")
                     return True
                 
                 # 添加群组到现有文件夹
