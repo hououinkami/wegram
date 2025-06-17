@@ -7,6 +7,7 @@ from telethon import events
 
 import config
 from service.telethon_client import get_client_instance, create_client, get_client, get_user_id
+from utils.sender_telethon import process_telethon_update
 from utils.sender import revoke_telethon
 
 logger = logging.getLogger(__name__)
@@ -97,8 +98,9 @@ class TelethonMonitor:
                 message = event.message
                 chat = await event.get_chat()
                 
-                logger.debug(f"📝 [Telethon] 处理新消息: {message.text or '[媒体]'}")
-                # await process_telethon_update(message, chat, get_client())
+                # 调试输出
+                logger.info(f"📝 [Telethon] 处理新消息: {event}")
+                await process_telethon_update(event)
             
         except Exception as e:
             logger.error(f"处理Telethon新消息出错: {e}")
@@ -212,8 +214,13 @@ async def main():
         monitor_instance = await create_monitor()
         
         # 启动监控
+        if config.MODE == "polling":
+            handle_new = False
+        else:
+            handle_new = True
+            
         await monitor_instance.start_monitoring(
-            handle_new_messages=False,
+            handle_new_messages=handle_new,
             handle_deleted_messages=True
         )
         

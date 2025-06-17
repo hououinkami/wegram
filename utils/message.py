@@ -14,10 +14,12 @@ from telegram.error import TelegramError
 import config
 from api import contact, download
 from api.bot import telegram_sender
+from service.telethon_client import get_client
 from utils import format
 from utils.contact import contact_manager
 from utils.locales import Locale
 from utils.msgid import msgid_mapping
+from utils.sender import get_telethon_msg_id
 
 logger = logging.getLogger(__name__)
 
@@ -363,9 +365,20 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         try:
             # 发送消息
             response = await _send_message_with_handler(chat_id, msg_type, handler_params)
-            # 储存消息ID - PTB直接返回Message对象
-            if response:
-                tg_msgid = response.message_id  # 直接访问属性，不是字典
+
+            # 储存消息ID
+            if response and not from_wxid.startswith('gh_') :
+                tg_msgid = response.message_id
+
+                # 获取接收到的微信消息对应Telethon的MsgID
+                if config.MODE == "telethon":
+                    message_text = response.text if response.text else ""
+                    bot_id = int(config.BOT_TOKEN.split(':')[0])
+                    telethon_client = get_client()
+                    telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), bot_id, message_text, response.date)
+                else:
+                    telethon_msg_id = 0
+
                 msgid_mapping.add(
                     tg_msg_id=tg_msgid,
                     from_wx_id=sender_wxid,
@@ -373,7 +386,8 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                     wx_msg_id=new_msg_id,
                     client_msg_id=0,
                     create_time=create_time,
-                    content=content if msg_type == 1 else ""
+                    content=content if msg_type == 1 else "",
+                    telethon_msg_id=telethon_msg_id
                 )
                 
         except TelegramError as e:
