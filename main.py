@@ -92,8 +92,13 @@ class ServiceManager:
         self.shutdown_event = asyncio.Event()
         
         # 服务配置
-        self.services_to_start = ["telethon_monitor", "login", "wx2tg", "tg2wx", "scheduler"]
-        self.async_services = ["telethon_monitor", "login", "wx2tg", "tg2wx", "scheduler"] # 需要异步运行的服务
+        if config.MODE == "polling":
+            tele_services = ["telethon_monitor", "tg2wx"]
+        elif config.MODE == "telethon":
+            tele_services = ["telethon_monitor"]
+
+        self.services_to_start = tele_services + ["login", "wx2tg", "scheduler"]
+        self.async_services = tele_services + ["login", "wx2tg", "scheduler"]
     
     def start_file_monitor(self):
         """启动文件监控"""
