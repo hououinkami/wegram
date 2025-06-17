@@ -9,14 +9,14 @@ logger = logging.getLogger(__name__)
 class MappingManager:
     def __init__(self):
         """
-        初始化映射管理器 - 实时存储版本
+        初始化映射管理器 - 实时存储版本（数组格式）
         """
         
         # 初始化
         print(f"✅ 初始化 MappingManager 实时存储版本 (ID: {id(self)})")
         self.base_path = "./msgid"
         # 内存缓存，用于快速查询最近的数据
-        self.memory_cache = {}
+        self.memory_cache = []
         self.cache_lock = threading.RLock()  # 使用可重入锁
         
         # 确保目录存在
@@ -38,14 +38,13 @@ class MappingManager:
                 try:
                     with open(file_path, "r", encoding='utf-8') as f:
                         data = json.load(f)
-                    if "tgToWxMapping" in data:
-                        self.memory_cache = data["tgToWxMapping"].copy()
-                        logger.info(f"加载了 {len(self.memory_cache)} 条今日映射到内存缓存")
+                    self.memory_cache = data.copy() if isinstance(data, list) else []
+                    logger.info(f"加载了 {len(self.memory_cache)} 条今日映射到内存缓存")
                 except Exception as e:
                     logger.error(f"加载今日数据到缓存失败: {e}")
-                    self.memory_cache = {}
+                    self.memory_cache = []
             else:
-                self.memory_cache = {}
+                self.memory_cache = []
 
     def _get_file_path(self, date):
         """
@@ -63,7 +62,7 @@ class MappingManager:
         file_path = self._get_file_path(date)
         if not os.path.exists(file_path):
             with open(file_path, "w", encoding='utf-8') as f:
-                json.dump({"tgToWxMapping": {}}, f, ensure_ascii=False)
+                json.dump([], f, ensure_ascii=False)
 
     def add(self, tg_msg_id, from_wx_id, to_wx_id, wx_msg_id, client_msg_id, create_time, content, telethon_msg_id: int = 0):
         """
@@ -74,9 +73,9 @@ class MappingManager:
         :param content: 消息内容（字符串）
         """
         today = datetime.now().strftime("%Y-%m-%d")
-        tg_key = str(tg_msg_id)
         
         mapping_data = {
+            "tgmsgid": int(tg_msg_id),
             "fromwxid": str(from_wx_id),
             "towxid": str(to_wx_id),
             "msgid": int(wx_msg_id),
@@ -89,10 +88,18 @@ class MappingManager:
         try:
             # 1. 先更新内存缓存
             with self.cache_lock:
-                self.memory_cache[tg_key] = mapping_data
+                # 检查是否已存在相同的tg_msg_id，如果存在则更新，否则添加
+                found = False
+                for i, item in enumerate(self.memory_cache):
+                    if item.get("tgmsgid") == int(tg_msg_id):
+                        self.memory_cache[i] = mapping_data
+                        found = True
+                        break
+                if not found:
+                    self.memory_cache.append(mapping_data)
             
             # 2. 立即写入文件
-            self._save_to_file_immediately(today, tg_key, mapping_data)
+            self._save_to_file_immediately(today, mapping_data)
             
             logger.debug(f"成功添加映射: TG({tg_msg_id}) -> WX({wx_msg_id})")
             
@@ -100,14 +107,12 @@ class MappingManager:
             logger.error(f"添加映射失败: {e}")
             # 如果文件写入失败，从缓存中移除
             with self.cache_lock:
-                if tg_key in self.memory_cache:
-                    del self.memory_cache[tg_key]
+                self.memory_cache = [item for item in self.memory_cache if item.get("tgmsgid") != int(tg_msg_id)]
 
-    def _save_to_file_immediately(self, date, tg_key, mapping_data):
+    def _save_to_file_immediately(self, date, mapping_data):
         """
         立即将单条映射数据保存到文件
         :param date: 日期字符串
-        :param tg_key: TG消息ID（字符串）
         :param mapping_data: 映射数据字典
         """
         file_path = self._get_file_path(date)
@@ -134,18 +139,25 @@ class MappingManager:
                 
                 # 读取现有数据
                 with open(file_path, "r", encoding='utf-8') as f:
-                    existing_data = json.load(f)
+                    mappings_list = json.load(f)
                 
-                # 确保存在tgToWxMapping键
-                if "tgToWxMapping" not in existing_data:
-                    existing_data["tgToWxMapping"] = {}
+                # 确保是列表格式
+                if not isinstance(mappings_list, list):
+                    mappings_list = []
                 
-                # 更新映射数据
-                existing_data["tgToWxMapping"][tg_key] = mapping_data
+                # 检查是否已存在相同的tgmsgid，如果存在则更新，否则添加
+                found = False
+                for i, item in enumerate(mappings_list):
+                    if item.get("tgmsgid") == mapping_data["tgmsgid"]:
+                        mappings_list[i] = mapping_data
+                        found = True
+                        break
+                if not found:
+                    mappings_list.append(mapping_data)
                 
                 # 写回文件
                 with open(file_path, "w", encoding='utf-8') as f:
-                    json.dump(existing_data, f, indent=4, ensure_ascii=False)
+                    json.dump(mappings_list, f, indent=4, ensure_ascii=False)
                 
                 # 删除锁文件
                 if os.path.exists(lock_file):
@@ -173,12 +185,13 @@ class MappingManager:
         :param tg_msg_id: Telegram 消息ID（数字或字符串）
         :return: 微信消息字典 {"msgid": int, "fromwxid": str, "content": str} 或 None
         """
-        tg_key = str(tg_msg_id)
+        tg_id_int = int(tg_msg_id)
         
         # 1. 首先检查内存缓存（最快）
         with self.cache_lock:
-            if tg_key in self.memory_cache:
-                return self.memory_cache[tg_key]
+            for item in self.memory_cache:
+                if item.get("tgmsgid") == tg_id_int:
+                    return item
         
         # 2. 检查最近几天的文件
         today = datetime.now()
@@ -193,16 +206,16 @@ class MappingManager:
             if os.path.exists(file_path):
                 try:
                     with open(file_path, "r", encoding='utf-8') as f:
-                        data = json.load(f)
-                    if ("tgToWxMapping" in data and 
-                        tg_key in data["tgToWxMapping"]):
-                        result = data["tgToWxMapping"][tg_key]
-                        
-                        # 将历史数据也加入缓存（可选优化）
-                        with self.cache_lock:
-                            self.memory_cache[tg_key] = result
-                        
-                        return result
+                        mappings_list = json.load(f)
+                    
+                    if isinstance(mappings_list, list):
+                        for item in mappings_list:
+                            if item.get("tgmsgid") == tg_id_int:
+                                # 将历史数据也加入缓存（可选优化）
+                                with self.cache_lock:
+                                    self.memory_cache.append(item)
+                                return item
+                            
                 except Exception as e:
                     logger.error(f"读取文件 {file_path} 失败: {e}")
         
@@ -218,9 +231,9 @@ class MappingManager:
         
         # 1. 首先检查内存缓存
         with self.cache_lock:
-            for tg_key, wx_msg in self.memory_cache.items():
-                if wx_msg["msgid"] == wx_id_int:
-                    return tg_key
+            for item in self.memory_cache:
+                if item.get("msgid") == wx_id_int:
+                    return str(item.get("tgmsgid"))
         
         # 2. 检查文件
         today = datetime.now()
@@ -235,11 +248,13 @@ class MappingManager:
             if os.path.exists(file_path):
                 try:
                     with open(file_path, "r", encoding='utf-8') as f:
-                        data = json.load(f)
-                    if "tgToWxMapping" in data:
-                        for tg_key, wx_msg in data["tgToWxMapping"].items():
-                            if wx_msg["msgid"] == wx_id_int:
-                                return tg_key
+                        mappings_list = json.load(f)
+                    
+                    if isinstance(mappings_list, list):
+                        for item in mappings_list:
+                            if item.get("msgid") == wx_id_int:
+                                return str(item.get("tgmsgid"))
+                            
                 except Exception as e:
                     logger.error(f"读取文件 {file_path} 失败: {e}")
         
@@ -255,13 +270,9 @@ class MappingManager:
         
         # 1. 首先检查内存缓存
         with self.cache_lock:
-            for tg_key, wx_msg in self.memory_cache.items():
-                if not isinstance(wx_msg, dict):
-                    continue
-                    
-                telethon_id = wx_msg.get("telethonmsgid")
-                if telethon_id == telethon_msg_id_int:
-                    return wx_msg
+            for item in self.memory_cache:
+                if item.get("telethonmsgid") == telethon_msg_id_int:
+                    return item
         
         # 2. 检查文件
         today = datetime.now()
@@ -272,22 +283,17 @@ class MappingManager:
             if os.path.exists(file_path):
                 try:
                     with open(file_path, "r", encoding='utf-8') as f:
-                        data = json.load(f)
-                        
-                    if "tgToWxMapping" in data:
-                        for tg_key, wx_msg in data["tgToWxMapping"].items():
-                            if not isinstance(wx_msg, dict):
-                                continue
-                                
-                            telethon_id = wx_msg.get("telethonmsgid")
-                            if telethon_id == telethon_msg_id_int:
-                                return wx_msg
+                        mappings_list = json.load(f)
+                    
+                    if isinstance(mappings_list, list):
+                        for item in mappings_list:
+                            if isinstance(item, dict) and item.get("telethonmsgid") == telethon_msg_id_int:
+                                return item
                                 
                 except Exception as e:
                     logger.error(f"读取文件失败: {e}")
         
         return None
-
 
     def get_tg_id_by_wx_user(self, from_wx_id):
         """
@@ -299,9 +305,11 @@ class MappingManager:
         
         # 1. 检查内存缓存
         with self.cache_lock:
-            for tg_key, wx_msg in self.memory_cache.items():
-                if wx_msg["fromwxid"] == from_wx_id:
-                    result.append(tg_key)
+            for item in self.memory_cache:
+                if item.get("fromwxid") == from_wx_id:
+                    tg_id = str(item.get("tgmsgid"))
+                    if tg_id not in result:
+                        result.append(tg_id)
         
         # 2. 检查文件
         today = datetime.now()
@@ -316,11 +324,15 @@ class MappingManager:
             if os.path.exists(file_path):
                 try:
                     with open(file_path, "r", encoding='utf-8') as f:
-                        data = json.load(f)
-                    if "tgToWxMapping" in data:
-                        for tg_key, wx_msg in data["tgToWxMapping"].items():
-                            if wx_msg["fromwxid"] == from_wx_id and tg_key not in result:
-                                result.append(tg_key)
+                        mappings_list = json.load(f)
+                    
+                    if isinstance(mappings_list, list):
+                        for item in mappings_list:
+                            if item.get("fromwxid") == from_wx_id:
+                                tg_id = str(item.get("tgmsgid"))
+                                if tg_id not in result:
+                                    result.append(tg_id)
+                                
                 except Exception as e:
                     logger.error(f"读取文件 {file_path} 失败: {e}")
         
@@ -346,9 +358,11 @@ class MappingManager:
             if os.path.exists(file_path):
                 try:
                     with open(file_path, "r", encoding='utf-8') as f:
-                        data = json.load(f)
-                    if "tgToWxMapping" in data:
-                        total_mappings += len(data["tgToWxMapping"])
+                        mappings_list = json.load(f)
+                    
+                    if isinstance(mappings_list, list):
+                        total_mappings += len(mappings_list)
+                        
                 except Exception as e:
                     logger.error(f"读取统计文件 {file_path} 失败: {e}")
         
