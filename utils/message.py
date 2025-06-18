@@ -24,23 +24,24 @@ from utils.sender import get_telethon_msg_id
 logger = logging.getLogger(__name__)
 
 locale = Locale(config.LANG)
-black_list = ['open_chat', 'bizlivenotify', 74]
+black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74]
 
 def _get_message_handlers():
     """返回消息类型处理器映射"""
     return {
         1: _forward_text,
         3: _forward_image,
-        43: _forward_video,
         34: _forward_voice,
-        6: _forward_file,
-        5: _forward_link,
+        43: _forward_video,
         47: _forward_sticker,
+        48: _forward_location,
+        5: _forward_link,
+        6: _forward_file,
         19: _forward_chat_history,
-        57: _forward_quote,
         33: _forward_miniprogram,
         51: _forward_channel,
-        48: _forward_location,
+        53: _forward_groupnote,
+        57: _forward_quote,
         2000: _forward_transfer,
         "revokemsg": _forward_revoke,
         "pat": _forward_pat,
@@ -65,14 +66,6 @@ async def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid:
     else:
         raise Exception("图片下载失败")
 
-async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
-    """处理视频消息"""
-    success, filepath = await download.get_video(msg_id, from_wxid, content)
-    if success:
-        return await telegram_sender.send_video(chat_id, filepath, sender_name)
-    else:
-        raise Exception("视频下载失败")
-
 async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: dict, message_info: dict, **kwargs) -> dict:
     """处理语音消息"""
     success, filepath = await download.get_voice(msg_id, message_info['FromUserName'], content)
@@ -87,21 +80,13 @@ async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: d
     
     return await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
 
-async def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
-    """处理文件消息"""
-    success, filepath = await download.get_file(msg_id, from_wxid, content)
-    
+async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
+    """处理视频消息"""
+    success, filepath = await download.get_video(msg_id, from_wxid, content)
     if success:
-        return await telegram_sender.send_document(chat_id, filepath, sender_name)
+        return await telegram_sender.send_video(chat_id, filepath, sender_name)
     else:
-        raise Exception("文件下载失败")
-
-async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
-    """处理公众号消息"""
-    url_items = format.extract_url_items(content)
-    send_text = f"{sender_name}\n{url_items}"
-
-    return await telegram_sender.send_text(chat_id, send_text)
+        raise Exception("视频下载失败")
 
 async def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理贴纸消息"""
@@ -111,6 +96,35 @@ async def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwar
         return await telegram_sender.send_animation(chat_id, filepath, sender_name)
     else:
         raise Exception("贴纸下载失败")
+
+async def _forward_location(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理定位"""
+    try:
+        location = content.get('msg', {}).get('location', {})
+        latitude = float(location.get('x'))
+        longitude = float(location.get('y'))
+        label = location.get('label', '')
+        poiname = location.get('poiname', '')
+        
+        return await telegram_sender.send_location(chat_id, latitude, longitude, poiname, label)
+    except (KeyError, TypeError) as e:
+        raise Exception("定位信息提取失败")
+
+async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理公众号消息"""
+    url_items = format.extract_url_items(content)
+    send_text = f"{sender_name}\n{url_items}"
+
+    return await telegram_sender.send_text(chat_id, send_text)
+
+async def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
+    """处理文件消息"""
+    success, filepath = await download.get_file(msg_id, from_wxid, content)
+    
+    if success:
+        return await telegram_sender.send_document(chat_id, filepath, sender_name)
+    else:
+        raise Exception("文件下载失败")
 
 async def _forward_chat_history(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理聊天记录消息"""
@@ -122,17 +136,6 @@ async def _forward_chat_history(chat_id: int, sender_name: str, content: dict, *
         return await telegram_sender.send_text(chat_id, send_text)
     else:
         raise Exception("聊天记录处理失败")
-
-async def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
-    """处理引用消息"""
-    text = format.escape_html_chars(content["msg"]["appmsg"]["title"])
-    quote = content["msg"]["appmsg"]["refermsg"]
-    quote_newmsgid = quote["svrid"]
-    
-    quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
-    send_text = f"{sender_name}\n{text}"
-    
-    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
 async def _forward_miniprogram(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理小程序消息"""
@@ -155,18 +158,27 @@ async def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwar
     except (KeyError, TypeError) as e:
         raise Exception("视频号信息提取失败")
 
-async def _forward_location(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
-    """处理定位"""
+async def _forward_groupnote(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理群接龙"""
     try:
-        location = content.get('msg', {}).get('location', {})
-        latitude = float(location.get('x'))
-        longitude = float(location.get('y'))
-        label = location.get('label', '')
-        poiname = location.get('poiname', '')
+        groupnote_title = content.get('msg', {}).get('appmsg', {}).get('title', '')
+        groupnote_content = format.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{groupnote_title}")
+        send_text = f"{sender_name}\n<blockquote expandable>{groupnote_content}</blockquote>"
         
-        return await telegram_sender.send_location(chat_id, latitude, longitude, poiname, label)
+        return await telegram_sender.send_text(chat_id, send_text)
     except (KeyError, TypeError) as e:
-        raise Exception("定位信息提取失败")
+        raise Exception("群接龙信息提取失败")
+
+async def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理引用消息"""
+    text = format.escape_html_chars(content["msg"]["appmsg"]["title"])
+    quote = content["msg"]["appmsg"]["refermsg"]
+    quote_newmsgid = quote["svrid"]
+    
+    quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
+    send_text = f"{sender_name}\n{text}"
+    
+    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
 async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理转账"""
@@ -178,7 +190,7 @@ async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwa
         return await telegram_sender.send_text(chat_id, send_text)
     except (KeyError, TypeError) as e:
         raise Exception("转账信息提取失败")
-  
+
 async def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理撤回消息"""
     revoke_msg = content["sysmsg"]["revokemsg"]
