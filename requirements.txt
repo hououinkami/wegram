@@ -1,10 +1,11 @@
-requests
 aiohttp
+requests
 python-telegram-bot
 telethon
 cryptg
 pyaes
-Pillow
 pilk
 ffmpeg-python
-typing-extensions
+Pillow
+lottie
+opencv-python
