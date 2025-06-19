@@ -2,8 +2,8 @@ import asyncio
 import logging
 
 import config
-import api.login as login
-from api.bot import telegram_sender
+import api.wechat_login as wechat_login
+from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
 from utils.locales import Locale
 
@@ -19,7 +19,7 @@ async def check_login_status():
     global is_logged_in
     
     try:
-        response_json = await login.get_profile(config.MY_WXID)
+        response_json = await wechat_login.get_profile(config.MY_WXID)
         tg_user_id = get_user_id()
 
         if response_json.get("Data") is not None:

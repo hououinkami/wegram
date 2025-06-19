@@ -1,7 +1,7 @@
 import logging
 
 import config
-from api.base import wechat_api
+from api.wechat_api import wechat_api
 
 logger = logging.getLogger(__name__)
 

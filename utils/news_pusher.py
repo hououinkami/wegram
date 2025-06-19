@@ -2,7 +2,7 @@ import logging
 
 import requests
 
-from utils.format import escape_html_chars
+from utils.message_formatter import escape_html_chars
 
 logger = logging.getLogger(__name__)
 

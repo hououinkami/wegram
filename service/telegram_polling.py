@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import Application, CallbackContext, MessageHandler, filters
 
 import config
-from utils.sender import process_telegram_update
+from utils.telegram_to_wechat import process_telegram_update
 
 logger = logging.getLogger(__name__)
 

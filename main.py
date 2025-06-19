@@ -93,12 +93,12 @@ class ServiceManager:
         
         # 服务配置
         if config.MODE == "polling":
-            tele_services = ["telethon_monitor", "tg2wx"]
+            tele_services = ["telethon_monitor", "telegram_polling"]
         elif config.MODE == "telethon":
             tele_services = ["telethon_monitor"]
 
-        self.services_to_start = tele_services + ["login", "wx2tg", "scheduler"]
-        self.async_services = tele_services + ["login", "wx2tg", "scheduler"]
+        self.services_to_start = tele_services + ["wechat_callback", "wechat_status", "scheduled_pusher"]
+        self.async_services = tele_services + ["wechat_callback", "wechat_status", "scheduled_pusher"]
     
     def start_file_monitor(self):
         """启动文件监控"""

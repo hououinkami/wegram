@@ -12,14 +12,14 @@ import pilk
 from telegram.error import TelegramError
 
 import config
-from api import contact, download
-from api.bot import telegram_sender
+from api import wechat_contacts, wechat_download
+from api.telegram_sender import telegram_sender
 from service.telethon_client import get_client
-from utils import format
-from utils.contact import contact_manager
+from utils import message_formatter
+from utils.contact_manager import contact_manager
 from utils.locales import Locale
-from utils.msgid import msgid_mapping
-from utils.sender import get_telethon_msg_id
+from utils.message_mapper import msgid_mapping
+from utils.telegram_to_wechat import get_telethon_msg_id
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def _get_message_handlers():
 
 async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
     """处理文本消息"""
-    text = format.escape_html_chars(content)
+    text = message_formatter.escape_html_chars(content)
     send_text = f"{sender_name}\n{text}"
     
     # 异步调用 telegram_api
@@ -59,7 +59,7 @@ async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) 
 async def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理图片消息"""
     # 异步下载图片
-    success, filepath = await download.get_image(msg_id, from_wxid, content)
+    success, filepath = await wechat_download.get_image(msg_id, from_wxid, content)
     
     if success:
         return await telegram_sender.send_photo(chat_id, filepath, sender_name)
@@ -68,7 +68,7 @@ async def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid:
 
 async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: dict, message_info: dict, **kwargs) -> dict:
     """处理语音消息"""
-    success, filepath = await download.get_voice(msg_id, message_info['FromUserName'], content)
+    success, filepath = await wechat_download.get_voice(msg_id, message_info['FromUserName'], content)
 
     if not success:
         raise Exception("语音下载失败")
@@ -82,7 +82,7 @@ async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: d
 
 async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
-    success, filepath = await download.get_video(msg_id, from_wxid, content)
+    success, filepath = await wechat_download.get_video(msg_id, from_wxid, content)
     if success:
         return await telegram_sender.send_video(chat_id, filepath, sender_name)
     else:
@@ -90,10 +90,10 @@ async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid:
 
 async def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理贴纸消息"""
-    success, filepath = await download.get_emoji(content)
+    success, filepath = await wechat_download.get_emoji(content)
     
     if success:
-        return await telegram_sender.send_animation(chat_id, filepath, sender_name)
+        return await telegram_sender.send_animation(chat_id, filepath, sender_name, filename=f"[{locale.type(kwargs.get('msg_type'))}].gif")
     else:
         raise Exception("贴纸下载失败")
 
@@ -112,14 +112,14 @@ async def _forward_location(chat_id: int, sender_name: str, content: dict, **kwa
 
 async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理公众号消息"""
-    url_items = format.extract_url_items(content)
+    url_items = message_formatter.extract_url_items(content)
     send_text = f"{sender_name}\n{url_items}"
 
     return await telegram_sender.send_text(chat_id, send_text)
 
 async def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理文件消息"""
-    success, filepath = await download.get_file(msg_id, from_wxid, content)
+    success, filepath = await wechat_download.get_file(msg_id, from_wxid, content)
     
     if success:
         return await telegram_sender.send_document(chat_id, filepath, sender_name)
@@ -151,7 +151,7 @@ async def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwar
         finder_feed = content.get("msg", {}).get("appmsg", {}).get("finderFeed", {})
         channel_name = finder_feed["nickname"]
         channel_title = finder_feed["desc"]
-        channel_content = format.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{channel_name}\n{channel_title}")
+        channel_content = message_formatter.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{channel_name}\n{channel_title}")
         send_text = f"{sender_name}\n{channel_content}"
         
         return await telegram_sender.send_text(chat_id, send_text)
@@ -162,7 +162,7 @@ async def _forward_groupnote(chat_id: int, sender_name: str, content: dict, **kw
     """处理群接龙"""
     try:
         groupnote_title = content.get('msg', {}).get('appmsg', {}).get('title', '')
-        groupnote_content = format.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{groupnote_title}")
+        groupnote_content = message_formatter.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{groupnote_title}")
         send_text = f"{sender_name}\n<blockquote expandable>{groupnote_content}</blockquote>"
         
         return await telegram_sender.send_text(chat_id, send_text)
@@ -171,7 +171,7 @@ async def _forward_groupnote(chat_id: int, sender_name: str, content: dict, **kw
 
 async def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理引用消息"""
-    text = format.escape_html_chars(content["msg"]["appmsg"]["title"])
+    text = message_formatter.escape_html_chars(content["msg"]["appmsg"]["title"])
     quote = content["msg"]["appmsg"]["refermsg"]
     quote_newmsgid = quote["svrid"]
     
@@ -184,7 +184,7 @@ async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwa
     """处理转账"""
     try:
         money = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {}).get('feedesc')
-        channel_content = format.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{money}")
+        channel_content = message_formatter.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{money}")
         send_text = f"{sender_name}\n{channel_content}"
         
         return await telegram_sender.send_text(chat_id, send_text)
@@ -194,7 +194,7 @@ async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwa
 async def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理撤回消息"""
     revoke_msg = content["sysmsg"]["revokemsg"]
-    revoke_text = format.escape_html_chars(revoke_msg["replacemsg"])
+    revoke_text = message_formatter.escape_html_chars(revoke_msg["replacemsg"])
     quote_newmsgid = revoke_msg["newmsgid"]
 
     quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
@@ -212,10 +212,10 @@ async def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) 
     matches = re.findall(pattern, pat_template)
     result = pat_template
     for match in matches:
-        user_info = await contact.get_user_info(match)
+        user_info = await wechat_contacts.get_user_info(match)
         result = result.replace(f"${{{match}}}", user_info.name)
     
-    pat_text = f"[{format.escape_html_chars(result)}]"
+    pat_text = f"[{message_formatter.escape_html_chars(result)}]"
     send_text = f"{sender_name}\n{pat_text}"
     
     return await telegram_sender.send_text(chat_id, send_text)
@@ -239,14 +239,14 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                 return await handlers[msg_type](**{**handler_params, 'chat_id': chat_id})
             except Exception as e:
                 logger.error(f"处理器执行失败 (类型={msg_type}): {e}", exc_info=True)
-                type_text = format.escape_html_chars(f"[{locale.type(msg_type)}]")
+                type_text = message_formatter.escape_html_chars(f"[{locale.type(msg_type)}]")
                 send_text = f"{handler_params['sender_name']}\n{type_text}"
                 
                 return await telegram_sender.send_text(chat_id, send_text)
         else:
             # 处理未知消息类型
             logger.warning(f"❓未知消息类型: {msg_type}")
-            type_text = format.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
+            type_text = message_formatter.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
             send_text = f"{handler_params['sender_name']}\n{type_text}"
 
             #调试输出
@@ -322,7 +322,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
 
         # 处理消息内容
         if msg_type != 1:
-            content = format.xml_to_json(content)
+            content = message_formatter.xml_to_json(content)
             # App消息
             if msg_type == 49:
                 msg_type = int(content['msg']['appmsg']['type'])
@@ -359,7 +359,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         
         # 设置发送者显示名称
         if "chatroom" in from_wxid or contact_dic["isGroup"]:
-            sender_name = f"<blockquote expandable>{format.escape_html_chars(sender_name)}</blockquote>"
+            sender_name = f"<blockquote expandable>{message_formatter.escape_html_chars(sender_name)}</blockquote>"
         else:
             sender_name = ""
         
@@ -438,7 +438,7 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
         avatar_url = contact_saved["avatarLink"]
     
     # 异步获取联系人信息
-    user_info = await contact.get_user_info(wxid)
+    user_info = await wechat_contacts.get_user_info(wxid)
     contact_name = user_info.name
     avatar_url = user_info.avatar_url
 
@@ -512,7 +512,7 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str)
 
 # 处理聊天记录 - 保持同步，因为主要是数据处理
 def process_chathistory(content):
-    chat_data = format.xml_to_json(content["msg"]["appmsg"]["recorditem"])
+    chat_data = message_formatter.xml_to_json(content["msg"]["appmsg"]["recorditem"])
     chat_json = chat_data["recordinfo"]
     
     # 提取标题和件数
@@ -529,7 +529,7 @@ def process_chathistory(content):
     date_range = f"{start_date} ～ {end_date}" if start_date != end_date else start_date
 
     # 构建聊天记录文本
-    chat_history = [f"{format.escape_html_chars(title)}\n件数：{count}\n日期：{format.escape_html_chars(date_range)}"]
+    chat_history = [f"{message_formatter.escape_html_chars(title)}\n件数：{count}\n日期：{message_formatter.escape_html_chars(date_range)}"]
     
     # 判断起止日期是否相同
     dates = {dt.date() for dt in sourcetimes_dt}
@@ -565,7 +565,7 @@ def process_chathistory(content):
         else:
             datadesc = f'[{data_type_name or locale.type("unknown")}]'
 
-        chat_history.append(f"👤{format.escape_html_chars(sourcename)} ({sourcetime})\n{format.escape_html_chars(datadesc)}")
+        chat_history.append(f"👤{message_formatter.escape_html_chars(sourcename)} ({sourcetime})\n{message_formatter.escape_html_chars(datadesc)}")
 
     # 返回格式化后的文本
     chat_history = "\n".join(chat_history)

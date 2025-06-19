@@ -3,9 +3,9 @@ import logging
 import requests
 
 import config
-from api.base import wechat_api
-from api.bot import telegram_sender
-from utils.bind import GroupManager
+from api.wechat_api import wechat_api
+from api.telegram_sender import telegram_sender
+from utils.group_binding import GroupManager
 
 logger = logging.getLogger(__name__)
 

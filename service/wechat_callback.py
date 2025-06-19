@@ -7,10 +7,10 @@ from typing import Any, Dict, Set
 from aiohttp import web
 
 import config
-from api.bot import telegram_sender
+from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
 from utils.locales import Locale
-from utils.message import process_message
+from utils.wechat_to_telegram import process_message
 
 logger = logging.getLogger(__name__)
 

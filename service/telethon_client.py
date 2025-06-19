@@ -2,7 +2,6 @@ import logging
 import asyncio
 import threading
 from typing import Optional
-from concurrent.futures import Future
 
 from telethon import TelegramClient
 

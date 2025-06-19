@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Dict, Optional
 
-from utils.bind import create_group
+from utils.group_binding import create_group
 
 logger = logging.getLogger(__name__)
 

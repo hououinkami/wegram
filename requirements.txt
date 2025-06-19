@@ -7,5 +7,3 @@ pyaes
 pilk
 ffmpeg-python
 Pillow
-lottie
-opencv-python

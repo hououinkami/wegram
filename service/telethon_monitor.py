@@ -7,8 +7,8 @@ from telethon import events
 
 import config
 from service.telethon_client import get_client_instance, create_client, get_client, get_user_id
-from utils.sender_telethon import process_telethon_update
-from utils.sender import revoke_telethon
+from utils.telegram_to_wechat import revoke_telethon
+from utils.telethon_to_wechat import process_telethon_update
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ from typing import Tuple
 import aiohttp
 
 import config
-from api.base import wechat_api
+from api.wechat_api import wechat_api
 
 # 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
