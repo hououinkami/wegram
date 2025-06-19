@@ -3,9 +3,10 @@ import logging
 from typing import Callable
 
 from telegram import Update
-from telegram.ext import Application, CallbackContext, MessageHandler, filters
+from telegram.ext import Application, CallbackContext, CommandHandler, MessageHandler, filters
 
 import config
+from utils.telegram_commands import BotCommands
 from utils.telegram_to_wechat import process_telegram_update
 
 logger = logging.getLogger(__name__)
@@ -13,16 +14,20 @@ logger = logging.getLogger(__name__)
 class TelegramPollingService:
     """Telegram 轮询服务类"""
     
-    def __init__(self, bot_token: str, process_function: Callable):
+    def __init__(self, bot_token: str, process_function: Callable, commands: list = None, command_handlers: dict = None):
         """
         初始化轮询服务
         
         Args:
             bot_token (str): Telegram Bot Token
             process_function (Callable): 处理 update 的外部函数
+            commands (list): Bot命令列表，格式为 [{"command": "start", "description": "开始使用"}]
+            command_handlers (dict): 命令处理器字典 {"command_name": handler_function}
         """
         self.bot_token = bot_token
         self.process_function = process_function
+        self.commands = commands or []
+        self.command_handlers = command_handlers or {}
         self.application = None
         self.is_running = False
         
@@ -40,12 +45,32 @@ class TelegramPollingService:
     
     def setup_handlers(self):
         """设置消息处理器"""
-        # 处理所有类型的消息
-        message_handler = MessageHandler(filters.ALL, self.handle_update)
+        # 添加命令处理器
+        for command, handler in self.command_handlers.items():
+            command_handler = CommandHandler(command, handler)
+            self.application.add_handler(command_handler)
+        
+        # 处理所有其他非命令消息
+        message_handler = MessageHandler(
+            filters.ALL & ~filters.COMMAND,  # 排除命令消息
+            self.handle_update
+        )
         self.application.add_handler(message_handler)
         
         # 添加错误处理器
         self.application.add_error_handler(self.error_handler)
+    
+    async def setup_commands(self):
+        """设置机器人命令菜单"""
+        if not self.commands:
+            return
+            
+        try:
+            await self.application.bot.set_my_commands(self.commands)
+            logger.info(f"✅ 成功设置 {len(self.commands)} 个机器人命令")
+            
+        except Exception as e:
+            logger.error(f"❌ 设置机器人命令失败: {e}")
     
     async def start_polling(self):
         """启动轮询服务"""
@@ -61,6 +86,9 @@ class TelegramPollingService:
             # 初始化应用
             await self.application.initialize()
             await self.application.start()
+            
+            # 设置机器人命令
+            await self.setup_commands()
             
             # 启动轮询器
             await self.application.updater.start_polling(
@@ -119,7 +147,9 @@ async def main():
     try:
         polling_service = TelegramPollingService(
             bot_token=config.BOT_TOKEN,
-            process_function=process_telegram_update
+            process_function=process_telegram_update,
+            commands=BotCommands.get_command_config(),
+            command_handlers=BotCommands.get_command_handlers()
         )
         
         await polling_service.start_polling()

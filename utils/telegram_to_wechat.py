@@ -47,54 +47,9 @@ async def process_telegram_update(update: Update) -> None:
         # 判断消息类型并处理
         if message.text:
             message_text = message.text
-            # 更新联系人信息
-            if message_text.startswith('/update'):
-                to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
-                if not to_wxid:
-                    return False
-                user_info = wechat_contacts.get_user_info(to_wxid)
-                # 更新TG群组
-                await wechat_contacts.update_info(chat_id, user_info.name, user_info.avatar_url)
-                # 更新映射文件
-                await contact_manager.update_contact_by_chatid(chat_id, {
-                    "name": user_info.name,
-                    "avatarLink": user_info.avatar_url
-                })
-                return
-            
-            # 删除联系人数据
-            if message_text.startswith("/unbind"):
-                to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
-                unbind_result = await contact_manager.delete_contact(to_wxid)
-                if unbind_result:
-                    await telegram_sender.send_text(chat_id, locale.common("unbind"))
-                return
-            
-            # 撤回
-            if message_text.startswith("/rm") or message_text.startswith("/revoke"):
-                if message.reply_to_message:
-                    await _revoke_telegram(chat_id, message)
-                    return
-            
-            # 是否接受信息
-            if message_text.startswith("/message"):
-                await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
-                contact_now = await contact_manager.get_contact_by_chatid(chat_id)
-                if contact_now["isReceive"]:
-                    await telegram_sender.send_text(chat_id, locale.common("receive_on"))
-                else:
-                    await telegram_sender.send_text(chat_id, locale.common("receive_off"))
-                return
-            
-            # 执行二次登录
-            if message_text.startswith("/login"):
-                relogin = wechat_login.twice_login(config.MY_WXID)
-                if relogin.get('Message') == "登录成功":
-                    await telegram_sender.send_text(chat_id, locale.common("twice_login_success"))
-                else:
-                    await telegram_sender.send_text(chat_id, locale.common("twice_login_fail"))
-                return
-            
+            to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
+            if not to_wxid:
+                return False
             # 发送微信emoji
             if message_text.startswith('/'):
                 emoji_text = '[' + message_text[1:] + ']'
@@ -481,7 +436,7 @@ async def _send_telegram_link(to_wxid: str, message):
         }
         return await wechat_api('/Msg/SendApp', playload)
 
-async def _revoke_telegram(chat_id, message):
+async def revoke_by_telegram_bot_command(chat_id, message):
     try:
         delete_message = message.reply_to_message
         delete_message_id = delete_message.message_id
@@ -489,7 +444,7 @@ async def _revoke_telegram(chat_id, message):
 
         # 撤回失败时发送提示
         if not delete_wx_msgid:
-            return await telegram_sender.send_text(chat_id, locale.common("revoke"), reply_to_message_id=delete_message_id)
+            return await telegram_sender.send_text(chat_id, locale.common("revoke_failed"), reply_to_message_id=delete_message_id)
         
         # 撤回
         to_wxid = delete_wx_msgid["towxid"]
@@ -869,7 +824,7 @@ async def revoke_telethon(event):
             new_msg_id = wx_msg["msgid"]
             client_msg_id = wx_msg["clientmsgid"]
             create_time = wx_msg["createtime"]
-            # 这里实现具体的删除处理逻辑
+            
             playload = {
                 "ClientMsgId": client_msg_id,
                 "CreateTime": create_time,
