@@ -224,6 +224,40 @@ class ContactManager:
         """异步通过chatId获取联系人完整信息"""
         wxid = await self.get_wxid_by_chatid(chat_id)
         return await self.get_contact(wxid) if wxid else None
+    
+    async def check_existing_mapping(self, wxid: str) -> Optional[Dict]:
+        """检查是否已有映射"""
+        await self.load_contacts()
+        for contact in self.contacts:
+            if contact.get('wxId') == wxid and contact.get('chatId'):
+                return contact
+        return None
+
+    async def save_chat_wxid_mapping(self, wxid: str, name: str, chat_id: int, avatar_url: str = None):
+        """保存群组ID和微信ID的映射关系"""
+        await self.load_contacts()
+        
+        # 检查是否已存在
+        for contact in self.contacts:
+            if contact.get('wxId') == wxid and contact.get('chatId') == chat_id:
+                return
+        
+        is_group = wxid.endswith('@chatroom')
+        new_contact = {
+            "name": name,
+            "wxId": wxid,
+            "chatId": chat_id,
+            "isGroup": is_group,
+            "isReceive": True,
+            "alias": "",
+            "avatarLink": avatar_url
+        }
+        
+        self.contacts.append(new_contact)
+        self.wxid_to_contact[wxid] = new_contact
+        self.chatid_to_wxid[chat_id] = wxid
+        
+        await self._save_contacts()
 
 # 创建全局实例
 contact_manager = ContactManager()

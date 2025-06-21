@@ -24,7 +24,15 @@ class GroupManager:
     def __init__(self):
         self._session = None
         self._session_lock = asyncio.Lock()
-        self._file_lock = threading.Lock()
+        self._contact_manager = None
+
+    # 延迟导入
+    @property
+    def contact_manager(self):
+        if self._contact_manager is None:
+            from utils.contact_manager import contact_manager
+            self._contact_manager = contact_manager
+        return self._contact_manager
 
     @asynccontextmanager
     async def _get_session(self):
@@ -197,91 +205,6 @@ class GroupManager:
             logger.error(f"通过API获取机器人信息失败: {e}")
             return None
 
-    def _safe_file_operation(self, operation, *args, **kwargs):
-        """线程安全的文件操作"""
-        with self._file_lock:
-            return operation(*args, **kwargs)
-
-    async def _save_chat_wxid_mapping(self, wxid: str, name: str, chat_id: int, avatar_url: str = None):
-        """保存群组ID和微信ID的映射关系"""
-        is_group = wxid.endswith('@chatroom')
-        
-        try:
-            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            contact_json_path = os.path.join(parent_dir, 'contact.json')
-            
-            def _read_contacts():
-                contacts = []
-                if os.path.exists(contact_json_path):
-                    with open(contact_json_path, 'r', encoding='utf-8') as f:
-                        contacts = json.load(f)
-                return contacts
-            
-            def _write_contacts(contacts):
-                with open(contact_json_path, 'w', encoding='utf-8') as f:
-                    json.dump(contacts, f, ensure_ascii=False, indent=4)
-            
-            loop = asyncio.get_event_loop()
-            contacts = await loop.run_in_executor(
-                None, 
-                self._safe_file_operation, 
-                _read_contacts
-            )
-            
-            # 检查是否已存在
-            for contact in contacts:
-                if contact.get('wxId') == wxid and contact.get('chatId') == chat_id:
-                    return
-            
-            new_contact = {
-                "name": name,
-                "wxId": wxid,
-                "chatId": chat_id,
-                "isGroup": is_group,
-                "isReceive": True,
-                "alias": "",
-                "avatarLink": avatar_url
-            }
-            
-            contacts.append(new_contact)
-            await loop.run_in_executor(
-                None, 
-                self._safe_file_operation, 
-                _write_contacts, 
-                contacts
-            )
-            
-        except Exception as e:
-            logger.error(f"保存映射关系失败: {e}")
-            raise e
-
-    async def _check_existing_mapping(self, wxid: str) -> Optional[Dict]:
-        """检查是否已有映射"""
-        try:
-            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            contact_json_path = os.path.join(parent_dir, 'contact.json')
-            
-            def _read_and_check():
-                if os.path.exists(contact_json_path):
-                    with open(contact_json_path, 'r', encoding='utf-8') as f:
-                        contacts = json.load(f)
-                        
-                    for contact in contacts:
-                        if contact.get('wxId') == wxid and contact.get('chatId'):
-                            return contact
-                return None
-            
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                None, 
-                self._safe_file_operation, 
-                _read_and_check
-            )
-            
-        except Exception as e:
-            logger.error(f"检查映射失败: {e}")
-            return None
-
     async def _set_group_avatar(self, client, chat_id: int, avatar_url: str) -> bool:
         """设置群组头像"""
         if not avatar_url:
@@ -319,7 +242,7 @@ class GroupManager:
         """创建群组并添加机器人"""
         try:
             # 检查是否已经有群组映射
-            existing_contact = await self._check_existing_mapping(wxid)
+            existing_contact = await self.contact_manager.check_existing_mapping(wxid)
             
             if existing_contact:
                 return {
@@ -370,7 +293,7 @@ class GroupManager:
                     logger.warning(f"移动群组到文件夹失败，但群组创建成功")
 
             # 保存映射关系
-            await self._save_chat_wxid_mapping(wxid, contact_name, chat_id, avatar_url)
+            await self.contact_manager.save_chat_wxid_mapping(wxid, contact_name, chat_id, avatar_url)
             
             return {
                 'success': True,
