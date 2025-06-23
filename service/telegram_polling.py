@@ -3,9 +3,10 @@ import logging
 from typing import Callable
 
 from telegram import Update
-from telegram.ext import Application, CallbackContext, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 import config
+from utils.telegram_callbacks import BotCallbacks
 from utils.telegram_commands import BotCommands
 from utils.telegram_to_wechat import process_telegram_update
 
@@ -14,7 +15,8 @@ logger = logging.getLogger(__name__)
 class TelegramPollingService:
     """Telegram 轮询服务类"""
     
-    def __init__(self, bot_token: str, process_function: Callable, commands: list = None, command_handlers: dict = None):
+    def __init__(self, bot_token: str, process_function: Callable, 
+                 commands: list = None, command_handlers: dict = None, callback_handlers: dict = None):
         """
         初始化轮询服务
         
@@ -23,11 +25,13 @@ class TelegramPollingService:
             process_function (Callable): 处理 update 的外部函数
             commands (list): Bot命令列表，格式为 [{"command": "start", "description": "开始使用"}]
             command_handlers (dict): 命令处理器字典 {"command_name": handler_function}
+            callback_handlers (dict): 回调处理器字典 {"callback_pattern": handler_function}
         """
         self.bot_token = bot_token
         self.process_function = process_function
         self.commands = commands or []
         self.command_handlers = command_handlers or {}
+        self.callback_handlers = callback_handlers or {}
         self.application = None
         self.is_running = False
         
@@ -50,6 +54,11 @@ class TelegramPollingService:
             command_handler = CommandHandler(command, handler)
             self.application.add_handler(command_handler)
         
+        # 添加回调查询处理器 
+        for pattern, handler in self.callback_handlers.items():
+            callback_handler = CallbackQueryHandler(handler, pattern=pattern)
+            self.application.add_handler(callback_handler)
+
         # 处理所有其他非命令消息
         message_handler = MessageHandler(
             filters.ALL & ~filters.COMMAND,  # 排除命令消息
@@ -149,7 +158,8 @@ async def main():
             bot_token=config.BOT_TOKEN,
             process_function=process_telegram_update,
             commands=BotCommands.get_command_config(),
-            command_handlers=BotCommands.get_command_handlers()
+            command_handlers=BotCommands.get_command_handlers(),
+            callback_handlers=BotCallbacks.get_callback_handlers()
         )
         
         await polling_service.start_polling()
