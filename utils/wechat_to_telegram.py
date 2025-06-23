@@ -9,14 +9,18 @@ from typing import Any, Dict, Optional
 
 import ffmpeg
 import pilk
+import requests
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
+from telegram.ext import CallbackQueryHandler
 
 import config
 from api import wechat_contacts, wechat_download
 from api.telegram_sender import telegram_sender
-from service.telethon_client import get_client
+from service.telethon_client import get_client, get_user_id
 from utils import message_formatter
 from utils.contact_manager import contact_manager
+from utils.group_binding import GroupManager
 from utils.locales import Locale
 from utils.message_mapper import msgid_mapping
 from utils.telegram_to_wechat import get_telethon_msg_id
@@ -32,9 +36,11 @@ def _get_message_handlers():
         1: _forward_text,
         3: _forward_image,
         34: _forward_voice,
+        37: _forward_add_friend,
         43: _forward_video,
         47: _forward_sticker,
         48: _forward_location,
+        10000: _forward_text,
         5: _forward_link,
         6: _forward_file,
         19: _forward_chat_history,
@@ -45,7 +51,9 @@ def _get_message_handlers():
         2000: _forward_transfer,
         "revokemsg": _forward_revoke,
         "pat": _forward_pat,
-        "VoIPBubbleMsg": _forward_voip
+        "ilinkvoip": _forward_voip,
+        "VoIPBubbleMsg": _forward_voip,
+        "sysmsgtemplate": _forward_sysmsg
     }
 
 async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
@@ -53,7 +61,6 @@ async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) 
     text = message_formatter.escape_html_chars(content)
     send_text = f"{sender_name}\n{text}"
     
-    # 异步调用 telegram_api
     return await telegram_sender.send_text(chat_id, send_text)
 
 async def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
@@ -79,6 +86,32 @@ async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: d
         raise Exception("语音转换失败")
     
     return await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
+
+async def _forward_add_friend(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+    """处理好友添加"""
+    friend_msg = content.get('msg', {})
+    from_nickname = friend_msg.get('fromnickname') or friend_msg.get('nickName') or ''
+    from_wxid = friend_msg.get('fromusername', '')
+    encrypt_username = friend_msg.get('encryptusername') or friend_msg.get('v3') or ''
+    ticket = friend_msg.get('ticket') or friend_msg.get('v4') or ''
+    avatar_url = friend_msg.get('bigheadimgurl') or friend_msg.get('BigHeadImgUrl') or friend_msg.get('bigHeadImgUrl') or friend_msg.get('smallheadimgurl') or friend_msg.get('SmallHeadImgUrl') or friend_msg.get('smallHeadImgUrl') or ''
+    content = friend_msg.get('content', '')
+    scene = friend_msg.get('scene')
+
+    if avatar_url:
+        # 下载图片
+        photo_response = requests.get(avatar_url)
+        photo_response.raise_for_status()
+        
+        # 处理图片尺寸
+        processed_photo_content = GroupManager._process_avatar_image(photo_response.content)
+
+    tg_user_id = get_user_id()
+    keyboard = [
+        [InlineKeyboardButton("承認", callback_data="agree_accept")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    return await telegram_sender.send_photo(tg_user_id, processed_photo_content, f"{from_nickname}からの友人登録リクエスト", reply_markup=reply_markup)
 
 async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
@@ -141,7 +174,7 @@ async def _forward_miniprogram(chat_id: int, sender_name: str, content: dict, **
     """处理小程序消息"""
     mini_name = content.get('msg', {}).get('appmsg', {}).get('sourcedisplayname', '')
     mini_title = content.get('msg', {}).get('appmsg', {}).get('title', '')
-    send_text = f"{sender_name}\n[{locale.type(kwargs.get('msg_type'))}]\n{mini_name}\n{mini_title}"
+    send_text = f"{sender_name}\n[{locale.type(kwargs.get('msg_type'))}: {mini_name}]\n{mini_title}"
     
     return await telegram_sender.send_text(chat_id, send_text)
 
@@ -151,7 +184,7 @@ async def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwar
         finder_feed = content.get("msg", {}).get("appmsg", {}).get("finderFeed", {})
         channel_name = finder_feed["nickname"]
         channel_title = finder_feed["desc"]
-        channel_content = message_formatter.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{channel_name}\n{channel_title}")
+        channel_content = message_formatter.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}: {channel_name}]\n{channel_title}")
         send_text = f"{sender_name}\n{channel_content}"
         
         return await telegram_sender.send_text(chat_id, send_text)
@@ -184,8 +217,8 @@ async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwa
     """处理转账"""
     try:
         money = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {}).get('feedesc')
-        channel_content = message_formatter.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{money}")
-        send_text = f"{sender_name}\n{channel_content}"
+        transfer_content = message_formatter.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{money}")
+        send_text = f"{sender_name}\n{transfer_content}"
         
         return await telegram_sender.send_text(chat_id, send_text)
     except (KeyError, TypeError) as e:
@@ -215,17 +248,52 @@ async def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) 
         user_info = await wechat_contacts.get_user_info(match)
         result = result.replace(f"${{{match}}}", user_info.name)
     
-    pat_text = f"[{message_formatter.escape_html_chars(result)}]"
-    send_text = f"{sender_name}\n{pat_text}"
+    pat_text = f"{message_formatter.escape_html_chars(result)}"
+    send_text = f"{sender_name}\n<blockquote>{pat_text}</blockquote>"
     
     return await telegram_sender.send_text(chat_id, send_text)
 
 async def _forward_voip(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理通话消息"""
-    voip_msg = content["voipmsg"]["VoIPBubbleMsg"]["msg"]
-    send_text = f"{sender_name}\n{voip_msg}"
+    if kwargs.get('msg_type') == "ilinkvoip":
+        voip_invite = content.get('sysmsg', {}).get('voipmt', {}).get('invite', "")
+        voip_cancle = content.get('sysmsg', {}).get('voipmt', {}).get('cancel', "")
+        voip_miss = content.get('sysmsg', {}).get('voipmt', {}).get('dismissapns', "")
+        if voip_invite:
+            voip_msg = locale.type('ilinkvoip')
+
+    if kwargs.get('msg_type') == "VoIPBubbleMsg":
+        voip_msg = content["voipmsg"]["VoIPBubbleMsg"]["msg"]
+    
+    send_text = f"{sender_name}\n[{voip_msg}]"
     
     return await telegram_sender.send_text(chat_id, send_text)
+
+async def _forward_sysmsg(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理加入群聊消息"""
+    try:
+        content_template = content.get('sysmsg', {}).get('sysmsgtemplate', {}).get('content_template', {})
+        template = content_template.get('template', "")
+        link_list = content_template.get('link_list', {}).get('link', [])
+
+        variable_mapping = {}
+        for link in link_list:
+            var_name = link['name']
+            nickname = link['memberlist']['member']['nickname']
+            variable_mapping[var_name] = nickname
+        
+        # 替换template中的变量
+        result_template = template
+        for var_name, nickname in variable_mapping.items():
+            placeholder = f"${var_name}$"
+            result_template = result_template.replace(placeholder, nickname)
+        
+        sysmsg_template = message_formatter.escape_html_chars(result_template)
+        send_text = sysmsg_template
+
+        return await telegram_sender.send_text(chat_id, send_text)
+    except (KeyError, TypeError) as e:
+        raise Exception("加入群聊信息提取失败")
 
 async def _process_message_async(message_info: Dict[str, Any]) -> None:
     """异步处理单条消息"""
