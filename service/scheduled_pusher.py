@@ -120,7 +120,7 @@ class DailyRandomScheduler:
                 await self._wait_with_cancellation(60)
                     
             except asyncio.CancelledError:
-                logger.info("调度器任务被取消")
+                logger.info("⚠️ 调度器任务被取消")
                 return
             except Exception as e:
                 logger.error(f"❌ 调度器循环中发生错误: {e}")
@@ -148,7 +148,7 @@ class DailyRandomScheduler:
                 await self.scheduler_task
             except asyncio.CancelledError:
                 pass
-        logger.info("🛑 每日随机调度器已停止")
+        logger.info("🔴 每日随机调度器已停止")
 
 # 全局变量
 _scheduler_instance = None
@@ -156,8 +156,6 @@ _scheduler_instance = None
 async def main():
     """调度器服务主函数"""
     global _scheduler_instance
-    
-    logger.info("🚀 启动调度器服务")
     
     async def get_news():
         """获取60s新闻"""
@@ -179,7 +177,7 @@ async def main():
             await telegram_sender.send_text(tg_user_id, news['html'])
             
         except Exception as e:
-            logger.error(f"获取新闻失败: {e}")
+            logger.error(f"❌ 获取新闻失败: {e}")
 
     try:
         # 创建并启动调度器
@@ -201,11 +199,11 @@ async def main():
 async def shutdown():
     """关闭调度器服务"""
     global _scheduler_instance
-    logger.info("🛑 正在关闭调度器服务...")
+    logger.info("🔴 正在关闭调度器服务...")
     if _scheduler_instance:
         await _scheduler_instance.stop()
         _scheduler_instance = None
-    logger.info("✅ 调度器服务已关闭")
+    logger.info("🔴 调度器服务已关闭")
 
 if __name__ == "__main__":
     asyncio.run(main())

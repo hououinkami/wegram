@@ -33,7 +33,7 @@ async def check_login_status():
             is_logged_in = False
             return False
     except Exception as e:
-        logger.error(f"检查登录状态时出错: {e}")
+        logger.error(f"❌ 检查登录状态时出错: {e}")
         return False
 
 async def periodic_check(interval=600):
@@ -44,31 +44,31 @@ async def periodic_check(interval=600):
         try:
             await check_login_status()
         except Exception as e:
-            logger.error(f"定期检查过程中出错: {e}")
+            logger.error(f"❌ 定期检查过程中出错: {e}")
         
         # 使用 asyncio.sleep 替代 threading.Event.wait
         try:
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
-            logger.info("定期检查任务被取消")
+            logger.info("⚠️ 定期检查任务被取消")
             break
 
 def stop_service():
     """停止服务"""
     global service_running
     service_running = False
-    logger.info("服务停止信号已发送")
+    logger.info("⚠️ 服务停止信号已发送")
 
 async def main():
     """启动服务的主函数"""
     global service_running
-    logger.info("微信登录状态监控服务启动")
+    logger.info("✅ 微信登录状态监控服务启动")
     
     # 首次检查
     try:
         await check_login_status()
     except Exception as e:
-        logger.error(f"初始登录状态检查失败: {e}")
+        logger.error(f"❌ 初始登录状态检查失败: {e}")
     
     # 启动定时检查任务
     check_interval = getattr(config, 'WX_CHECK_INTERVAL', 300)
@@ -79,7 +79,7 @@ async def main():
         while service_running:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
-        logger.info("收到停止信号，正在关闭服务...")
+        logger.info("⚠️ 收到停止信号，正在关闭服务...")
         stop_service()
         check_task.cancel()
         try:
@@ -100,6 +100,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("微信登录状态监控服务被手动停止")
+        logger.info("⚠️ 微信登录状态监控服务被手动停止")
     except Exception as e:
-        logger.error(f"微信登录状态监控服务遇到全局异常: {e}")
+        logger.error(f"❌ 微信登录状态监控服务遇到全局异常: {e}")

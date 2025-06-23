@@ -59,7 +59,7 @@ class TelethonMonitor:
             return has_bot
                     
         except Exception as e:
-            logger.debug(f"检查群组 {chat_id} 失败: {e}")
+            logger.debug(f"❌ 检查群组 {chat_id} 失败: {e}")
             self.chat_cache[chat_id] = False
             return False
     
@@ -76,13 +76,13 @@ class TelethonMonitor:
             for participant in participants:
                 if (participant.bot and self.target_bot_id and 
                     str(participant.id) == self.target_bot_id):
-                    logger.debug(f"在群组 {chat.title} 中找到目标BOT")
+                    logger.debug(f"⚠️ 在群组 {chat.title} 中找到目标BOT")
                     return True
             
             return False
             
         except Exception as e:
-            logger.debug(f"检查群组成员失败: {e}")
+            logger.debug(f"❌ 检查群组成员失败: {e}")
             return False
     
     async def process_new_message(self, event):
@@ -103,7 +103,7 @@ class TelethonMonitor:
                 await process_telethon_update(event)
             
         except Exception as e:
-            logger.error(f"处理Telethon新消息出错: {e}")
+            logger.error(f"❌ 处理Telethon新消息出错: {e}")
     
     async def process_deleted_message(self, event):
         """处理删除消息事件"""
@@ -112,7 +112,7 @@ class TelethonMonitor:
             await revoke_telethon(event)
             
         except Exception as e:
-            logger.error(f"处理删除消息出错: {e}")
+            logger.error(f"❌ 处理删除消息出错: {e}")
     
     async def start_monitoring(self, handle_new_messages: bool = True, handle_deleted_messages: bool = True):
         """开始监控"""
@@ -139,13 +139,13 @@ class TelethonMonitor:
                 await self.process_deleted_message(event)
             logger.info("🗑️ 已启用Telethon消息删除监听")
         
-        logger.info("🚀 Telethon监控已启动")
+        logger.info("✅ Telethon监控已启动")
         
         try:
             # 保持客户端运行
             await client.run_until_disconnected()
         except Exception as e:
-            logger.error(f"Telethon监控运行出错: {e}")
+            logger.error(f"❌ Telethon监控运行出错: {e}")
         finally:
             self.is_running = False
     
@@ -155,12 +155,12 @@ class TelethonMonitor:
         client_instance = get_client_instance()
         if client_instance:
             await client_instance.disconnect()
-        logger.info("🛑 Telethon监控已停止")
+        logger.info("🔴 Telethon监控已停止")
     
     def clear_cache(self):
         """清空缓存"""
         self.chat_cache.clear()
-        logger.info("已清空Telethon群组缓存")
+        logger.info("⚠️ 已清空Telethon群组缓存")
     
     def get_client(self):
         """获取Telethon客户端"""
@@ -199,7 +199,7 @@ async def main():
         
         # 检查session文件
         if not os.path.exists(SESSION_PATH + '.session'):
-            logger.error(f"Session文件不存在: {SESSION_PATH}.session")
+            logger.error(f"❌ Session文件不存在: {SESSION_PATH}.session")
             return
         
         # 创建Telethon客户端
@@ -225,11 +225,11 @@ async def main():
         )
         
     except KeyboardInterrupt:
-        logger.info("收到中断信号，正在停止Telethon监控...")
+        logger.info("⚠️ 收到中断信号，正在停止Telethon监控...")
         if get_monitor():
             await get_monitor().stop_monitoring()
     except Exception as e:
-        logger.error(f"Telethon监控失败: {e}")
+        logger.error(f"❌ Telethon监控失败: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -243,7 +243,12 @@ class ServiceManager:
             self.logger.error("没有成功启动任何服务")
             return
         
-        self.logger.info(f"已启动 {len(self.service_threads)} 个同步服务和 {len(self.async_tasks)} 个异步服务")
+        # ✅ 等待所有服务启动完成（移到这里，在所有任务创建后）
+        await self.wait_for_services_startup()
+        
+        # ✅ 统计实际成功启动的服务数量
+        successful_services = await self.count_successful_services()
+        self.logger.info(f"✅ 服务启动完成！成功启动 {successful_services['sync']} 个同步服务和 {successful_services['async']} 个异步服务")
         
         # 设置信号处理
         self.setup_signal_handlers()
@@ -298,6 +303,61 @@ class ServiceManager:
             thread.join(timeout=5)
         
         self.logger.info("服务管理器已停止")
+    
+    async def wait_for_services_startup(self, timeout=15):
+        """等待服务启动完成"""
+        import time
+        start_time = time.time()
+        
+        # 等待一小段时间让异步任务开始执行
+        await asyncio.sleep(0.1)
+        
+        while time.time() - start_time < timeout:
+            # 检查同步服务是否都已启动
+            sync_ready = True
+            if self.service_threads:
+                sync_ready = all(thread.is_alive() for thread in self.service_threads.values())
+            
+            # 检查异步服务状态
+            async_ready = True
+            if self.async_tasks:
+                for task in self.async_tasks:
+                    # 如果任务已完成且有异常，说明启动失败
+                    if task.done() and task.exception():
+                        self.logger.error(f"异步服务 {task.get_name()} 启动失败: {task.exception()}")
+                        async_ready = False
+                        break
+                    # 如果任务还没开始运行，继续等待
+                    elif not task.done() and not hasattr(task, '_started'):
+                        # 给任务一些时间开始执行
+                        continue
+            
+            # 如果所有服务都准备好了，退出等待
+            if sync_ready and async_ready:
+                # 再等待一点时间确保服务真正启动
+                await asyncio.sleep(2)
+                break
+                
+            await asyncio.sleep(0.5)
+        
+        # 超时警告
+        if time.time() - start_time >= timeout:
+            self.logger.warning(f"服务启动等待超时 ({timeout}秒)")
+
+    async def count_successful_services(self):
+        """统计成功启动的服务数量"""
+        sync_count = 0
+        if self.service_threads:
+            sync_count = sum(1 for thread in self.service_threads.values() if thread.is_alive())
+        
+        async_count = 0
+        if self.async_tasks:
+            for task in self.async_tasks:
+                # 任务正在运行或已完成但没有异常
+                if not task.done() or (task.done() and not task.exception()):
+                    async_count += 1
+        
+        return {"sync": sync_count, "async": async_count}
 
 async def main():
     """主函数"""

@@ -127,7 +127,7 @@ class CrossThreadTelegramClient:
                 def wrapper(*args, **kwargs):
                     current_thread_id = threading.get_ident()
                     if current_thread_id != self.telethon_client._main_thread_id:
-                        logger.warning(f"方法 {name} 可能不是线程安全的，建议使用提供的同步接口")
+                        logger.warning(f"⚠️ 方法 {name} 可能不是线程安全的，建议使用提供的同步接口")
                     return attr(*args, **kwargs)
                 return wrapper
             return attr
@@ -219,7 +219,7 @@ class TelethonClient:
             client_instance = self
             
         except Exception as e:
-            logger.error(f"Telethon初始化失败: {e}")
+            logger.error(f"❌ Telethon初始化失败: {e}")
             raise
     
     async def disconnect(self):
@@ -227,7 +227,7 @@ class TelethonClient:
         if self.client and self.client.is_connected():
             await self.client.disconnect()
         self._is_initialized = False
-        logger.info("🔌 Telethon客户端已断开连接")
+        logger.info("🔴 Telethon客户端已断开连接")
     
     def get_client(self):
         """获取Telethon客户端"""

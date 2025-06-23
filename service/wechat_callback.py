@@ -48,7 +48,7 @@ class MessageDeduplicator:
             # 清理一半记录
             keep_count = len(self.processed_msg_ids) // 2
             self.processed_msg_ids = set(list(self.processed_msg_ids)[-keep_count:])
-            logger.info(f"清理缓存，保留 {keep_count} 条记录")
+            logger.info(f"⚠️ 清理缓存，保留 {keep_count} 条记录")
 
 # 全局去重器
 deduplicator = MessageDeduplicator()
@@ -105,7 +105,7 @@ async def process_callback_data(callback_data: Dict[str, Any]) -> Dict[str, Any]
             # 检查重复
             if await deduplicator.is_duplicate(msg_id):
                 duplicate_count += 1
-                logger.warning(f"跳过重复消息: {msg_id}")
+                logger.warning(f"⚠️ 跳过重复消息: {msg_id}")
                 continue
             
             # 处理新消息
@@ -113,15 +113,15 @@ async def process_callback_data(callback_data: Dict[str, Any]) -> Dict[str, Any]
                 await process_message(msg)
                 processed_count += 1
             except Exception as e:
-                logger.error(f"处理消息 {msg_id} 失败: {e}")
+                logger.error(f"❌ 处理消息 {msg_id} 失败: {e}")
         
         return {
             "success": True,
-            "message": f"处理 {processed_count} 条新消息，跳过 {duplicate_count} 条重复消息"
+            "message": f"⚠️ 处理 {processed_count} 条新消息，跳过 {duplicate_count} 条重复消息"
         }
         
     except Exception as e:
-        logger.error(f"处理回调数据失败: {e}")
+        logger.error(f"❌ 处理回调数据失败: {e}")
         return {"success": False, "message": str(e)}
 
 async def handle_message(request):
@@ -152,7 +152,7 @@ async def handle_message(request):
         return response
         
     except Exception as e:
-        logger.error(f"请求处理失败: {e}")
+        logger.error(f"❌ 请求处理失败: {e}")
         return web.json_response(
             {"success": False, "message": "服务器错误"}, 
             status=500
@@ -163,9 +163,9 @@ async def async_process_message(callback_data: Dict[str, Any]):
     try:
         result = await process_callback_data(callback_data)
         if not result.get("success"):
-            logger.error(f"异步处理失败: {result}")
+            logger.error(f"❌ 异步处理失败: {result}")
     except Exception as e:
-        logger.error(f"异步处理出错: {e}")
+        logger.error(f"❌ 异步处理出错: {e}")
 
 async def handle_options(request):
     """处理OPTIONS请求"""
@@ -186,7 +186,7 @@ async def cors_middleware(request, handler):
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
         return response
     except Exception as e:
-        logger.error(f"中间件处理错误: {e}")
+        logger.error(f"❌ 中间件处理错误: {e}")
         return web.json_response(
             {"success": False, "message": "中间件错误"}, 
             status=500
@@ -218,32 +218,30 @@ async def run_server():
         site = web.TCPSite(runner, '0.0.0.0', PORT)
         await site.start()
         
-        logger.info(f"微信消息服务启动, 端口: {PORT}, 路径: /msg/SyncMessage/{WXID}")
+        logger.info(f"✅ 微信消息服务启动, 端口: {PORT}, 路径: /msg/SyncMessage/{WXID}")
         
         # 保持服务运行
         try:
             while True:
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
-            logger.info("服务正在关闭...")
+            logger.info("⚠️ 服务正在关闭...")
         finally:
             await runner.cleanup()
             
     except OSError as e:
         if e.errno == 48:
-            logger.error(f"端口 {PORT} 已被占用")
+            logger.error(f"⚠️ 端口 {PORT} 已被占用")
         else:
-            logger.error(f"网络错误: {e}")
+            logger.error(f"❌ 网络错误: {e}")
     except Exception as e:
-        logger.error(f"服务器错误: {e}")
+        logger.error(f"❌ 服务器错误: {e}")
 
 async def main():
-    """异步主函数"""
-    logger.info("🚀 启动异步微信消息接收服务...")
-    
+    """异步主函数"""    
     # 检查配置
     if not PORT or not WXID:
-        logger.error("PORT 和 WXID 配置不能为空")
+        logger.error("❌ PORT 和 WXID 配置不能为空")
         return
     
     # 启动异步服务器
@@ -253,6 +251,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("收到中断信号，正在关闭服务...")
+        logger.info("⚠️ 收到中断信号，正在关闭服务...")
     except Exception as e:
-        logger.error(f"启动失败: {e}")
+        logger.error(f"❌ 启动失败: {e}")
