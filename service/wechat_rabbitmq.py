@@ -12,8 +12,13 @@ import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
 
 import config
+from api.telegram_sender import telegram_sender
+from service.telethon_client import get_user_id
+from utils.locales import Locale
+from utils.wechat_to_telegram import process_rabbitmq_message
 
 logger = logging.getLogger(__name__)
+locale = Locale(config.LANG)
 
 class WeChatRabbitMQConsumer:
     """微信协议RabbitMQ异步消费者"""
@@ -52,16 +57,16 @@ class WeChatRabbitMQConsumer:
                 # 设置QoS，控制并发处理数量
                 await self.channel.set_qos(prefetch_count=10)
                 
-                logger.info("🟢 Connected to RabbitMQ successfully")
+                logger.info("🟢 成功连接到RabbitMQ")
                 return True
                 
             except Exception as e:
-                logger.error(f"❌ Connection attempt {attempt + 1} failed: {e}")
+                logger.error(f"❌ 第{attempt + 1}次连接尝试失败: {e}")
                 if attempt < self.max_retries - 1:
                     wait_time = min(2 ** attempt, 30)  # 指数退避，最大30秒
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error("❌ All connection attempts failed")
+                    logger.error("❌ 所有连接尝试均失败")
                     return False
     
     async def wait_for_rabbitmq(self, timeout: int = 60) -> bool:
@@ -78,17 +83,17 @@ class WeChatRabbitMQConsumer:
                 await test_connection.close()
                 return True
             except Exception as e:
-                logger.debug(f"⚠️ RabbitMQ not ready yet: {e}")
+                logger.debug(f"⚠️ RabbitMQ服务暂未就绪: {e}")
                 await asyncio.sleep(2)
         
-        logger.error(f"❌ RabbitMQ service not available after {timeout} seconds")
+        logger.error(f"❌ RabbitMQ服务在{timeout}秒后仍不可用")
         return False
     
     async def consume_queue(self, queue_name: str, callback: Callable):
         """消费指定队列的消息"""
         try:
             if not self.channel:
-                logger.error("Channel is not available")
+                logger.error("❌ 通道不可用")
                 return False
             
             # 声明队列（确保队列存在，参数与Go代码保持一致）
@@ -99,40 +104,56 @@ class WeChatRabbitMQConsumer:
                 auto_delete=False  # 不自动删除
             )
             
-            # 开始消费
+            # 开始消费 - 移除包装器，直接使用callback
             consumer_tag = await queue.consume(
                 callback=lambda message: self._message_wrapper(message, callback),
                 no_ack=False  # 手动确认
             )
             
             self.consumer_tags[queue_name] = consumer_tag
-            logger.info(f"🚀 Started consuming from queue: {queue_name}")
+            logger.info(f"🚀 开始消费队列: {queue_name}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error setting up consumer for queue '{queue_name}': {e}")
-            logger.debug(f"Full traceback: {traceback.format_exc()}")
+            logger.error(f"❌ 设置队列'{queue_name}'消费者时出错: {e}")
+            logger.debug(f"完整错误堆栈: {traceback.format_exc()}")
             return False
     
     async def _message_wrapper(self, message: AbstractIncomingMessage, callback: Callable):
         """消息处理包装器"""
-        async with message.process():
+        queue_name = getattr(message, 'routing_key', None) or "未知"
+        
+        try:
+            # 解码消息
+            body = message.body.decode('utf-8')
+            
+            # 调用处理函数
+            start_time = time.time()
+            result = await callback(body, message)
+            processing_time = time.time() - start_time
+            
+            if result:
+                # 处理成功
+                await message.ack()
+            else:
+                # 处理失败，但不是异常
+                await message.nack(requeue=False)
+                logger.warning(f"⚠️ 队列'{queue_name}'消息处理失败，消息已丢弃 (耗时: {processing_time:.2f}s)")
+                
+        except json.JSONDecodeError as e:
+            # JSON解析错误
+            await message.nack(requeue=False)
+            logger.error(f"❌ 队列'{queue_name}'消息JSON格式错误: {e}")
+            
+        except Exception as e:
+            # 其他异常
             try:
-                # 解码消息
-                body = message.body.decode('utf-8')
-                queue_name = message.routing_key or "unknown"
-                
-                # 调用处理函数
-                result = await callback(body, message)
-                
-                if not result:
-                    logger.warning(f"⚠️ Message processing failed from queue '{queue_name}'")
-                    raise Exception("❌ Message processing failed")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error processing message: {e}")
-                logger.debug(f"Traceback: {traceback.format_exc()}")
-                raise
+                await message.nack(requeue=False)
+            except Exception as nack_error:
+                logger.error(f"❌ 拒绝消息时出错: {nack_error}")
+            
+            logger.error(f"❌ 处理队列'{queue_name}'消息时出错: {e}")
+            logger.debug(f"错误堆栈: {traceback.format_exc()}")
     
     async def start_consuming(self, queue_configs: Dict[str, Callable]):
         """
@@ -144,12 +165,12 @@ class WeChatRabbitMQConsumer:
         """
         # 等待RabbitMQ服务可用
         if not await self.wait_for_rabbitmq():
-            logger.error("❌ RabbitMQ service is not available")
+            logger.error("❌ RabbitMQ服务不可用")
             return False
         
         # 连接到RabbitMQ
         if not await self.connect():
-            logger.error("❌ Failed to connect to RabbitMQ")
+            logger.error("❌ 连接RabbitMQ失败")
             return False
         
         try:
@@ -159,22 +180,22 @@ class WeChatRabbitMQConsumer:
                 if await self.consume_queue(queue_name, callback):
                     success_count += 1
                 else:
-                    logger.error(f"❌ Failed to setup consumer for queue: {queue_name}")
+                    logger.error(f"❌ 设置队列消费者失败: {queue_name}")
             
             if success_count == 0:
-                logger.error("❌ No consumers were set up successfully")
+                logger.error("❌ 没有成功设置任何消费者")
                 return False
             
             self.is_running = True
-            logger.info("✅ All consumers started. Service is running...")
+            logger.info("✅ 所有消费者已启动，服务正在运行...")
             
             # 保持服务运行
             while self.is_running:
                 await asyncio.sleep(1)
                 
         except Exception as e:
-            logger.error(f"❌ Error during consumption setup: {e}")
-            logger.debug(f"Full traceback: {traceback.format_exc()}")
+            logger.error(f"❌ 消费设置过程中出错: {e}")
+            logger.debug(f"完整错误堆栈: {traceback.format_exc()}")
             return False
     
     async def stop_consuming(self):
@@ -186,12 +207,12 @@ class WeChatRabbitMQConsumer:
                 if self.channel and not self.channel.is_closed:
                     await self.channel.basic_cancel(consumer_tag)
             except Exception as e:
-                logger.error(f"❌ Error stopping consumer for queue '{queue_name}': {e}")
+                logger.error(f"❌ 停止队列'{queue_name}'消费者时出错: {e}")
         
         if self.connection and not self.connection.is_closed:
             await self.connection.close()
         
-        logger.info("🔴 All consumers stopped")
+        logger.info("🔴 所有消费者已停止")
 
 
 # =============================================================================
@@ -209,36 +230,77 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
     Returns:
         bool: 处理是否成功
     """
-    try:
-        logger.info(f"🔄 Processing WeChat message: {message[:200]}...")
-        
+    try:        
         # 尝试解析JSON
         try:
-            data = json.loads(message)
-            logger.info(f"📋 Parsed JSON data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
-            
-            # 这里添加您的微信消息处理逻辑
-            # 例如：
-            # - 解析消息类型
-            # - 处理文本消息、图片消息等
-            # - 调用相应的业务逻辑
-            # - 可能需要回复消息等
-            
-            await asyncio.sleep(0.1)  # 模拟处理时间
-            
-        except json.JSONDecodeError:
-            logger.info(f"📝 Processing plain text message: {message}")
-            # 处理纯文本消息
-            await asyncio.sleep(0.05)
+            message_data = json.loads(message)
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ JSON解析失败: {e}")
+            return False
 
-        return True
+        # 检查是否在线
+        await login_check(message_data)
+
+        # 检查是否无新消息
+        if message_data.get('Message') != "成功":
+            return True
+        
+        # 获取消息列表
+        add_msgs = message_data.get('Data', {}).get('AddMsgs', [])
+        if not add_msgs:
+            logger.debug("没有新消息")
+            return True
+        
+        # 处理每条消息
+        processed_count = 0
+        failed_count = 0
+        
+        for msg in add_msgs:
+            msg_id = msg.get('MsgId')
+            if not msg_id:
+                continue
+
+            # 处理新消息
+            try:
+                await process_rabbitmq_message(msg)
+                processed_count += 1
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"❌ 处理消息 {msg_id} 失败: {e}")
+        
+        # 只要有消息被处理就算成功
+        return processed_count > 0 or failed_count == 0
         
     except Exception as e:
-        logger.error(f"❌ Error handling WeChat message: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"❌ 处理微信消息时出错: {e}")
+        logger.error(f"错误堆栈: {traceback.format_exc()}")
         return False
 
+# 登陆检测
+login_status = None
 
+async def login_check(callback_data):
+    """异步登录检测"""
+    global login_status
+    
+    current_message = callback_data.get('Message')
+    
+    tg_user_id = get_user_id()
+    if current_message == "用户可能退出":
+        # 只有当上一次状态不是离线时才发送离线提示
+        if login_status != "offline":
+            await telegram_sender.send_text(tg_user_id, locale.common("offline"))
+            login_status = "offline"
+        return {"success": True, "message": "用户可能退出"}
+    
+    else:
+        # 当前不是离线状态
+        # 如果上一次是离线状态，发送上线提示
+        if login_status == "offline":
+            await telegram_sender.send_text(tg_user_id, locale.common("online"))
+        login_status = "online"
+        return {"success": True, "message": "正常状态"}
+    
 # =============================================================================
 # 配置和启动
 # =============================================================================
@@ -268,7 +330,7 @@ async def main():
     
     # 设置信号处理（优雅关闭）
     def signal_handler():
-        logger.info("📡 Received signal to stop")
+        logger.info("📡 收到停止信号")
         asyncio.create_task(consumer.stop_consuming())
     
     loop = asyncio.get_event_loop()
@@ -283,8 +345,8 @@ async def main():
     try:
         await consumer.start_consuming(config['queue_configs'])
     except Exception as e:
-        logger.error(f"❌ Consumer error: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"❌ 消费者错误: {e}")
+        logger.error(f"错误堆栈: {traceback.format_exc()}")
     finally:
         await consumer.stop_consuming()
 
@@ -293,7 +355,7 @@ if __name__ == "__main__":
         # 运行异步主函数
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("🔴 Service interrupted by user")
+        logger.info("🔴 服务被用户中断")
     except Exception as e:
-        logger.error(f"❌ Service error: {e}")
+        logger.error(f"❌ 服务错误: {e}")
         sys.exit(1)

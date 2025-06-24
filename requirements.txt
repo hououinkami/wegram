@@ -7,3 +7,4 @@ pyaes
 pilk
 ffmpeg-python
 Pillow
+aio_pika

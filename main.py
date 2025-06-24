@@ -92,13 +92,18 @@ class ServiceManager:
         self.shutdown_event = asyncio.Event()
         
         # 服务配置
-        if config.MODE == "polling":
+        if config.TG_MODE == "polling":
             tele_services = ["telethon_monitor", "telegram_polling"]
-        elif config.MODE == "telethon":
+        elif config.TG_MODE == "telethon":
             tele_services = ["telethon_monitor"]
+        
+        if config.WECHAT_MODE == "callback":
+            wechat_services = ["wechat_callback"]
+        elif config.WECHAT_MODE == "rabbitmq":
+            wechat_services = ["wechat_rabbitmq"]
 
-        self.services_to_start = tele_services + ["wechat_callback", "wechat_status", "scheduled_pusher"]
-        self.async_services = tele_services + ["wechat_callback", "wechat_status", "scheduled_pusher"]
+        self.services_to_start = tele_services + wechat_services + ["wechat_status", "scheduled_pusher"]
+        self.async_services = tele_services + wechat_services + ["wechat_status", "scheduled_pusher"]
     
     def start_file_monitor(self):
         """启动文件监控"""

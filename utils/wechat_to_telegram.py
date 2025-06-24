@@ -289,213 +289,11 @@ async def _forward_sysmsg(chat_id: int, sender_name: str, content: dict, **kwarg
             result_template = result_template.replace(placeholder, nickname)
         
         sysmsg_template = message_formatter.escape_html_chars(result_template)
-        send_text = sysmsg_template
+        send_text = f"<blockquote>{sysmsg_template}</blockquote>"
 
         return await telegram_sender.send_text(chat_id, send_text)
     except (KeyError, TypeError) as e:
         raise Exception("加入群聊信息提取失败")
-
-async def _process_message_async(message_info: Dict[str, Any]) -> None:
-    """异步处理单条消息"""
-
-    async def _send_message_with_handler(chat_id: int, msg_type: Any, handler_params: dict) -> dict:
-        """使用处理器发送消息的通用方法"""
-        handlers = _get_message_handlers()
-        
-        if msg_type in handlers:
-            try:
-                return await handlers[msg_type](**{**handler_params, 'chat_id': chat_id})
-            except Exception as e:
-                logger.error(f"处理器执行失败 (类型={msg_type}): {e}", exc_info=True)
-                type_text = message_formatter.escape_html_chars(f"[{locale.type(msg_type)}]")
-                send_text = f"{handler_params['sender_name']}\n{type_text}"
-                
-                return await telegram_sender.send_text(chat_id, send_text)
-        else:
-            # 处理未知消息类型
-            logger.warning(f"❓未知消息类型: {msg_type}")
-            type_text = message_formatter.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
-            send_text = f"{handler_params['sender_name']}\n{type_text}"
-
-            #调试输出
-            logger.info(f"💬 类型: {msg_type}, 来自: {handler_params['from_wxid']}")
-            logger.info(f"💬 内容: {handler_params['content']}")
-            
-            return await telegram_sender.send_text(chat_id, send_text)
-    
-    async def _handle_deleted_group(from_wxid: str, handler_params: dict, content: dict, push_content: str, msg_type: Any) -> Optional[dict]:
-        """处理被删除的群组"""
-        try:
-            # 删除联系人信息
-            await contact_manager.delete_contact(from_wxid)
-            
-            # 重新获取或创建聊天群组
-            contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
-            
-            # 创建新群组
-            new_chat_id = await _create_group_for_contact(from_wxid, contact_name, avatar_url)
-            
-            if new_chat_id:
-                # 重新发送消息
-                return await _send_message_with_handler(new_chat_id, msg_type, handler_params)
-            else:
-                logger.error(f"群组重新创建失败: {from_wxid}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"处理群组删除异常: {e}", exc_info=True)
-            return None
-
-    try:
-        msg_type = int(message_info['MsgType'])
-        msg_id = message_info['MsgId']
-        new_msg_id = message_info['NewMsgId']
-        from_wxid = message_info['FromUserName']
-        to_wxid = message_info['ToUserName']
-        content = message_info['Content']
-        push_content = message_info['PushContent']
-        create_time = message_info['CreateTime']
-        
-        # 转发自己的消息
-        if from_wxid == config.MY_WXID:
-            from_wxid = to_wxid
-        
-        # 处理服务通知
-        if from_wxid.endswith('@app'):
-            from_wxid = "service_notification"
-        
-        # 处理群聊消息格式
-        if from_wxid.endswith('@chatroom'):
-            if ':\n' in content:
-                sender_part, content_part = content.split('\n', 1)
-                sender_wxid = sender_part.rstrip(':')
-                content = content_part
-            else:
-                sender_wxid = message_info['FromUserName'] if message_info['FromUserName'] == config.MY_WXID else ""
-        else:
-            sender_wxid = from_wxid
-        
-        # 获取联系人信息
-        contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
-
-        # 获取发送者信息
-        if sender_wxid == from_wxid:
-            sender_name = contact_name
-        else:
-            sender_name, _ = await _get_contact_info(sender_wxid, content, push_content)
-
-        # 微信上打开联系人对话是否新建关联群组
-        if msg_type == 51:
-            msg_type = "open_chat"
-
-        # 处理消息内容
-        if msg_type != 1:
-            content = message_formatter.xml_to_json(content)
-            # App消息
-            if msg_type == 49:
-                msg_type = int(content['msg']['appmsg']['type'])
-            # 通话信息
-            if msg_type == 50:
-                msg_type = content['voipmsg']['type']
-            # 系统信息
-            if msg_type == 10002:
-                msg_type = content['sysmsg']['type']
-        
-        # 避免激活折叠聊天时新建群组
-        if from_wxid.endswith('@placeholder_foldgroup') or from_wxid == 'notification_messages':
-            return
-
-        # 获取或创建群组
-        chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
-
-        # 跳过指定的不明类型消息
-        if not chat_id or msg_type in black_list:
-            return
-        
-        # 不发送自己在微信上的撤回动作
-        if sender_wxid == config.MY_WXID and msg_type == "revokemsg":
-            return
-        
-        # 输出信息便于调试
-        types_keys = [k for k in locale.type_map.keys()]
-        if msg_type not in types_keys:
-            logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
-            logger.info(f"💬 内容: {content}")
-
-        # 获取联系人信息用于显示
-        contact_dic = await contact_manager.get_contact(from_wxid)
-        
-        # 设置发送者显示名称
-        if "chatroom" in from_wxid or contact_dic["isGroup"]:
-            sender_name = f"<blockquote expandable>{message_formatter.escape_html_chars(sender_name)}</blockquote>"
-        else:
-            sender_name = ""
-        
-        # 准备通用参数
-        handler_params = {
-            'sender_name': sender_name,
-            'content': content,
-            'msg_id': msg_id,
-            'from_wxid': from_wxid,
-            'message_info': message_info,
-            'msg_type': msg_type
-        }
-        
-        # 检测群组是否被删除
-        try:
-            # 发送消息
-            response = await _send_message_with_handler(chat_id, msg_type, handler_params)
-
-            # 储存消息ID
-            if response and not from_wxid.startswith('gh_') :
-                tg_msgid = response.message_id
-
-                # 获取接收到的微信消息对应Telethon的MsgID
-                if config.MODE == "telethon":
-                    message_text = response.text if response.text else ""
-                    bot_id = int(config.BOT_TOKEN.split(':')[0])
-                    telethon_client = get_client()
-                    telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), bot_id, message_text, response.date)
-                else:
-                    telethon_msg_id = 0
-
-                msgid_mapping.add(
-                    tg_msg_id=tg_msgid,
-                    from_wx_id=sender_wxid,
-                    to_wx_id=to_wxid,
-                    wx_msg_id=new_msg_id,
-                    client_msg_id=0,
-                    create_time=create_time,
-                    content=content if msg_type == 1 else "",
-                    telethon_msg_id=telethon_msg_id
-                )
-                
-        except TelegramError as e:
-            error_msg = str(e).lower()
-            
-            # 检查是否是群组被删除的错误
-            if ("the group chat was deleted" in error_msg or 
-                "chat not found" in error_msg or
-                "group chat was deactivated" in error_msg):
-                logger.warning(f"检测到群组被删除: {from_wxid}, 错误信息: {e}")
-                response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
-                
-                if not response:
-                    return
-            elif ("bot was kicked" in error_msg or 
-                  "not a member" in error_msg):
-                logger.warning(f"Bot被踢出群组或不是成员: {from_wxid}, 错误信息: {e}")
-                # 可以选择是否调用删除群组处理
-                response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
-                if not response:
-                    return
-            else:
-                # 其他Telegram错误类型的处理
-                logger.error(f"Telegram API调用失败: {e}")
-                return
-                
-    except Exception as e:
-        logger.error(f"异步消息处理失败: {e}", exc_info=True)
 
 async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
     """获取联系人显示信息，处理特殊情况"""
@@ -703,8 +501,230 @@ def extract_message(data):
         logger.error(f"提取消息信息失败: {e}")
         return None
 
-async def process_message(message_data: Dict[str, Any]) -> None:
-    """处理微信消息 - 异步版本"""
+async def _process_message_async(message_info: Dict[str, Any]) -> None:
+    """异步处理单条消息"""
+
+    async def _send_message_with_handler(chat_id: int, msg_type: Any, handler_params: dict) -> dict:
+        """使用处理器发送消息的通用方法"""
+        handlers = _get_message_handlers()
+        
+        if msg_type in handlers:
+            try:
+                return await handlers[msg_type](**{**handler_params, 'chat_id': chat_id})
+            except Exception as e:
+                logger.error(f"处理器执行失败 (类型={msg_type}): {e}", exc_info=True)
+                type_text = message_formatter.escape_html_chars(f"[{locale.type(msg_type)}]")
+                send_text = f"{handler_params['sender_name']}\n{type_text}"
+                
+                return await telegram_sender.send_text(chat_id, send_text)
+        else:
+            # 处理未知消息类型
+            logger.warning(f"❓未知消息类型: {msg_type}")
+            type_text = message_formatter.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
+            send_text = f"{handler_params['sender_name']}\n{type_text}"
+
+            #调试输出
+            logger.info(f"💬 类型: {msg_type}, 来自: {handler_params['from_wxid']}")
+            logger.info(f"💬 内容: {handler_params['content']}")
+            
+            return await telegram_sender.send_text(chat_id, send_text)
+    
+    async def _handle_deleted_group(from_wxid: str, handler_params: dict, content: dict, push_content: str, msg_type: Any) -> Optional[dict]:
+        """处理被删除的群组"""
+        try:
+            # 删除联系人信息
+            await contact_manager.delete_contact(from_wxid)
+            
+            # 重新获取或创建聊天群组
+            contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
+            
+            # 创建新群组
+            new_chat_id = await _create_group_for_contact(from_wxid, contact_name, avatar_url)
+            
+            if new_chat_id:
+                # 重新发送消息
+                return await _send_message_with_handler(new_chat_id, msg_type, handler_params)
+            else:
+                logger.error(f"群组重新创建失败: {from_wxid}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"处理群组删除异常: {e}", exc_info=True)
+            return None
+
+    try:
+        msg_type = int(message_info['MsgType'])
+        msg_id = message_info['MsgId']
+        new_msg_id = message_info['NewMsgId']
+        from_wxid = message_info['FromUserName']
+        to_wxid = message_info['ToUserName']
+        content = message_info['Content']
+        push_content = message_info['PushContent']
+        create_time = message_info['CreateTime']
+        
+        # 转发自己的消息
+        if from_wxid == config.MY_WXID:
+            from_wxid = to_wxid
+        
+        # 处理服务通知
+        if from_wxid.endswith('@app'):
+            from_wxid = "service_notification"
+        
+        # 处理群聊消息格式
+        if from_wxid.endswith('@chatroom'):
+            if ':\n' in content:
+                sender_part, content_part = content.split('\n', 1)
+                sender_wxid = sender_part.rstrip(':')
+                content = content_part
+            else:
+                sender_wxid = message_info['FromUserName'] if message_info['FromUserName'] == config.MY_WXID else ""
+        else:
+            sender_wxid = from_wxid
+        
+        # 获取联系人信息
+        contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
+
+        # 获取发送者信息
+        if sender_wxid == from_wxid:
+            sender_name = contact_name
+        else:
+            sender_name, _ = await _get_contact_info(sender_wxid, content, push_content)
+
+        # 微信上打开联系人对话是否新建关联群组
+        if msg_type == 51:
+            msg_type = "open_chat"
+
+        # 处理消息内容
+        if msg_type != 1:
+            content = message_formatter.xml_to_json(content)
+            # App消息
+            if msg_type == 49:
+                msg_type = int(content['msg']['appmsg']['type'])
+            # 通话信息
+            if msg_type == 50:
+                msg_type = content['voipmsg']['type']
+            # 系统信息
+            if msg_type == 10002:
+                msg_type = content['sysmsg']['type']
+        
+        # 避免激活折叠聊天时新建群组
+        if from_wxid.endswith('@placeholder_foldgroup') or from_wxid == 'notification_messages':
+            return
+
+        # 获取或创建群组
+        chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
+
+        # 跳过指定的不明类型消息
+        if not chat_id or msg_type in black_list:
+            return
+        
+        # 不发送自己在微信上的撤回动作
+        if sender_wxid == config.MY_WXID and msg_type == "revokemsg":
+            return
+        
+        # 输出信息便于调试
+        types_keys = [k for k in locale.type_map.keys()]
+        if msg_type not in types_keys:
+            logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
+            logger.info(f"💬 内容: {content}")
+
+        # 获取联系人信息用于显示
+        contact_dic = await contact_manager.get_contact(from_wxid)
+        
+        # 设置发送者显示名称
+        if "chatroom" in from_wxid or contact_dic["isGroup"]:
+            sender_name = f"<blockquote expandable>{message_formatter.escape_html_chars(sender_name)}</blockquote>"
+        else:
+            sender_name = ""
+        
+        # 准备通用参数
+        handler_params = {
+            'sender_name': sender_name,
+            'content': content,
+            'msg_id': msg_id,
+            'from_wxid': from_wxid,
+            'message_info': message_info,
+            'msg_type': msg_type
+        }
+        
+        # 检测群组是否被删除
+        try:
+            # 发送消息
+            response = await _send_message_with_handler(chat_id, msg_type, handler_params)
+
+            # 储存消息ID
+            if response and not from_wxid.startswith('gh_') :
+                tg_msgid = response.message_id
+
+                # 获取接收到的微信消息对应Telethon的MsgID
+                if config.TG_MODE == "telethon":
+                    message_text = response.text if response.text else ""
+                    bot_id = int(config.BOT_TOKEN.split(':')[0])
+                    telethon_client = get_client()
+                    telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), bot_id, message_text, response.date)
+                else:
+                    telethon_msg_id = 0
+
+                msgid_mapping.add(
+                    tg_msg_id=tg_msgid,
+                    from_wx_id=sender_wxid,
+                    to_wx_id=to_wxid,
+                    wx_msg_id=new_msg_id,
+                    client_msg_id=0,
+                    create_time=create_time,
+                    content=content if msg_type == 1 else "",
+                    telethon_msg_id=telethon_msg_id
+                )
+                
+        except TelegramError as e:
+            error_msg = str(e).lower()
+            
+            # 检查是否是群组被删除的错误
+            if ("the group chat was deleted" in error_msg or 
+                "chat not found" in error_msg or
+                "group chat was deactivated" in error_msg):
+                logger.warning(f"检测到群组被删除: {from_wxid}, 错误信息: {e}")
+                response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
+                
+                if not response:
+                    return
+            elif ("bot was kicked" in error_msg or 
+                  "not a member" in error_msg):
+                logger.warning(f"Bot被踢出群组或不是成员: {from_wxid}, 错误信息: {e}")
+                # 可以选择是否调用删除群组处理
+                response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
+                if not response:
+                    return
+            else:
+                # 其他Telegram错误类型的处理
+                logger.error(f"Telegram API调用失败: {e}")
+                return
+                
+    except Exception as e:
+        logger.error(f"异步消息处理失败: {e}", exc_info=True)
+
+async def process_rabbitmq_message(message_data: Dict[str, Any]) -> None:
+    """处理微信RabbitMQ消息"""
+    try:
+        message_info = extract_message(message_data)
+        if not message_info:
+            logger.error("提取消息信息失败")
+            return
+        
+        # 忽略微信官方信息
+        if message_info["FromUserName"] == "weixin":
+            return
+        
+        # 直接调用核心处理函数
+        await _process_message_async(message_info)
+        
+        return True
+            
+    except Exception as e:
+        logger.error(f"处理微信消息时出错: {e}")
+
+async def process_callback_message(message_data: Dict[str, Any]) -> None:
+    """处理微信回调消息"""
     try:
         message_info = extract_message(message_data)
         if not message_info:
