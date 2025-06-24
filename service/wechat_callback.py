@@ -10,7 +10,7 @@ import config
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
 from utils.locales import Locale
-from utils.wechat_to_telegram import process_message
+from utils.wechat_to_telegram import process_callback_message
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ async def process_callback_data(callback_data: Dict[str, Any]) -> Dict[str, Any]
             
             # 处理新消息
             try:
-                await process_message(msg)
+                await process_callback_message(msg)
                 processed_count += 1
             except Exception as e:
                 logger.error(f"❌ 处理消息 {msg_id} 失败: {e}")

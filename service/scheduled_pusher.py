@@ -170,7 +170,7 @@ async def main():
                 "Type": 1,
                 "Wxid": config.MY_WXID
             }
-            await wechat_api("/Msg/SendTxt", payload)
+            await wechat_api("SEND_TEXT", payload)
 
             # 发送到Telegram
             tg_user_id = get_user_id()
@@ -184,7 +184,7 @@ async def main():
         _scheduler_instance = DailyRandomScheduler("07:55", "08:05", get_news)
         await _scheduler_instance.start()
         
-        logger.info("✅ 调度器服务已启动，将在每天 07:55-08:05 之间随机推送新闻")
+        logger.info("📰 调度器服务已启动，将在每天 07:55-08:05 之间随机推送新闻")
         
         # 等待调度器任务完成
         await _scheduler_instance.scheduler_task

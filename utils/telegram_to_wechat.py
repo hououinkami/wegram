@@ -131,6 +131,13 @@ async def forward_telegram_to_wx(chat_id: str, message) -> bool:
             # 语音消息
             return await _send_telegram_voice(to_wxid, message.voice)
         
+        # elif message.document:
+        #     # 发送附带文字
+        #     if message.caption:
+        #         await _send_telegram_text(to_wxid, message.caption)
+        #     # 文档消息
+        #     return await _send_telegram_document(to_wxid, message.document)
+
         elif message.location:
             # 定位消息
             return await _send_telegram_location(to_wxid, message)
@@ -152,7 +159,7 @@ async def _send_telegram_text(to_wxid: str, text: str) -> bool:
         "Type": 1,
         "Wxid": config.MY_WXID
     }
-    return await wechat_api("/Msg/SendTxt", payload)
+    return await wechat_api("SEND_TEXT", payload)
 
 
 async def _send_telegram_photo(to_wxid: str, photo: list) -> bool:
@@ -173,7 +180,7 @@ async def _send_telegram_photo(to_wxid: str, photo: list) -> bool:
             "Wxid": config.MY_WXID
         }
         
-        return await wechat_api("/Msg/UploadImg", payload)
+        return await wechat_api("SEND_IMAGE", payload)
     except Exception as e:
         logger.error(f"处理图片时出错: {e}")
         return False
@@ -202,7 +209,7 @@ async def _send_telegram_video(to_wxid: str, video) -> bool:
             "Wxid": config.MY_WXID
         }
         
-        return await wechat_api("/Msg/SendVideo", payload)
+        return await wechat_api("SEND_VIDEO", payload)
     except Exception as e:
         logger.error(f"处理视频时出错: {e}")
         return False
@@ -217,6 +224,7 @@ async def _send_telegram_sticker(to_wxid: str, sticker) -> bool:
     file_unique_id = sticker.file_unique_id
     try:
         sticker_info = get_sticker_info(file_unique_id)
+        payload = {}
 
         if sticker_info:
             md5 = sticker_info.get("md5", "")
@@ -237,6 +245,8 @@ async def _send_telegram_sticker(to_wxid: str, sticker) -> bool:
 
                 # 根据文件类型选择转换方法
                 file_extension = Path(sticker_path).suffix
+                gif_path = None
+                
                 if file_extension == '.tgs':
                     # TGS 动画贴纸
                     gif_path = await converter.tgs_to_gif(sticker_path)
@@ -251,25 +261,35 @@ async def _send_telegram_sticker(to_wxid: str, sticker) -> bool:
                 
                 if not gif_path:
                     logger.error(f"转换失败: {sticker_path}")
-                    return None
-                else:
-                    return gif_path
+                    return False
+                
+                
+                # 转换成功，准备发送
+                # sticker_base64 = local_file_to_base64(gif_path)
+                # if not sticker_base64:
+                #     logger.error("转换贴纸文件为base64失败")
+                #     return False
+                    
+                payload = {
+                    "Md5": "",
+                    "TotalLen": 0,
+                    # "Base64": sticker_base64,
+                    "ToWxid": to_wxid,
+                    "Wxid": config.MY_WXID
+                }
                 
             except Exception as e:
                 logger.error(f"下载并转换贴纸失败: {e}")
-            
-            # 利用buffer发送贴纸（停用）
-            # sticker_base64 = local_file_to_base64(gif_path)
-            # if not sticker_base64:
-            #     logger.error("转换贴纸文件为base64失败")
-            #     return False
-            # payload = {
-            #     "Base64": sticker_base64,
-            #     "ToWxid": to_wxid,
-            #     "Wxid": config.MY_WXID
-            # }
+                return False
         
-        return await wechat_api("/Msg/SendEmoji", payload)
+        # 执行发送操作
+        result = await wechat_api("SEND_EMOJI", payload)
+
+        if result.get("Data", {}):
+            return result
+        else:
+            err_msg = result.get("Message", {})
+            logger.error(f"贴纸发送失败: {err_msg}")
     
     except Exception as e:
         logger.error(f"处理贴纸时出错: {e}")
@@ -324,7 +344,7 @@ async def _send_telegram_voice(to_wxid: str, voice):
             "Wxid": config.MY_WXID
         }
         
-        return await wechat_api("/Msg/SendVoice", payload)
+        return await wechat_api("SEND_VOICE", payload)
     
     except Exception as e:
         logger.error(f"处理Telegram语音消息失败: {e}")
@@ -344,6 +364,49 @@ async def _send_telegram_voice(to_wxid: str, voice):
                     logger.debug(f"清理{file_type}: {file_path}")
                 except Exception as e:
                     logger.warning(f"清理{file_type}失败 {file_path}: {e}")
+
+async def _send_telegram_document(to_wxid: str, document) -> bool:
+    """发送文档消息到微信"""
+    if not document:
+        logger.error("未收到文档数据")
+        return False
+    
+    try:
+        # 获取文件信息
+        file_id = document.file_id
+        file_name = document.file_name or f"document_{file_id}"
+        file_size = document.file_size
+        mime_type = document.mime_type
+        
+        # 检查文件大小限制
+        max_size = 50 * 1024 * 1024  # 50MB
+        if file_size and file_size > max_size:
+            logger.error(f"文件太大: {file_size} bytes (限制: {max_size} bytes)")
+            return False
+        
+        # 下载文件并转换为base64
+        file_base64 = await get_file_base64(file_id)
+        if not file_base64:
+            logger.error("获取文件base64失败")
+            return False
+        
+        if not file_base64.startswith('data:'):
+            # 如果没有数据URL前缀，添加它
+            file_base64 = f"data:{mime_type or 'application/octet-stream'};base64,{file_base64}"
+        
+        # 构建发送载荷
+        payload = {
+            "Wxid": config.MY_WXID,
+            "Base64": file_base64
+        }
+        
+        upload_file = await wechat_api("UPLOAD_FILE", payload)
+        logger.warning(upload_file)
+        return upload_file
+        
+    except Exception as e:
+        logger.error(f"处理文档时出错: {e}")
+        return False
 
 async def _send_telegram_location(to_wxid: str, message) -> bool:
     """发送定位消息到微信"""
@@ -372,7 +435,7 @@ async def _send_telegram_location(to_wxid: str, message) -> bool:
         "X": latitude,
         "Y": longitude
     }
-    return await wechat_api("/Msg/ShareLocation", payload)
+    return await wechat_api("SEND_LOCATION", payload)
 
 async def _send_telegram_reply(to_wxid: str, message):
     """发送回复消息到微信"""
@@ -396,7 +459,7 @@ async def _send_telegram_reply(to_wxid: str, message):
             "Wxid": config.MY_WXID,
             "Xml": reply_xml
         }
-        return await wechat_api("/Msg/SendApp", payload)
+        return await wechat_api("SEND_APP", payload)
     except Exception as e:
         logger.error(f"处理回复消息时出错: {e}")
         return False
@@ -428,13 +491,13 @@ async def _send_telegram_link(to_wxid: str, message):
         if link_title and link_url:
             text = f"<appmsg><title>{link_title}</title><des>{link_desc}</des><type>5</type><url>{link_url}</url><thumburl></thumburl></appmsg>"
 
-        playload = {
+        payload = {
             "ToWxid": to_wxid,
             "Type": 49,
             "Wxid": config.MY_WXID,
             "Xml": text
         }
-        return await wechat_api('/Msg/SendApp', playload)
+        return await wechat_api('SEND_APP', payload)
 
 async def revoke_by_telegram_bot_command(chat_id, message):
     try:
@@ -452,14 +515,14 @@ async def revoke_by_telegram_bot_command(chat_id, message):
         client_msg_id = delete_wx_msgid["clientmsgid"]
         create_time = delete_wx_msgid["createtime"]
         
-        playload = {
+        payload = {
             "ClientMsgId": client_msg_id,
             "CreateTime": create_time,
             "NewMsgId": new_msg_id,
             "ToUserName": to_wxid,
             "Wxid": config.MY_WXID
         }
-        await wechat_api("/Msg/Revoke", playload)
+        await wechat_api("REVOKE", payload)
 
         # 删除撤回命令对应的消息
         await telegram_sender.delete_message(chat_id, message.message_id)
@@ -825,14 +888,14 @@ async def revoke_telethon(event):
             client_msg_id = wx_msg["clientmsgid"]
             create_time = wx_msg["createtime"]
             
-            playload = {
+            payload = {
                 "ClientMsgId": client_msg_id,
                 "CreateTime": create_time,
                 "NewMsgId": new_msg_id,
                 "ToUserName": to_wxid,
                 "Wxid": config.MY_WXID
             }
-            await wechat_api("/Msg/Revoke", playload)
+            await wechat_api("REVOKE", payload)
         
     except Exception as e:
         logger.error(f"处理消息删除逻辑时出错: {e}")

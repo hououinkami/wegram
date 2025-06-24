@@ -24,7 +24,7 @@ VOICE_DIR = os.path.join(DOWNLOAD_DIR, "voice")
 
 async def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
     return await chunked_download(
-        api_path="/Tools/DownloadImg",
+        api_path="GET_IMAGE",
         msg_id=msg_id,
         from_wxid=from_wxid,
         data_json=data_json,
@@ -35,7 +35,7 @@ async def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
 
 async def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
     return await chunked_download(
-        api_path="/Tools/DownloadVideo",
+        api_path="GET_VIDEO",
         msg_id=msg_id,
         from_wxid=from_wxid,
         data_json=data_json,
@@ -46,7 +46,7 @@ async def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
 
 async def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
     return await chunked_download(
-        api_path="/Tools/DownloadFile",
+        api_path="GET_FILE",
         msg_id=msg_id,
         from_wxid=from_wxid,
         data_json=data_json,
@@ -78,7 +78,7 @@ async def get_emoji(data_json) -> Tuple[bool, str]:
             }
 
             # 发送请求
-            response_data = await wechat_api("/Tools/EmojiDownload", payload)
+            response_data = await wechat_api("GET_EMOJI", payload)
             
             # 检查响应数据结构
             if (response_data and "Data" in response_data):
@@ -148,7 +148,7 @@ async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
         }
 
         # 发送请求
-        response_data = await wechat_api("/Tools/DownloadVoice", payload)
+        response_data = await wechat_api("GET_VOICE", payload)
         
         # 检查响应数据结构
         if (response_data and "Data" in response_data):
@@ -227,7 +227,7 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
                         "FileNo": cdnurl,
                         "Wxid": WXID
                     }
-                    response_data = await wechat_api("/Tools/CdnDownloadImage", cdn_body)
+                    response_data = await wechat_api("GET_IMAGE_CDN", cdn_body)
                 
                     # 检查响应数据结构
                     if (response_data and "Data" in response_data and "Image" in response_data["Data"]):

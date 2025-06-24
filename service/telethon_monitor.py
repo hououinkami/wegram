@@ -214,7 +214,7 @@ async def main():
         monitor_instance = await create_monitor()
         
         # 启动监控
-        if config.MODE == "polling":
+        if config.TG_MODE == "polling":
             handle_new = False
         else:
             handle_new = True

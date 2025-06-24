@@ -101,7 +101,7 @@ class BotCommands:
         chat_id = update.effective_chat.id
         
         try:
-            relogin = wechat_login.twice_login(config.MY_WXID)
+            relogin = await wechat_login.twice_login(config.MY_WXID)
             
             if relogin.get('Message') == "登录成功":
                 await telegram_sender.send_text(chat_id, locale.common("twice_login_success"))

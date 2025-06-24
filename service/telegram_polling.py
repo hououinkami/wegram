@@ -95,7 +95,7 @@ class TelegramPollingService:
             
         try:
             await self.application.bot.set_my_commands(self.commands)
-            logger.info(f"✅ 设置了 {len(self.commands)} 个机器人命令")
+            logger.info(f"🤖 设置了 {len(self.commands)} 个机器人命令")
         except Exception as e:
             # 设置命令失败不影响主要功能
             logger.warning(f"❌ 设置机器人命令失败: {e}")
