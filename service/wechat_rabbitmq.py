@@ -45,17 +45,22 @@ class WeChatRabbitMQConsumer:
                 # 使用robust连接，自动重连
                 self.connection = await aio_pika.connect_robust(
                     url=self.rabbitmq_url,
-                    heartbeat=600,
-                    blocked_connection_timeout=300,
+                    heartbeat=30,
+                    blocked_connection_timeout=3,
                     connection_attempts=3,
-                    retry_delay=2
+                    retry_delay=1.0,
+                    socket_timeout=0.5,
+                    stack_timeout=1.0,
                 )
                 
                 # 创建通道
                 self.channel = await self.connection.channel()
                 
                 # 设置QoS，控制并发处理数量
-                await self.channel.set_qos(prefetch_count=10)
+                await self.channel.set_qos(
+                    prefetch_count=5,  # 改为1，立即处理不批量
+                    prefetch_size=0
+                )
                 
                 logger.info("🟢 成功连接到RabbitMQ")
                 return True
@@ -107,7 +112,7 @@ class WeChatRabbitMQConsumer:
             # 开始消费 - 移除包装器，直接使用callback
             consumer_tag = await queue.consume(
                 callback=lambda message: self._message_wrapper(message, callback),
-                no_ack=False  # 手动确认
+                no_ack=False
             )
             
             self.consumer_tags[queue_name] = consumer_tag
@@ -121,15 +126,15 @@ class WeChatRabbitMQConsumer:
     
     async def _message_wrapper(self, message: AbstractIncomingMessage, callback: Callable):
         """消息处理包装器"""
-        queue_name = getattr(message, 'routing_key', None) or "未知"
+        start_time = time.time()
         
         try:
-            # 解码消息
-            body = message.body.decode('utf-8')
+            # 解码消息体为字符串
+            body_str = message.body.decode('utf-8')
             
             # 调用处理函数
             start_time = time.time()
-            result = await callback(body, message)
+            result = await callback(body_str, message)
             processing_time = time.time() - start_time
             
             if result:
@@ -138,13 +143,13 @@ class WeChatRabbitMQConsumer:
             else:
                 # 处理失败，但不是异常
                 await message.nack(requeue=False)
-                logger.warning(f"⚠️ 队列'{queue_name}'消息处理失败，消息已丢弃 (耗时: {processing_time:.2f}s)")
+                logger.warning(f"⚠️ 队列消息处理失败，消息已丢弃 (耗时: {processing_time:.2f}s)")
                 
         except json.JSONDecodeError as e:
             # JSON解析错误
             await message.nack(requeue=False)
-            logger.error(f"❌ 队列'{queue_name}'消息JSON格式错误: {e}")
-            
+            logger.error(f"❌ 队列消息JSON格式错误: {e}")
+                
         except Exception as e:
             # 其他异常
             try:
@@ -152,9 +157,9 @@ class WeChatRabbitMQConsumer:
             except Exception as nack_error:
                 logger.error(f"❌ 拒绝消息时出错: {nack_error}")
             
-            logger.error(f"❌ 处理队列'{queue_name}'消息时出错: {e}")
+            logger.error(f"❌ 消息包装器处理出错: {e}")
             logger.debug(f"错误堆栈: {traceback.format_exc()}")
-    
+
     async def start_consuming(self, queue_configs: Dict[str, Callable]):
         """
         开始消费多个队列
@@ -237,12 +242,10 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON解析失败: {e}")
             return False
-
-        # 检查是否在线
-        await login_check(message_data)
-
         # 检查是否无新消息
         if message_data.get('Message') != "成功":
+            # 检查是否在线
+            await login_check(message_data)
             return True
         
         # 获取消息列表
@@ -257,6 +260,7 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
         
         for msg in add_msgs:
             msg_id = msg.get('MsgId')
+            form_wxid = msg.get('FromUserName').get('string')
             if not msg_id:
                 continue
 
