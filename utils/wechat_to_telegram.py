@@ -46,6 +46,7 @@ def _get_message_handlers():
         6: _forward_file,
         19: _forward_chat_history,
         33: _forward_miniprogram,
+        36: _forward_miniprogram,
         51: _forward_channel,
         53: _forward_groupnote,
         57: _forward_quote,
