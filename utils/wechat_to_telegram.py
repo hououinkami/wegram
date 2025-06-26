@@ -1,4 +1,5 @@
 import asyncio
+import io
 import logging
 import os
 import re
@@ -66,22 +67,22 @@ async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) 
 async def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理图片消息"""
     # 异步下载图片
-    success, filepath = await wechat_download.get_image(msg_id, from_wxid, content)
+    success, file = await wechat_download.get_image(msg_id, from_wxid, content)
     
     if success:
-        return await telegram_sender.send_photo(chat_id, filepath, sender_name)
+        return await telegram_sender.send_photo(chat_id, file, sender_name)
     else:
         raise Exception("图片下载失败")
 
 async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: dict, message_info: dict, **kwargs) -> dict:
     """处理语音消息"""
-    success, filepath = await wechat_download.get_voice(msg_id, message_info['FromUserName'], content)
+    success, file = await wechat_download.get_voice(msg_id, message_info['FromUserName'], content)
 
     if not success:
         raise Exception("语音下载失败")
         
     loop = asyncio.get_event_loop()
-    ogg_path, duration = await loop.run_in_executor(None, silk_to_voice, filepath)
+    ogg_path, duration = await loop.run_in_executor(None, silk_to_voice, file)
     if not ogg_path or not duration:
         raise Exception("语音转换失败")
     
@@ -115,18 +116,18 @@ async def _forward_add_friend(chat_id: int, sender_name: str, content: str, **kw
 
 async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
-    success, filepath = await wechat_download.get_video(msg_id, from_wxid, content)
+    success, file = await wechat_download.get_video(msg_id, from_wxid, content)
     if success:
-        return await telegram_sender.send_video(chat_id, filepath, sender_name)
+        return await telegram_sender.send_video(chat_id, file, sender_name)
     else:
         raise Exception("视频下载失败")
 
 async def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理贴纸消息"""
-    success, filepath = await wechat_download.get_emoji(content)
+    success, file = await wechat_download.get_emoji(content)
     
     if success:
-        return await telegram_sender.send_animation(chat_id, filepath, sender_name, filename=f"[{locale.type(kwargs.get('msg_type'))}].gif")
+        return await telegram_sender.send_animation(chat_id, file, sender_name, filename=f"[{locale.type(kwargs.get('msg_type'))}].gif")
     else:
         raise Exception("贴纸下载失败")
 
@@ -152,10 +153,10 @@ async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs)
 
 async def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理文件消息"""
-    success, filepath = await wechat_download.get_file(msg_id, from_wxid, content)
+    success, file = await wechat_download.get_file(msg_id, from_wxid, content)
     
     if success:
-        return await telegram_sender.send_document(chat_id, filepath, sender_name)
+        return await telegram_sender.send_document(chat_id, file, sender_name)
     else:
         raise Exception("文件下载失败")
 
@@ -318,10 +319,13 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
             
     # 服务通知
     if wxid == "service_notification":
-        if isinstance(content, dict):
-            contact_name = content.get('msg', {}).get('appmsg', {}).get('mmreader', {}).get('publisher', {}).get('nickname', '')
-        else:
-            contact_name = ''
+        contact_name = (
+            content.get('msg', {}).get('appinfo', {}).get('appname') or 
+            content.get('msg', {}).get('appmsg', {}).get('mmreader', {}).get('publisher', {}).get('nickname') or 
+            content.get('msg', {}).get('appmsg', {}).get('mmreader', {}).get('category', {}).get('name') or 
+            content.get('msg', {}).get('appmsg', {}).get('mmreader', {}).get('category', {}).get('item', {}).get('sources', {}).get('source', {}).get('name') or
+            ''
+        )
 
     return contact_name, avatar_url
 
@@ -448,6 +452,47 @@ def parse_time_without_seconds(time_str):
         return datetime.now()
 
 def silk_to_voice(silk_path):
+    """转换微信语音为Telegram语音 - 保持同步，因为是CPU密集型任务"""
+    pcm_path = silk_path + '.pcm'
+    
+    try:
+        # silk -> pcm
+        duration = pilk.decode(silk_path, pcm_path)
+        
+        # pcm -> ogg opus
+        process = (
+            ffmpeg
+            .input(pcm_path, format='s16le', acodec='pcm_s16le', ar=24000, ac=1)
+            .output('pipe:', acodec='libopus', audio_bitrate='64k', format='ogg')
+            .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True)
+        )
+        
+        # 获取输出数据
+        stdout, stderr = process.communicate()
+        
+        if process.returncode != 0:
+            raise Exception(f"FFmpeg转换失败: {stderr.decode() if stderr else 'Unknown error'}")
+        
+        # 创建BytesIO对象
+        audio_buffer = io.BytesIO(stdout)
+        audio_buffer.seek(0)  # 重置指针到开头
+        
+        return audio_buffer, int(duration)
+            
+    except Exception as e:
+        logger.error(f"语音转换失败: {e}")
+        return None, None
+    
+    finally:
+        # 清理可能存在的临时文件
+        for temp_file in [silk_path, pcm_path]:
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except OSError as e:
+                    logger.warning(f"清理临时文件失败 {temp_file}: {e}")
+
+def silk_to_voice_file(silk_path):
     """转换微信语音为Telegram语音 - 保持同步，因为是CPU密集型任务"""
     pcm_path = silk_path + '.pcm'
     ogg_path = silk_path + '.ogg'

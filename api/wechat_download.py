@@ -1,5 +1,5 @@
 import base64
-import json
+import io
 import logging
 import math
 import os
@@ -29,8 +29,7 @@ async def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         from_wxid=from_wxid,
         data_json=data_json,
         file_key="img",
-        file_extension="png",
-        save_dir=IMAGE_DIR
+        file_extension="png"
     )
 
 async def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
@@ -40,8 +39,7 @@ async def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         from_wxid=from_wxid,
         data_json=data_json,
         file_key="videomsg",
-        file_extension="mp4",
-        save_dir=VIDEO_DIR
+        file_extension="mp4"
     )
 
 async def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
@@ -51,8 +49,7 @@ async def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         from_wxid=from_wxid,
         data_json=data_json,
         file_key="appmsg",
-        file_extension="",
-        save_dir=FILE_DIR
+        file_extension=""
     )
     
 async def get_emoji(data_json) -> Tuple[bool, str]:
@@ -103,23 +100,37 @@ async def get_emoji(data_json) -> Tuple[bool, str]:
         
         if url == "":
             url = await get_url_by_api()
-        
-        # 确保目录存在
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        
-        # 下载文件
+
+        # 下载文件到内存并备份到磁盘
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as file_response:
                 if file_response.status == 200:
-                    with open(filepath, 'wb') as f:
-                        async for chunk in file_response.content.iter_chunked(8192):
-                            f.write(chunk)
-                    return True, filepath
+                    # 读取所有数据到内存
+                    data = await file_response.read()
+                    
+                    # 创建BytesIO对象
+                    file_buffer = io.BytesIO(data)
+                    file_buffer.seek(0)  # 重置指针到开头
+                    
+                    # 备份到磁盘文件
+                    try:
+                        # 确保目录存在
+                        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                        
+                        # 写入文件
+                        with open(filepath, 'wb') as f:
+                            f.write(data)
+                        
+                        logger.debug(f"文件已备份到: {filepath}")
+                    except Exception as e:
+                        logger.warning(f"备份文件失败: {e}")
+                    
+                    return True, file_buffer
                 else:
                     error_msg = f"下载URL失败，HTTP状态码: {file_response.status}"
                     logger.error(error_msg)
                     return False, error_msg
-                
+                        
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")
         return False, f"下载失败: {str(e)}"
@@ -185,7 +196,7 @@ async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
         return False, f"下载失败: {str(e)}"
 
 # 分段下载函数
-async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict, file_key: str, file_extension: str, save_dir: str) -> Tuple[bool, str]:
+async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict, file_key: str, file_extension: str, save_dir: str = None) -> Tuple[bool, str]:
     try:
         # 提取文件信息
         file_info = data_json["msg"][file_key]
@@ -194,18 +205,19 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
         file_title = (file_info.get("title") or "")
         
         # 文件名和路径
-        if not file_title:
-            filename = f"{md5}.{file_extension}"
-        else:
-            filename = f"{file_title}"
-        filepath = os.path.join(save_dir, filename)
+        if save_dir:
+            if not file_title:
+                filename = f"{md5}.{file_extension}"
+            else:
+                filename = f"{file_title}"
+            filepath = os.path.join(save_dir, filename)
         
-        # 检查文件是否已存在
-        if os.path.exists(filepath):
-            return True, filepath
-        
-        # 确保保存目录存在
-        os.makedirs(save_dir, exist_ok=True)
+            # 检查文件是否已存在
+            if os.path.exists(filepath):
+                return True, filepath
+            
+            # 确保保存目录存在
+            os.makedirs(save_dir, exist_ok=True)
 
         # 用于存储所有分段的二进制数据
         all_binary_data = bytearray()
@@ -374,11 +386,15 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
                 remaining_data = data_length - next_start_pos
                 next_chunk_size = min(chunk_size, remaining_data)
         
-        # 将完整的二进制数据写入文件
-        with open(filepath, 'wb') as f:
-            f.write(all_binary_data)
-            
-        return True, filepath
+        if save_dir:
+            # 将完整的二进制数据写入文件
+            with open(filepath, 'wb') as f:
+                f.write(all_binary_data)
+            return True, filepath
+        else:
+            # 转换为 BytesIO（推荐）
+            file_buffer = io.BytesIO(all_binary_data)
+            return True, file_buffer
         
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")
