@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import sys
 import signal
 import time
@@ -20,6 +19,64 @@ from utils.wechat_to_telegram import process_rabbitmq_message
 logger = logging.getLogger(__name__)
 locale = Locale(config.LANG)
 
+class ContactMessageProcessor:
+    """单个联系人的消息处理器"""
+    
+    def __init__(self, contact_id: str):
+        self.contact_id = contact_id
+        self.message_queue = asyncio.Queue()
+        self.processing_task = None
+        self.is_running = False
+        
+    async def start(self):
+        """启动处理任务"""
+        if not self.is_running:
+            self.is_running = True
+            self.processing_task = asyncio.create_task(self._process_messages())
+            logger.debug(f"🚀 启动联系人 {self.contact_id} 的消息处理器")
+    
+    async def stop(self):
+        """停止处理任务"""
+        self.is_running = False
+        if self.processing_task and not self.processing_task.done():
+            self.processing_task.cancel()
+            try:
+                await self.processing_task
+            except asyncio.CancelledError:
+                pass
+        logger.debug(f"🔴 停止联系人 {self.contact_id} 的消息处理器")
+    
+    async def add_message(self, message_data: dict, msg_obj: AbstractIncomingMessage):
+        """添加消息到队列"""
+        await self.message_queue.put((message_data, msg_obj))
+    
+    async def _process_messages(self):
+        """处理消息的主循环"""
+        while self.is_running:
+            try:
+                # 等待消息，设置超时以便能够响应停止信号
+                message_data, msg_obj = await asyncio.wait_for(
+                    self.message_queue.get(), 
+                    timeout=1.0
+                )
+                
+                # 处理消息
+                try:
+                    await process_rabbitmq_message(message_data)
+                    logger.debug(f"✅ 成功处理联系人 {self.contact_id} 的消息")
+                except Exception as e:
+                    logger.error(f"❌ 处理联系人 {self.contact_id} 消息失败: {e}")
+                
+                # 标记任务完成
+                self.message_queue.task_done()
+                
+            except asyncio.TimeoutError:
+                # 超时是正常的，继续循环
+                continue
+            except Exception as e:
+                logger.error(f"❌ 联系人 {self.contact_id} 消息处理器出错: {e}")
+                await asyncio.sleep(0.1)  # 短暂休息避免快速循环
+
 class WeChatRabbitMQConsumer:
     """微信协议RabbitMQ异步消费者"""
     
@@ -37,6 +94,13 @@ class WeChatRabbitMQConsumer:
         self.channel: Optional[aio_pika.abc.AbstractRobustChannel] = None
         self.is_running = False
         self.consumer_tags = {}
+        
+        # 联系人消息处理器管理
+        self.contact_processors: Dict[str, ContactMessageProcessor] = {}
+        self.processor_lock = asyncio.Lock()
+        
+        # 清理任务
+        self.cleanup_task = None
         
     async def connect(self) -> bool:
         """连接到RabbitMQ服务器"""
@@ -58,7 +122,7 @@ class WeChatRabbitMQConsumer:
                 
                 # 设置QoS，控制并发处理数量
                 await self.channel.set_qos(
-                    prefetch_count=5,  # 改为1，立即处理不批量
+                    prefetch_count=5,  # 增加预取数量以支持并发
                     prefetch_size=0
                 )
                 
@@ -94,6 +158,39 @@ class WeChatRabbitMQConsumer:
         logger.error(f"❌ RabbitMQ服务在{timeout}秒后仍不可用")
         return False
     
+    async def get_or_create_processor(self, contact_id: str) -> ContactMessageProcessor:
+        """获取或创建联系人处理器"""
+        async with self.processor_lock:
+            if contact_id not in self.contact_processors:
+                processor = ContactMessageProcessor(contact_id)
+                await processor.start()
+                self.contact_processors[contact_id] = processor
+                logger.debug(f"📝 为联系人 {contact_id} 创建新的处理器")
+            return self.contact_processors[contact_id]
+    
+    async def cleanup_idle_processors(self):
+        """清理空闲的处理器"""
+        while self.is_running:
+            try:
+                await asyncio.sleep(300)  # 每5分钟检查一次
+                
+                async with self.processor_lock:
+                    idle_contacts = []
+                    for contact_id, processor in self.contact_processors.items():
+                        # 如果队列为空且没有正在处理的消息，标记为空闲
+                        if processor.message_queue.empty():
+                            idle_contacts.append(contact_id)
+                    
+                    # 移除空闲的处理器（保留最近活跃的）
+                    if len(idle_contacts) > 10:  # 只有超过10个空闲时才清理
+                        for contact_id in idle_contacts[:-5]:  # 保留最后5个
+                            processor = self.contact_processors.pop(contact_id)
+                            await processor.stop()
+                            logger.debug(f"🧹 清理空闲处理器: {contact_id}")
+                            
+            except Exception as e:
+                logger.error(f"❌ 清理处理器时出错: {e}")
+    
     async def consume_queue(self, queue_name: str, callback: Callable):
         """消费指定队列的消息"""
         try:
@@ -109,7 +206,7 @@ class WeChatRabbitMQConsumer:
                 auto_delete=False  # 不自动删除
             )
             
-            # 开始消费 - 移除包装器，直接使用callback
+            # 开始消费
             consumer_tag = await queue.consume(
                 callback=lambda message: self._message_wrapper(message, callback),
                 no_ack=False
@@ -126,16 +223,12 @@ class WeChatRabbitMQConsumer:
     
     async def _message_wrapper(self, message: AbstractIncomingMessage, callback: Callable):
         """消息处理包装器"""
-        start_time = time.time()
-        
         try:
             # 解码消息体为字符串
             body_str = message.body.decode('utf-8')
             
             # 调用处理函数
-            start_time = time.time()
             result = await callback(body_str, message)
-            processing_time = time.time() - start_time
             
             if result:
                 # 处理成功
@@ -143,7 +236,7 @@ class WeChatRabbitMQConsumer:
             else:
                 # 处理失败，但不是异常
                 await message.nack(requeue=False)
-                logger.warning(f"⚠️ 队列消息处理失败，消息已丢弃 (耗时: {processing_time:.2f}s)")
+                logger.warning(f"⚠️ 队列消息处理失败，消息已丢弃")
                 
         except json.JSONDecodeError as e:
             # JSON解析错误
@@ -192,7 +285,11 @@ class WeChatRabbitMQConsumer:
                 return False
             
             self.is_running = True
-            logger.info("✅ 所有消费者已启动，服务正在运行...")
+            
+            # 启动清理任务
+            self.cleanup_task = asyncio.create_task(self.cleanup_idle_processors())
+            
+            logger.info("✅ RabbiMQ消费者已启动，服务正在运行...")
             
             # 保持服务运行
             while self.is_running:
@@ -207,6 +304,21 @@ class WeChatRabbitMQConsumer:
         """停止消费消息"""
         self.is_running = False
         
+        # 停止清理任务
+        if self.cleanup_task and not self.cleanup_task.done():
+            self.cleanup_task.cancel()
+            try:
+                await self.cleanup_task
+            except asyncio.CancelledError:
+                pass
+        
+        # 停止所有联系人处理器
+        async with self.processor_lock:
+            for processor in self.contact_processors.values():
+                await processor.stop()
+            self.contact_processors.clear()
+        
+        # 停止消费者
         for queue_name, consumer_tag in self.consumer_tags.items():
             try:
                 if self.channel and not self.channel.is_closed:
@@ -224,6 +336,9 @@ class WeChatRabbitMQConsumer:
 # 消息处理函数
 # =============================================================================
 
+# 全局消费者实例，用于在处理函数中访问
+_global_consumer: Optional[WeChatRabbitMQConsumer] = None
+
 async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) -> bool:
     """
     处理微信消息
@@ -235,6 +350,8 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
     Returns:
         bool: 处理是否成功
     """
+    global _global_consumer
+    
     try:        
         # 尝试解析JSON
         try:
@@ -242,6 +359,7 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON解析失败: {e}")
             return False
+            
         # 检查是否无新消息
         if message_data.get('Message') != "成功":
             # 检查是否在线
@@ -254,23 +372,32 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
             logger.debug("没有新消息")
             return True
         
-        # 处理每条消息
+        # 处理每条消息 - 按联系人分发到不同的处理器
         processed_count = 0
         failed_count = 0
         
         for msg in add_msgs:
             msg_id = msg.get('MsgId')
-            form_wxid = msg.get('FromUserName').get('string')
-            if not msg_id:
+            from_wxid = msg.get('FromUserName', {}).get('string', '')
+            
+            if not msg_id or not from_wxid:
                 continue
 
-            # 处理新消息
             try:
-                await process_rabbitmq_message(msg)
-                processed_count += 1
+                # 获取或创建该联系人的处理器
+                if _global_consumer:
+                    processor = await _global_consumer.get_or_create_processor(from_wxid)
+                    # 将消息添加到该联系人的处理队列
+                    await processor.add_message(msg, msg_obj)
+                    processed_count += 1
+                else:
+                    # 如果没有全局消费者，直接处理（兼容模式）
+                    await process_rabbitmq_message(msg)
+                    processed_count += 1
+                    
             except Exception as e:
                 failed_count += 1
-                logger.error(f"❌ 处理消息 {msg_id} 失败: {e}")
+                logger.error(f"❌ 分发消息 {msg_id} 到联系人 {from_wxid} 失败: {e}")
         
         # 只要有消息被处理就算成功
         return processed_count > 0 or failed_count == 0
@@ -304,7 +431,7 @@ async def login_check(callback_data):
             await telegram_sender.send_text(tg_user_id, locale.common("online"))
         login_status = "online"
         return {"success": True, "message": "正常状态"}
-    
+  
 # =============================================================================
 # 配置和启动
 # =============================================================================
@@ -324,6 +451,8 @@ def get_config():
 
 async def main():
     """主函数"""
+    global _global_consumer
+    
     config = get_config()
     
     # 创建消费者
@@ -331,6 +460,9 @@ async def main():
         rabbitmq_url=config['rabbitmq_url'],
         max_retries=10
     )
+    
+    # 设置全局消费者引用
+    _global_consumer = consumer
     
     # 设置信号处理（优雅关闭）
     def signal_handler():
