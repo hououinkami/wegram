@@ -40,6 +40,10 @@ async def process_telegram_update(update: Update) -> None:
         user_id = message.from_user.id
         is_bot = message.from_user.is_bot
         
+        # 跳过群组创建消息
+        if message.group_chat_created or message.supergroup_chat_created:
+            return
+        
         # 判断是否为机器人消息
         if is_bot:
             return
