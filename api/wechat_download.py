@@ -22,7 +22,7 @@ EMOJI_DIR = os.path.join(DOWNLOAD_DIR, "sticker")
 FILE_DIR = os.path.join(DOWNLOAD_DIR, "file")
 VOICE_DIR = os.path.join(DOWNLOAD_DIR, "voice")
 
-async def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
+async def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str, str]:
     return await chunked_download(
         api_path="GET_IMAGE",
         msg_id=msg_id,
@@ -32,7 +32,7 @@ async def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         file_extension="png"
     )
 
-async def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
+async def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str, str]:
     return await chunked_download(
         api_path="GET_VIDEO",
         msg_id=msg_id,
@@ -42,7 +42,7 @@ async def get_video(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
         file_extension="mp4"
     )
 
-async def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str]:
+async def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str, str]:
     return await chunked_download(
         api_path="GET_FILE",
         msg_id=msg_id,
@@ -196,7 +196,7 @@ async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
         return False, f"下载失败: {str(e)}"
 
 # 分段下载函数
-async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict, file_key: str, file_extension: str, save_dir: str = None) -> Tuple[bool, str]:
+async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json: dict, file_key: str, file_extension: str, save_dir: str = None) -> Tuple[bool, str, str]:
     try:
         # 提取文件信息
         file_info = data_json["msg"][file_key]
@@ -205,11 +205,12 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
         file_title = (file_info.get("title") or "")
         
         # 文件名和路径
+        if not file_title:
+            filename = f"{md5}.{file_extension}"
+        else:
+            filename = f"{file_title}"
+            
         if save_dir:
-            if not file_title:
-                filename = f"{md5}.{file_extension}"
-            else:
-                filename = f"{file_title}"
             filepath = os.path.join(save_dir, filename)
         
             # 检查文件是否已存在
@@ -390,11 +391,11 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
             # 将完整的二进制数据写入文件
             with open(filepath, 'wb') as f:
                 f.write(all_binary_data)
-            return True, filepath
+            return True, filepath, filename
         else:
             # 转换为 BytesIO（推荐）
             file_buffer = io.BytesIO(all_binary_data)
-            return True, file_buffer
+            return True, file_buffer, filename
         
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")

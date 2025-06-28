@@ -154,10 +154,10 @@ async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs)
 
 async def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理文件消息"""
-    success, file = await wechat_download.get_file(msg_id, from_wxid, content)
+    success, file, filename = await wechat_download.get_file(msg_id, from_wxid, content)
     
     if success:
-        return await telegram_sender.send_document(chat_id, file, sender_name)
+        return await telegram_sender.send_document(chat_id, file, sender_name, filename=filename)
     else:
         raise Exception("文件下载失败")
 
@@ -355,7 +355,7 @@ async def _create_group_for_contact(wxid: str, contact_name: str, avatar_url: st
         logger.error(f"创建群组异常: {e}", exc_info=True)
         return None
 
-async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str) -> Optional[int]:
+async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str, message_for_log = None) -> Optional[int]:
     """获取或创建聊天群组"""
     # 读取contact映射
     contact_dic = await contact_manager.get_contact(from_wxid)
@@ -374,6 +374,7 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str)
         return None
     
     # 创建群组
+    logger.warning(f"触发新建群组：{message_for_log}")
     chat_id = await _create_group_for_contact(from_wxid, sender_name, avatar_url)
     if not chat_id:
         logger.warning(f"无法创建聊天群组: {from_wxid}")
@@ -658,7 +659,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             return
 
         # 获取或创建群组
-        chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url)
+        chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url, message_info)
 
         # 跳过指定的不明类型消息
         if not chat_id or msg_type in black_list:
