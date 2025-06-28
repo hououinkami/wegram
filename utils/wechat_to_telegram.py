@@ -68,7 +68,7 @@ async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) 
 async def _forward_image(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理图片消息"""
     # 异步下载图片
-    success, file = await wechat_download.get_image(msg_id, from_wxid, content)
+    success, file, _ = await wechat_download.get_image(msg_id, from_wxid, content)
     
     if success:
         return await telegram_sender.send_photo(chat_id, file, sender_name)
@@ -117,7 +117,7 @@ async def _forward_add_friend(chat_id: int, sender_name: str, content: str, **kw
 
 async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
-    success, file = await wechat_download.get_video(msg_id, from_wxid, content)
+    success, file, _ = await wechat_download.get_video(msg_id, from_wxid, content)
     if success:
         return await telegram_sender.send_video(chat_id, file, sender_name)
     else:
@@ -609,10 +609,6 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         push_content = message_info['PushContent']
         create_time = message_info['CreateTime']
         
-        # 转发自己的消息
-        if from_wxid == config.MY_WXID:
-            from_wxid = to_wxid
-        
         # 处理服务通知
         if from_wxid.endswith('@app'):
             from_wxid = "service_notification"
@@ -627,6 +623,10 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                 sender_wxid = message_info['FromUserName'] if message_info['FromUserName'] == config.MY_WXID else ""
         else:
             sender_wxid = from_wxid
+
+        # 转发自己的消息
+        if from_wxid == config.MY_WXID:
+            from_wxid = to_wxid
         
         # 获取联系人信息
         contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
