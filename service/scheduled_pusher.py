@@ -181,7 +181,7 @@ async def main():
 
     try:
         # 创建并启动调度器
-        _scheduler_instance = DailyRandomScheduler("07:55", "08:05", get_news)
+        _scheduler_instance = DailyRandomScheduler("08:55", "09:05", get_news)
         await _scheduler_instance.start()
         
         logger.info("📰 调度器服务已启动，将在每天 07:55-08:05 之间随机推送新闻")
