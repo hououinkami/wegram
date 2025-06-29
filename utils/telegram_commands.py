@@ -4,15 +4,13 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import config
+from config import LOCALE as locale
 from api import wechat_contacts, wechat_login
 from api.telegram_sender import telegram_sender
 from utils.contact_manager import contact_manager
-from utils.locales import Locale
 from utils.telegram_to_wechat import revoke_by_telegram_bot_command
 
 logger = logging.getLogger(__name__)
-
-locale = Locale(config.LANG)
 
 class BotCommands:
     """机器人命令处理类"""

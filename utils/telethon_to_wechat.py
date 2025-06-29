@@ -13,19 +13,17 @@ from telethon.events import NewMessage
 from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl, MessageEntityBlockquote
 
 import config
+from config import LOCALE as locale
 from api import wechat_contacts, wechat_login
 from api.wechat_api import wechat_api
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_client
 from utils.contact_manager import contact_manager
-from utils.locales import Locale
 from utils.message_mapper import msgid_mapping
 from utils.sticker_mapper import get_sticker_info
 from utils.telegram_to_wechat import add_send_msgid
 
 logger = logging.getLogger(__name__)
-
-locale = Locale(config.LANG)
 
 # ==================== Telethon相关方法 ====================
 # 处理Telethon更新中的消息

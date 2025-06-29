@@ -16,19 +16,19 @@ from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler
 
 import config
+from config import LOCALE as locale
 from api import wechat_contacts, wechat_download
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_client, get_user_id
 from utils import message_formatter
 from utils.contact_manager import contact_manager
-from utils.group_binding import GroupManager
-from utils.locales import Locale
+from utils.group_binding import process_avatar_from_url
 from utils.message_mapper import msgid_mapping
 from utils.telegram_to_wechat import get_telethon_msg_id
 
 logger = logging.getLogger(__name__)
 
-locale = Locale(config.LANG)
+tg_user_id = get_user_id()
 black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74]
 
 def _get_message_handlers():
@@ -38,6 +38,7 @@ def _get_message_handlers():
         3: _forward_image,
         34: _forward_voice,
         37: _forward_add_friend,
+        42: _forward_contact,
         43: _forward_video,
         47: _forward_sticker,
         48: _forward_location,
@@ -101,19 +102,30 @@ async def _forward_add_friend(chat_id: int, sender_name: str, content: str, **kw
     scene = friend_msg.get('scene')
 
     if avatar_url:
-        # 下载图片
-        photo_response = requests.get(avatar_url)
-        photo_response.raise_for_status()
-        
-        # 处理图片尺寸
-        processed_photo_content = GroupManager._process_avatar_image(photo_response.content)
+        processed_photo_content = process_avatar_from_url(avatar_url)
 
-    tg_user_id = get_user_id()
     keyboard = [
         [InlineKeyboardButton("承認", callback_data="agree_accept")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     return await telegram_sender.send_photo(tg_user_id, processed_photo_content, f"{from_nickname}からの友人登録リクエスト", reply_markup=reply_markup)
+
+async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+    """处理名片信息"""
+    contact_msg = content.get('msg', {})
+    contact_nickname = contact_msg.get('nickname') or locale.type(kwargs.get('msg_type'))
+    contact_wxid = contact_msg.get('username', '')
+    contact_avatar = contact_msg.get('bigheadimgurl', '')
+    scene = contact_msg.get('scene')
+
+    if contact_avatar:
+        processed_photo_content = await process_avatar_from_url(contact_avatar)
+
+    keyboard = [
+        [InlineKeyboardButton(f"{sender_name}\n{locale.common("add_to_contact")}", callback_data="add_to_contact")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    return await telegram_sender.send_photo(chat_id, processed_photo_content, f"{locale.type(kwargs.get('msg_type'))}: {contact_nickname}", reply_markup=reply_markup)
 
 async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
@@ -233,7 +245,7 @@ async def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwarg
     quote_newmsgid = revoke_msg["newmsgid"]
 
     quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
-    send_text = f"{sender_name}\n{revoke_text}"
+    send_text = f"{sender_name}\n<blockquote>{revoke_text}</blockquote>"
     
     return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
@@ -562,7 +574,6 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                 logger.error(f"处理器执行失败 (类型={msg_type}): {e}", exc_info=True)
                 type_text = message_formatter.escape_html_chars(f"[{locale.type(msg_type)}]")
                 send_text = f"{handler_params['sender_name']}\n{type_text}"
-                
                 return await telegram_sender.send_text(chat_id, send_text)
         else:
             # 处理未知消息类型
@@ -570,7 +581,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             type_text = message_formatter.escape_html_chars(f'[{locale.type(msg_type) or locale.type("unknown")}]')
             send_text = f"{handler_params['sender_name']}\n{type_text}"
 
-            #调试输出
+            # 调试输出
             logger.info(f"💬 类型: {msg_type}, 来自: {handler_params['from_wxid']}")
             logger.info(f"💬 内容: {handler_params['content']}")
             
@@ -600,6 +611,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             return None
 
     try:
+        # ========== 消息基础信息解析 ==========
         msg_type = int(message_info['MsgType'])
         msg_id = message_info['MsgId']
         new_msg_id = message_info['NewMsgId']
@@ -628,6 +640,29 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         if from_wxid == config.MY_WXID:
             from_wxid = to_wxid
         
+        # ========== 特殊消息类型处理 ==========
+        # 微信上打开联系人对话
+        if msg_type == 51:
+            msg_type = "open_chat"
+        
+        # 处理非文本消息
+        if msg_type != 1:
+            content = message_formatter.xml_to_json(content)
+            if msg_type == 49:  # App消息
+                msg_type = int(content['msg']['appmsg']['type'])
+            elif msg_type == 50:  # 通话信息
+                msg_type = content['voipmsg']['type']
+            elif msg_type == 10002:  # 系统信息
+                msg_type = content['sysmsg']['type']
+
+        # ========== 早期过滤不需要处理的消息 ==========
+        if (from_wxid.endswith('@placeholder_foldgroup') or # 激活折叠聊天
+            from_wxid == 'notification_messages' or # 系统通知
+            msg_type in black_list or # 黑名单类型
+            (sender_wxid == config.MY_WXID and msg_type == "revokemsg")): # 自己撤回的消息
+            return
+
+        # ========== 获取联系人和发送者信息 ==========
         # 获取联系人信息
         contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
 
@@ -637,44 +672,12 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         else:
             sender_name, _ = await _get_contact_info(sender_wxid, content, push_content)
 
-        # 微信上打开联系人对话是否新建关联群组
-        if msg_type == 51:
-            msg_type = "open_chat"
-
-        # 处理消息内容
-        if msg_type != 1:
-            content = message_formatter.xml_to_json(content)
-            # App消息
-            if msg_type == 49:
-                msg_type = int(content['msg']['appmsg']['type'])
-            # 通话信息
-            if msg_type == 50:
-                msg_type = content['voipmsg']['type']
-            # 系统信息
-            if msg_type == 10002:
-                msg_type = content['sysmsg']['type']
-        
-        # 避免激活折叠聊天时新建群组
-        if from_wxid.endswith('@placeholder_foldgroup') or from_wxid == 'notification_messages':
-            return
-
         # 获取或创建群组
         chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url, message_info)
-
-        # 跳过指定的不明类型消息
-        if not chat_id or msg_type in black_list:
+        if not chat_id:
             return
         
-        # 不发送自己在微信上的撤回动作
-        if sender_wxid == config.MY_WXID and msg_type == "revokemsg":
-            return
-        
-        # 输出信息便于调试
-        types_keys = [k for k in locale.type_map.keys()]
-        if msg_type not in types_keys:
-            logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
-            logger.info(f"💬 内容: {content}")
-
+        # ========== 设置发送者显示格式 ==========
         # 获取联系人信息用于显示
         contact_dic = await contact_manager.get_contact(from_wxid)
         
@@ -684,6 +687,13 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         else:
             sender_name = ""
         
+        # 调试输出未知类型消息
+        types_keys = [k for k in locale.type_map.keys()]
+        if msg_type not in types_keys:
+            logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
+            logger.info(f"💬 内容: {content}")
+
+        # ========== 准备发送参数并发送消息 ==========
         # 准备通用参数
         handler_params = {
             'sender_name': sender_name,
@@ -694,58 +704,61 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             'msg_type': msg_type
         }
         
-        # 检测群组是否被删除
-        try:
-            # 发送消息
-            response = await _send_message_with_handler(chat_id, msg_type, handler_params)
+        # 发送消息并处理响应
+        response = await _send_message_with_handler(chat_id, msg_type, handler_params)
 
-            # 储存消息ID
-            if response and not from_wxid.startswith('gh_') :
-                tg_msgid = response.message_id
+        # ========== 存储消息ID映射 ==========
+        if response and not from_wxid.startswith('gh_'):
+            tg_msgid = response.message_id
 
-                # 获取接收到的微信消息对应Telethon的MsgID
-                if config.TG_MODE == "telethon":
+            # 获取Telethon消息ID
+            telethon_msg_id = 0
+            if config.TG_MODE == "telethon":
+                try:
                     message_text = response.text if response.text else ""
                     bot_id = int(config.BOT_TOKEN.split(':')[0])
                     telethon_client = get_client()
-                    telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), bot_id, message_text, response.date)
-                else:
-                    telethon_msg_id = 0
+                    telethon_msg_id = await get_telethon_msg_id(
+                        telethon_client, abs(int(chat_id)), bot_id, message_text, response.date
+                    )
+                except Exception as e:
+                    logger.error(f"获取Telethon消息ID失败: {e}")
 
-                msgid_mapping.add(
-                    tg_msg_id=tg_msgid,
-                    from_wx_id=sender_wxid,
-                    to_wx_id=to_wxid,
-                    wx_msg_id=new_msg_id,
-                    client_msg_id=0,
-                    create_time=create_time,
-                    content=content if msg_type == 1 else "",
-                    telethon_msg_id=telethon_msg_id
-                )
-                
-        except TelegramError as e:
-            error_msg = str(e).lower()
-            
-            # 检查是否是群组被删除的错误
-            if ("the group chat was deleted" in error_msg or 
-                "chat not found" in error_msg or
-                "group chat was deactivated" in error_msg):
-                logger.warning(f"检测到群组被删除: {from_wxid}, 错误信息: {e}")
-                response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
-                
-                if not response:
-                    return
-            elif ("bot was kicked" in error_msg or 
-                  "not a member" in error_msg):
+            msgid_mapping.add(
+                tg_msg_id=tg_msgid,
+                from_wx_id=sender_wxid,
+                to_wx_id=to_wxid,
+                wx_msg_id=new_msg_id,
+                client_msg_id=0,
+                create_time=create_time,
+                content=content if msg_type == 1 else f"[{locale.type(msg_type)}]",
+                telethon_msg_id=telethon_msg_id
+            )
+    except TelegramError as e:
+        # ========== Telegram错误处理 ==========
+        error_msg = str(e).lower()
+
+        # 群组删除相关错误
+        group_deleted_keywords = [
+            "the group chat was deleted", 
+            "chat not found", 
+            "group chat was deactivated",
+            "bot was kicked", 
+            "not a member"
+        ]
+        
+        if any(keyword in error_msg for keyword in group_deleted_keywords):
+            if "bot was kicked" in error_msg or "not a member" in error_msg:
                 logger.warning(f"Bot被踢出群组或不是成员: {from_wxid}, 错误信息: {e}")
-                # 可以选择是否调用删除群组处理
-                response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
-                if not response:
-                    return
             else:
-                # 其他Telegram错误类型的处理
-                logger.error(f"Telegram API调用失败: {e}")
+                logger.warning(f"检测到群组被删除: {from_wxid}, 错误信息: {e}")
+            
+            response = await _handle_deleted_group(from_wxid, handler_params, content, push_content, msg_type)
+            if not response:
                 return
+        else:
+            logger.error(f"Telegram API调用失败: {e}")
+            return
                 
     except Exception as e:
         logger.error(f"异步消息处理失败: {e}", exc_info=True)

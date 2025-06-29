@@ -7,9 +7,9 @@ from typing import Any, Dict, Set
 from aiohttp import web
 
 import config
+from config import LOCALE as locale
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
-from utils.locales import Locale
 from utils.wechat_to_telegram import process_callback_message
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 # 配置
 PORT = config.PORT
 WXID = config.MY_WXID
-locale = Locale(config.LANG)
 
 class MessageDeduplicator:
     """消息去重器 - 线程安全版本"""

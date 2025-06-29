@@ -2,15 +2,14 @@ import asyncio
 import logging
 
 import config
+from config import LOCALE as locale
 import api.wechat_login as wechat_login
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
-from utils.locales import Locale
 
 logger = logging.getLogger(__name__)
 
 # 全局变量
-locale = Locale(config.LANG)
 is_logged_in = None
 service_running = True
 

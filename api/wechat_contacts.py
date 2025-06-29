@@ -5,7 +5,7 @@ import requests
 import config
 from api.wechat_api import wechat_api
 from api.telegram_sender import telegram_sender
-from utils.group_binding import GroupManager
+from utils.group_binding import process_avatar_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +68,9 @@ async def update_info(chat_id, title=None, photo_url=None):
     
     # 更新群组头像
     if photo_url:
-        try:
-            # 下载图片
-            photo_response = requests.get(photo_url)
-            photo_response.raise_for_status()
-            
+        try:            
             # 处理图片尺寸
-            processed_photo_content = GroupManager._process_avatar_image(photo_response.content)
+            processed_photo_content = await process_avatar_from_url(photo_url)
             
             result = await telegram_sender.set_chat_photo(chat_id, processed_photo_content)
             results['photo_update'] = {

@@ -479,4 +479,48 @@ def create_group_sync(wxid: str, contact_name: str, description: str = "", avata
     except Exception as e:
         logger.error(f"同步创建群组失败: {e}")
         return {'success': False, 'error': str(e)}
+
+async def process_avatar_image(image_data: bytes, min_size: int = 512) -> Optional[BytesIO]:
+    """
+    异步方式处理头像图片
     
+    Args:
+        image_data: 图片的二进制数据
+        min_size: 最小尺寸要求，默认512像素
+    
+    Returns:
+        处理后的图片BytesIO对象，失败时返回None
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        group_manager = GroupManager()
+        
+        # 在线程池中执行图片处理，避免阻塞事件循环
+        result = await loop.run_in_executor(
+            None,
+            group_manager._process_avatar_image,
+            image_data,
+            min_size
+        )
+        return result
+    except Exception as e:
+        logger.error(f"异步处理头像图片失败: {e}")
+        return None
+
+async def process_avatar_from_url(image_url: str, min_size: int = 512) -> Optional[BytesIO]:
+    """
+    异步方式从URL下载并处理头像图片
+    
+    Args:
+        image_url: 图片URL
+        min_size: 最小尺寸要求，默认512像素
+    
+    Returns:
+        处理后的图片BytesIO对象，失败时返回None
+    """
+    try:
+        async with GroupManager() as group_manager:
+            return await group_manager._process_image_from_url(image_url)
+    except Exception as e:
+        logger.error(f"异步处理图片失败: {e}")
+        return None

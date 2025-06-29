@@ -1,9 +1,8 @@
 import asyncio
 import base64
 import logging
-import gzip
-import json
 import os
+import re
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,19 +13,17 @@ import pilk
 from telegram import Update
 
 import config
+from config import LOCALE as locale
 from api import wechat_contacts, wechat_login
 from api.wechat_api import wechat_api
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_client
 from utils.contact_manager import contact_manager
-from utils.locales import Locale
 from utils.message_mapper import msgid_mapping
 from utils.sticker_converter import converter
 from utils.sticker_mapper import get_sticker_info
 
 logger = logging.getLogger(__name__)
-
-locale = Locale(config.LANG)
 
 # ==================== Telegram相关方法 ====================
 # 处理Telegram更新中的消息
@@ -57,13 +54,9 @@ async def process_telegram_update(update: Update) -> None:
         
         # 判断消息类型并处理
         if message.text:
-            message_text = message.text
             to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
             if not to_wxid:
                 return False
-            # 发送微信emoji
-            if message_text in ["微笑", "撇嘴", "色", "发呆", "得意", "流泪", "害羞", "闭嘴", "睡", "大哭", "尴尬", "发怒", "调皮", "呲牙", "惊讶", "难过", "囧", "抓狂", "吐", "偷笑", "愉快", "白眼", "傲慢", "困", "惊恐", "憨笑", "悠闲", "咒骂", "疑问", "嘘", "晕", "衰", "骷髅", "敲打", "再见", "擦汗", "抠鼻", "鼓掌", "坏笑", "右哼哼", "鄙视", "委屈", "快哭了", "阴险", "亲亲", "可怜", "笑脸", "生病", "脸红", "破涕为笑", "恐惧", "失望", "无语", "嘿哈", "捂脸", "奸笑", "机智", "皱眉", "耶", "吃瓜", "加油", "汗", "天啊", "Emm", "社会社会", "旺柴", "好的", "打脸", "哇", "翻白眼", "666", "让我看看", "叹气", "苦涩", "裂开", "嘴唇", "爱心", "心碎", "拥抱", "强", "弱", "握手", "胜利", "抱拳", "勾引", "拳头", "OK", "合十", "啤酒", "咖啡", "蛋糕", "玫瑰", "凋谢", "菜刀", "炸弹", "便便", "月亮", "太阳", "庆祝", "礼物", "红包", "发", "福", "烟花", "爆竹", "猪头", "跳跳", "发抖", "转圈", "Smile", "Grimace", "Drool", "Scowl", "Chill", "Sob", "Shy", "Shutup", "Sleep", "Cry", "Awkward", "Pout", "Wink", "Grin", "Surprised", "Frown", "Tension", "Scream", "Puke", "Chuckle", "Joyful", "Slight", "Smug", "Drowsy", "Panic", "Laugh", "Loafer", "Scold", "Doubt", "Shhh", "Dizzy", "BadLuck", "Skull", "Hammer", "Bye", "Relief", "DigNose", "Clap", "Trick", "Bah！R", "Lookdown", "Wronged", "Puling", "Sly", "Kiss", "Whimper", "Happy", "Sick", "Flushed", "Lol", "Terror", "Let Down", "Duh", "Hey", "Facepalm", "Smirk", "Smart", "Concerned", "Yeah!", "Onlooker", "GoForIt", "Sweats", "OMG", "Respect", "Doge", "NoProb", "MyBad", "Wow", "Boring", "Awesome", "LetMeSee", "Sigh", "Hurt", "Broken", "Lip", "Heart", "BrokenHeart", "Hug", "Strong", "Weak", "Shake", "Victory", "Salute", "Beckon", "Fist", "Worship", "Beer", "Coffee", "Cake", "Rose", "Wilt", "Cleaver", "Bomb", "Poop", "Moon", "Sun", "Party", "Gift", "Packet", "Rich", "Blessing", "Fireworks", "Firecracker", "Pig", "Waddle", "Tremble", "Twirl"]:
-                return await _send_telegram_text(to_wxid, f"[{message_text}]")
 
         # 转发消息
         wx_api_response = await forward_telegram_to_wx(chat_id, message)
@@ -114,7 +107,9 @@ async def forward_telegram_to_wx(chat_id: str, message) -> bool:
                 return await _send_telegram_text(to_wxid, text)
             else:
                 # 纯文本消息
-                return await _send_telegram_text(to_wxid, text)
+                # 处理文本中的emoji
+                processed_text = process_emoji_text(text)
+                return await _send_telegram_text(to_wxid, processed_text)
             
         elif message.photo:
             # 发送附带文字
@@ -138,12 +133,12 @@ async def forward_telegram_to_wx(chat_id: str, message) -> bool:
             # 语音消息
             return await _send_telegram_voice(to_wxid, message.voice)
         
-        # elif message.document:
-        #     # 发送附带文字
-        #     if message.caption:
-        #         await _send_telegram_text(to_wxid, message.caption)
-        #     # 文档消息
-        #     return await _send_telegram_document(to_wxid, message.document)
+        elif message.document:
+            # 发送附带文字
+            if message.caption:
+                await _send_telegram_text(to_wxid, message.caption)
+            # 文档消息
+            return await _send_telegram_document(to_wxid, message.document)
 
         elif message.location:
             # 定位消息
@@ -397,14 +392,14 @@ async def _send_telegram_document(to_wxid: str, document) -> bool:
             logger.error("获取文件base64失败")
             return False
         
-        if not file_base64.startswith('data:'):
-            # 如果没有数据URL前缀，添加它
-            file_base64 = f"data:{mime_type or 'application/octet-stream'};base64,{file_base64}"
+        # if not file_base64.startswith('data:'):
+        #     # 如果没有数据URL前缀，添加它
+        #     file_base64 = f"data:{mime_type or 'application/octet-stream'};base64,{file_base64}"
         
         # 构建发送载荷
         payload = {
             "Wxid": config.MY_WXID,
-            "Base64": file_base64
+            "fileData": file_base64
         }
         
         upload_file = await wechat_api("UPLOAD_FILE", payload)
@@ -906,3 +901,23 @@ async def revoke_telethon(event):
         
     except Exception as e:
         logger.error(f"处理消息删除逻辑时出错: {e}")
+
+# 定义emoji列表
+EMOJI_LIST = ["微笑", "撇嘴", "色", "发呆", "得意", "流泪", "害羞", "闭嘴", "睡", "大哭", "尴尬", "发怒", "调皮", "呲牙", "惊讶", "难过", "囧", "抓狂", "吐", "偷笑", "愉快", "白眼", "傲慢", "困", "惊恐", "憨笑", "悠闲", "咒骂", "疑问", "嘘", "晕", "衰", "骷髅", "敲打", "再见", "擦汗", "抠鼻", "鼓掌", "坏笑", "右哼哼", "鄙视", "委屈", "快哭了", "阴险", "亲亲", "可怜", "笑脸", "生病", "脸红", "破涕为笑", "恐惧", "失望", "无语", "嘿哈", "捂脸", "奸笑", "机智", "皱眉", "耶", "吃瓜", "加油", "汗", "天啊", "Emm", "社会社会", "旺柴", "好的", "打脸", "哇", "翻白眼", "666", "让我看看", "叹气", "苦涩", "裂开", "嘴唇", "爱心", "心碎", "拥抱", "强", "弱", "握手", "胜利", "抱拳", "勾引", "拳头", "OK", "合十", "啤酒", "咖啡", "蛋糕", "玫瑰", "凋谢", "菜刀", "炸弹", "便便", "月亮", "太阳", "庆祝", "礼物", "红包", "发", "福", "烟花", "爆竹", "猪头", "跳跳", "发抖", "转圈", "Smile", "Grimace", "Drool", "Scowl", "Chill", "Sob", "Shy", "Shutup", "Sleep", "Cry", "Awkward", "Pout", "Wink", "Grin", "Surprised", "Frown", "Tension", "Scream", "Puke", "Chuckle", "Joyful", "Slight", "Smug", "Drowsy", "Panic", "Laugh", "Loafer", "Scold", "Doubt", "Shhh", "Dizzy", "BadLuck", "Skull", "Hammer", "Bye", "Relief", "DigNose", "Clap", "Trick", "Bah！R", "Lookdown", "Wronged", "Puling", "Sly", "Kiss", "Whimper", "Happy", "Sick", "Flushed", "Lol", "Terror", "Let Down", "Duh", "Hey", "Facepalm", "Smirk", "Smart", "Concerned", "Yeah!", "Onlooker", "GoForIt", "Sweats", "OMG", "Respect", "Doge", "NoProb", "MyBad", "Wow", "Boring", "Awesome", "LetMeSee", "Sigh", "Hurt", "Broken", "Lip", "Heart", "BrokenHeart", "Hug", "Strong", "Weak", "Shake", "Victory", "Salute", "Beckon", "Fist", "Worship", "Beer", "Coffee", "Cake", "Rose", "Wilt", "Cleaver", "Bomb", "Poop", "Moon", "Sun", "Party", "Gift", "Packet", "Rich", "Blessing", "Fireworks", "Firecracker", "Pig", "Waddle", "Tremble", "Twirl"]
+
+def process_emoji_text(text):
+    """处理文本中的emoji关键词：字符串开头的或前面带空格的，并去掉emoji后面的空格"""
+    # 按长度降序排列，避免短词匹配覆盖长词
+    sorted_emojis = sorted(EMOJI_LIST, key=len, reverse=True)
+
+    # 自定义替换
+    text = text.replace("滑稽", "奸笑")
+    
+    for emoji in sorted_emojis:
+        # 匹配：(字符串开头或空格) + emoji + (可选的多个空格)
+        pattern = r'(^| )' + re.escape(emoji) + r'( *)\b'
+        
+        # 直接替换为[emoji]，不保留前后的空格
+        text = re.sub(pattern, f'[{emoji}]', text)
+    
+    return text

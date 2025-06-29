@@ -1,23 +1,23 @@
 import asyncio
+import hashlib
 import json
 import logging
 import sys
 import signal
 import time
 import traceback
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable, Optional, Set
 
 import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
 
 import config
+from config import LOCALE as locale
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
-from utils.locales import Locale
 from utils.wechat_to_telegram import process_rabbitmq_message
 
 logger = logging.getLogger(__name__)
-locale = Locale(config.LANG)
 
 class ContactMessageProcessor:
     """单个联系人的消息处理器"""
@@ -102,6 +102,32 @@ class WeChatRabbitMQConsumer:
         # 清理任务
         self.cleanup_task = None
         
+        # 消息去重器
+        self.deduplicator = MessageDeduplicator(cache_size=1000, ttl=3600)  # 1小时过期
+        
+        # 统计信息
+        self.stats = {
+            "total_messages": 0,
+            "duplicate_messages": 0,
+            "processed_messages": 0,
+            "failed_messages": 0
+        }
+    
+    # 获取统计信息方法
+    def get_stats(self) -> Dict[str, Any]:
+        """获取消费者统计信息"""
+        dedup_stats = self.deduplicator.get_stats()
+        
+        total = self.stats["total_messages"]
+        duplicate_rate = (self.stats["duplicate_messages"] / total * 100) if total > 0 else 0
+        
+        return {
+            **self.stats,
+            "duplicate_rate_percent": round(duplicate_rate, 2),
+            "deduplicator": dedup_stats,
+            "active_processors": len(self.contact_processors)
+        }
+    
     async def connect(self) -> bool:
         """连接到RabbitMQ服务器"""
         for attempt in range(self.max_retries):
@@ -331,7 +357,104 @@ class WeChatRabbitMQConsumer:
         
         logger.info("🔴 所有消费者已停止")
 
-
+class MessageDeduplicator:
+    """消息去重器"""
+    
+    def __init__(self, cache_size: int = 1000, ttl: int = 3600):
+        """
+        初始化去重器
+        
+        Args:
+            cache_size: 内存缓存大小
+            ttl: 消息ID过期时间（秒）
+        """
+        self.processed_messages: Dict[str, float] = {}  # msg_id -> timestamp
+        self.cache_size = cache_size
+        self.ttl = ttl
+        self.last_cleanup = time.time()
+    
+    def is_duplicate(self, msg_id: str) -> bool:
+        """
+        检查是否重复消息
+        
+        Args:
+            msg_id: 消息ID
+            
+        Returns:
+            bool: 是否重复
+        """
+        if not msg_id:
+            return False
+        
+        current_time = time.time()
+        
+        # 定期清理过期消息
+        if current_time - self.last_cleanup > 300:  # 每5分钟清理一次
+            self._cleanup_expired(current_time)
+            self.last_cleanup = current_time
+        
+        # 检查是否已处理
+        if msg_id in self.processed_messages:
+            # 检查是否过期
+            if current_time - self.processed_messages[msg_id] < self.ttl:
+                return True
+            else:
+                # 过期了，移除
+                del self.processed_messages[msg_id]
+        
+        return False
+    
+    def mark_processed(self, msg_id: str):
+        """
+        标记消息已处理
+        
+        Args:
+            msg_id: 消息ID
+        """
+        if not msg_id:
+            return
+        
+        current_time = time.time()
+        self.processed_messages[msg_id] = current_time
+        
+        # 如果缓存过大，清理最老的消息
+        if len(self.processed_messages) > self.cache_size:
+            self._cleanup_oldest()
+    
+    def _cleanup_expired(self, current_time: float):
+        """清理过期消息"""
+        expired_keys = [
+            msg_id for msg_id, timestamp in self.processed_messages.items()
+            if current_time - timestamp >= self.ttl
+        ]
+        
+        for key in expired_keys:
+            del self.processed_messages[key]
+        
+        if expired_keys:
+            logger.debug(f"🧹 清理过期消息ID: {len(expired_keys)}个")
+    
+    def _cleanup_oldest(self):
+        """清理最老的消息（当缓存过大时）"""
+        if len(self.processed_messages) <= self.cache_size:
+            return
+        
+        # 按时间戳排序，移除最老的消息
+        sorted_items = sorted(self.processed_messages.items(), key=lambda x: x[1])
+        remove_count = len(self.processed_messages) - self.cache_size + 1000  # 多删除一些
+        
+        for msg_id, _ in sorted_items[:remove_count]:
+            del self.processed_messages[msg_id]
+        
+        logger.debug(f"🧹 清理最老消息ID: {remove_count}个")
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """获取统计信息"""
+        return {
+            "cached_messages": len(self.processed_messages),
+            "cache_size_limit": self.cache_size,
+            "ttl_seconds": self.ttl
+        }
 # =============================================================================
 # 消息处理函数
 # =============================================================================
@@ -341,7 +464,7 @@ _global_consumer: Optional[WeChatRabbitMQConsumer] = None
 
 async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) -> bool:
     """
-    处理微信消息
+    处理微信消息（带去重功能）
     
     Args:
         message: 消息内容
@@ -358,6 +481,10 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
             message_data = json.loads(message)
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON解析失败: {e}")
+
+            if _global_consumer:
+                _global_consumer.stats["failed_messages"] += 1
+
             return False
             
         # 检查是否无新消息
@@ -372,15 +499,27 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
             logger.debug("没有新消息")
             return True
         
-        # 处理每条消息 - 按联系人分发到不同的处理器
+        # 处理每条消息 - 添加去重逻辑
         processed_count = 0
         failed_count = 0
+        duplicate_count = 0
         
         for msg in add_msgs:
             msg_id = msg.get('MsgId')
             from_wxid = msg.get('FromUserName', {}).get('string', '')
             
             if not msg_id or not from_wxid:
+                continue
+            
+            if _global_consumer:
+                _global_consumer.stats["total_messages"] += 1
+            
+            # 检查消息去重
+            if _global_consumer and _global_consumer.deduplicator.is_duplicate(str(msg_id)):
+                duplicate_count += 1
+                if _global_consumer:
+                    _global_consumer.stats["duplicate_messages"] += 1
+                logger.warning(f"🔄 跳过重复消息: {msg_id} (来自: {from_wxid})")
                 continue
 
             try:
@@ -389,6 +528,11 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
                     processor = await _global_consumer.get_or_create_processor(from_wxid)
                     # 将消息添加到该联系人的处理队列
                     await processor.add_message(msg, msg_obj)
+                    
+                    # 标记消息已处理（添加到去重缓存）
+                    _global_consumer.deduplicator.mark_processed(str(msg_id))
+                    _global_consumer.stats["processed_messages"] += 1
+                    
                     processed_count += 1
                 else:
                     # 如果没有全局消费者，直接处理（兼容模式）
@@ -397,7 +541,13 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
                     
             except Exception as e:
                 failed_count += 1
+                if _global_consumer:
+                    _global_consumer.stats["failed_messages"] += 1
                 logger.error(f"❌ 分发消息 {msg_id} 到联系人 {from_wxid} 失败: {e}")
+        
+        # 记录处理结果
+        if duplicate_count > 0:
+            logger.info(f"📊 消息处理完成 - 处理: {processed_count}, 失败: {failed_count}, 重复: {duplicate_count}")
         
         # 只要有消息被处理就算成功
         return processed_count > 0 or failed_count == 0
@@ -405,6 +555,8 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
     except Exception as e:
         logger.error(f"❌ 处理微信消息时出错: {e}")
         logger.error(f"错误堆栈: {traceback.format_exc()}")
+        if _global_consumer:
+            _global_consumer.stats["failed_messages"] += 1
         return False
 
 # 登陆检测
@@ -431,7 +583,6 @@ async def login_check(callback_data):
             await telegram_sender.send_text(tg_user_id, locale.common("online"))
         login_status = "online"
         return {"success": True, "message": "正常状态"}
-  
 # =============================================================================
 # 配置和启动
 # =============================================================================
@@ -447,7 +598,6 @@ def get_config():
             'wxapi': handle_wechat_message,    # 微信消息队列
         }
     }
-
 
 async def main():
     """主函数"""

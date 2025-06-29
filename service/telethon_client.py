@@ -5,6 +5,8 @@ from typing import Optional
 
 from telethon import TelegramClient
 
+from utils.user_profile import set_user_info, get_user_id as get_stored_user_id
+
 logger = logging.getLogger(__name__)
 
 # 全局客户端实例
@@ -211,8 +213,13 @@ class TelethonClient:
             
             me = await self.client.get_me()
             self.user_id = me.id
+            
+            # 保存用户信息到用户管理器
+            set_user_info(me.id, me.username)
+            
             self._is_initialized = True
             logger.info(f"🔗 Telethon已连接 - 用户: {me.first_name} (ID: {self.user_id})")
+            logger.info(f"💾 用户信息已保存到用户管理器")
             
             # 更新全局实例
             global client_instance
@@ -234,8 +241,11 @@ class TelethonClient:
         return self.client
     
     def get_user_id(self):
-        """获取当前用户ID"""
-        return self.user_id
+        """获取当前用户ID - 优先从内存获取，备用从持久化存储获取"""
+        if self.user_id:
+            return self.user_id
+        # 如果内存中没有，尝试从用户管理器获取
+        return get_stored_user_id()
     
     @property
     def is_initialized(self) -> bool:
@@ -265,10 +275,23 @@ class TelethonClient:
 
 # ==================== 便捷函数 ====================
 def get_user_id() -> Optional[int]:
-    """获取当前用户ID"""
+    """获取当前用户ID - 多重备用策略"""
     global client_instance
+    
+    # 优先级1: 从客户端实例获取
     if client_instance and client_instance.user_id:
         return client_instance.user_id
+    
+    # 优先级2: 从用户管理器获取（持久化存储）
+    stored_user_id = get_stored_user_id()
+    if stored_user_id:
+        return stored_user_id
+    
+    # 优先级3: 如果用户管理器中有信息，但客户端实例没有，同步一下
+    if client_instance and stored_user_id:
+        client_instance.user_id = stored_user_id
+        return stored_user_id
+    
     return None
 
 def get_client():

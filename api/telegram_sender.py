@@ -1,7 +1,6 @@
 import asyncio
 import io
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -11,10 +10,9 @@ from telegram.constants import ParseMode
 from telegram.error import NetworkError, TelegramError, TimedOut
 
 import config
-from utils.locales import Locale
+from config import LOCALE as locale
 
 logger = logging.getLogger(__name__)
-locale = Locale(config.LANG)
 
 class TelegramSender:
     """
