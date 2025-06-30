@@ -26,7 +26,7 @@ class BotCommands:
                 await telegram_sender.send_text(chat_id, locale.common("no_binding"))
                 return
             
-            user_info = wechat_contacts.get_user_info(to_wxid)
+            user_info = await wechat_contacts.get_user_info(to_wxid)
             
             # 更新TG群组
             await wechat_contacts.update_info(chat_id, user_info.name, user_info.avatar_url)
