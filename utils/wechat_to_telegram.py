@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 
 import ffmpeg
 import pilk
-import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler
@@ -24,6 +23,7 @@ from utils import message_formatter
 from utils.contact_manager import contact_manager
 from utils.group_binding import process_avatar_from_url
 from utils.message_mapper import msgid_mapping
+from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import get_telethon_msg_id
 
 logger = logging.getLogger(__name__)
@@ -101,14 +101,27 @@ async def _forward_add_friend(chat_id: int, sender_name: str, content: str, **kw
     content = friend_msg.get('content', '')
     scene = friend_msg.get('scene')
 
+    # 准备回调数据
+    callback_data = {
+        'Scene': int(scene),
+        'V1': encrypt_username,
+        'V2': ticket,
+        'Wxid': config.MY_WXID,
+        **kwargs
+    }
+
     if avatar_url:
-        processed_photo_content = process_avatar_from_url(avatar_url)
+        processed_photo_content = await process_avatar_from_url(avatar_url)
 
     keyboard = [
-        [InlineKeyboardButton("承認", callback_data="agree_accept")]
+        [InlineKeyboardButton(
+            f"{locale.common('agree_accept')}", 
+            callback_data=create_callback_data("agree_accept", callback_data)
+        )]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    return await telegram_sender.send_photo(tg_user_id, processed_photo_content, f"{from_nickname}からの友人登録リクエスト", reply_markup=reply_markup)
+    send_text = f"<blockquote>{locale.type(kwargs.get('msg_type'))}: {from_nickname}</blockquote>\n{content}"
+    return await telegram_sender.send_photo(tg_user_id, processed_photo_content, send_text, reply_markup=reply_markup)
 
 async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
     """处理名片信息"""
@@ -118,11 +131,26 @@ async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwarg
     contact_avatar = contact_msg.get('bigheadimgurl', '')
     scene = contact_msg.get('scene')
 
+    # 准备回调数据
+    callback_data = {
+        'chat_id': chat_id,
+        'sender_name': sender_name,
+        'content': content,
+        'contact_nickname': contact_nickname,
+        'contact_wxid': contact_wxid,
+        'contact_avatar': contact_avatar,
+        'scene': scene,
+        **kwargs
+    }
+
     if contact_avatar:
         processed_photo_content = await process_avatar_from_url(contact_avatar)
 
     keyboard = [
-        [InlineKeyboardButton(f"{sender_name}\n{locale.common("add_to_contact")}", callback_data="add_to_contact")]
+        [InlineKeyboardButton(
+            f"{sender_name}\n{locale.common('add_to_contact')}", 
+            callback_data=create_callback_data("add_to_contact", callback_data)
+        )]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     return await telegram_sender.send_photo(chat_id, processed_photo_content, f"{locale.type(kwargs.get('msg_type'))}: {contact_nickname}", reply_markup=reply_markup)
@@ -275,11 +303,13 @@ async def _forward_voip(chat_id: int, sender_name: str, content: dict, **kwargs)
         voip_miss = content.get('sysmsg', {}).get('voipmt', {}).get('dismissapns', "")
         if voip_invite:
             voip_msg = locale.type('ilinkvoip')
+        else:
+            return
 
     if kwargs.get('msg_type') == "VoIPBubbleMsg":
         voip_msg = content["voipmsg"]["VoIPBubbleMsg"]["msg"]
     
-    send_text = f"{sender_name}\n[{voip_msg}]"
+    send_text = f"{sender_name}\n<blockquote>{voip_msg}</blockquote>"
     
     return await telegram_sender.send_text(chat_id, send_text)
 
@@ -324,7 +354,7 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
 
     # 企业微信
     if contact_name == "未知用户" and push_content:
-        contact_name = push_content.split(" : ")[0]
+        contact_name = push_content.split(" : ")[0].split("さん")[0]
     if wxid.endswith('@openim'):
         avatar_url = "https://raw.githubusercontent.com/hououinkami/wechat2tg/refs/heads/wx2tg-mac-dev/qywx.jpg"
         if contact_name == "未知用户":
@@ -646,7 +676,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             msg_type = "open_chat"
         
         # 处理非文本消息
-        if msg_type != 1:
+        if msg_type != 1 and msg_type != 10000:
             content = message_formatter.xml_to_json(content)
             if msg_type == 49:  # App消息
                 msg_type = int(content['msg']['appmsg']['type'])

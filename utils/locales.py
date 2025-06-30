@@ -5,7 +5,7 @@ class LocaleConfig:
                 1: 'テキスト',
                 3: '写真',
                 34: '音声',
-                37: '友人追加',
+                37: '友人登録リクエスト',
                 42: '連絡先',
                 43: '動画',
                 47: 'ステッカー',
@@ -42,7 +42,8 @@ class LocaleConfig:
                 'no_binding': '⚠️ まだ連絡先とバインドされません',
                 'failed': '❌ 操作失敗',
                 'no_reply': '⚠️ 撤回したいメッセージを引用',
-                'add_to_contact': '連絡先に追加'
+                'add_to_contact': '連絡先に追加',
+                'agree_accept': '承認'
             },
             'command': {
                 'update': '連絡先を更新',
@@ -57,7 +58,7 @@ class LocaleConfig:
                 1: '文本',
                 3: '图片',
                 34: '语音',
-                37: '添加好友',
+                37: '添加好友请求',
                 43: '视频',
                 42: '联系人',
                 47: '表情',
@@ -94,7 +95,8 @@ class LocaleConfig:
                 'no_binding': '⚠️ 尚未绑定联系人',
                 'failed': '❌ 操作失败',
                 'no_reply': '⚠️ 请回复要撤回的信息',
-                'add_to_contact': '添加到联系人'
+                'add_to_contact': '添加到联系人',
+                'agree_accept': '同意'
             },
             'command': {
                 'update': '更新联系人',
