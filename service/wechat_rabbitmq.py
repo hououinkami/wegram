@@ -232,13 +232,18 @@ class WeChatRabbitMQConsumer:
                 auto_delete=False  # 不自动删除
             )
             
-            # 开始消费
-            consumer_tag = await queue.consume(
-                callback=lambda message: self._message_wrapper(message, callback),
+            # 开始消费并保存消费者对象
+            async def message_handler(message):
+                await self._message_wrapper(message, callback)
+            
+            # 开始消费，返回的是Consumer对象
+            consumer = await queue.consume(
+                callback=message_handler,
                 no_ack=False
             )
             
-            self.consumer_tags[queue_name] = consumer_tag
+            # 保存Consumer对象
+            self.consumer_tags[queue_name] = consumer
             logger.info(f"🚀 开始消费队列: {queue_name}")
             return True
             
@@ -348,12 +353,25 @@ class WeChatRabbitMQConsumer:
         for queue_name, consumer_tag in self.consumer_tags.items():
             try:
                 if self.channel and not self.channel.is_closed:
-                    await self.channel.basic_cancel(consumer_tag)
+                    await consumer_tag.cancel()
             except Exception as e:
                 logger.error(f"❌ 停止队列'{queue_name}'消费者时出错: {e}")
         
-        if self.connection and not self.connection.is_closed:
-            await self.connection.close()
+        # 清空消费者标签
+        self.consumer_tags.clear()
+        
+        # 关闭通道和连接
+        try:
+            if self.channel and not self.channel.is_closed:
+                await self.channel.close()
+        except Exception as e:
+            logger.error(f"❌ 关闭通道时出错: {e}")
+        
+        try:
+            if self.connection and not self.connection.is_closed:
+                await self.connection.close()
+        except Exception as e:
+            logger.error(f"❌ 关闭连接时出错: {e}")
         
         logger.info("🔴 所有消费者已停止")
 
