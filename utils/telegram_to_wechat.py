@@ -484,7 +484,7 @@ async def _send_telegram_link(to_wxid: str, message):
             link_url = entity.url
             link_desc = ''
         elif entity.type == 'url':
-            link_title = '非公众号链接'
+            link_title = '分享链接'
             offset = entity.offset
             length = entity.length
             link_url = message.text[offset:offset + length]

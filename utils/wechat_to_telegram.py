@@ -62,6 +62,9 @@ def _get_message_handlers():
 async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
     """处理文本消息"""
     text = message_formatter.escape_html_chars(content)
+    if kwargs.get('msg_type') == 10000:
+        sender_name = ""
+        text = f"<blockquote>{text}</blockquote>"
     send_text = f"{sender_name}\n{text}"
     
     return await telegram_sender.send_text(chat_id, send_text)
@@ -435,6 +438,11 @@ def process_chathistory(content):
     
     # 提取所有 sourcetime 并转换为 datetime 对象
     data_items = chat_json['datalist']['dataitem']
+
+    # 确保data_items是列表
+    if not isinstance(data_items, list):
+        data_items = [data_items]  # 单个项目包装成列表
+        
     sourcetimes_dt = [parse_time_without_seconds(item['sourcetime']) for item in data_items]
     
     # 确定日期范围
