@@ -61,11 +61,18 @@ def get_60s(format_type="text"):
                 
                 # 根据format_type返回相应格式
                 if format_type == "text":
-                    return text_format.strip()  # 去掉最后的换行符
+                    return {
+                        "date": date,
+                        "text": text_format.strip()  # 去掉最后的换行符
+                    }
                 elif format_type == "html":
-                    return html_format.strip()  # 去掉最后的换行符
+                    return {
+                        "date": date,
+                        "html": html_format.strip()  # 去掉最后的换行符
+                    }
                 elif format_type == "both":
                     return {
+                        "date": date,
                         "text": text_format.strip(),
                         "html": html_format.strip()
                     }

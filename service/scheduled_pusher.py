@@ -4,6 +4,7 @@ import random
 from datetime import datetime, timedelta
 
 import config
+from api import wechat_contacts
 from api.wechat_api import wechat_api
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
@@ -15,8 +16,10 @@ class DailyRandomScheduler:
     """每日随机时间调度器"""
     
     def __init__(self, start_time, end_time, callback):
-        self.start_time = self._parse_time(start_time)
-        self.end_time = self._parse_time(end_time)
+        self.original_start_time = self._parse_time(start_time)  # 保存原始开始时间
+        self.original_end_time = self._parse_time(end_time)      # 保存原始结束时间
+        self.start_time = self.original_start_time
+        self.end_time = self.original_end_time
         self.callback = callback
         self.is_running = False
         self.scheduler_task = None
@@ -69,16 +72,42 @@ class DailyRandomScheduler:
         
         return target_time
     
+    def adjust_time_range(self, hours_delay=1):
+        """调整时间范围，往后推迟指定小时数"""
+        self.start_time += hours_delay * 3600
+        self.end_time += hours_delay * 3600
+        
+        # 如果超过了一天，重置为第二天的原始时间范围
+        if self.end_time >= 24 * 3600:
+            # 重置为明天的原始时间范围
+            original_start = (self.start_time - hours_delay * 3600) % (24 * 3600)
+            original_end = (self.end_time - hours_delay * 3600) % (24 * 3600)
+            self.start_time = original_start
+            self.end_time = original_end
+            # 标记需要等到明天
+            return True
+        return False
+
     async def execute_task(self):
         """执行回调任务"""
         try:            
             if asyncio.iscoroutinefunction(self.callback):
-                await self.callback()
+                result = await self.callback()
             else:
-                self.callback()
+                result = self.callback()
                 
-            # 记录今天已经执行过任务
-            self.last_run_date = datetime.now().date()
+            # 如果任务返回False（未推送），则调整时间范围
+            if result is False:
+                need_wait_tomorrow = self.adjust_time_range(1)  # 推迟1小时
+                if need_wait_tomorrow:
+                    logger.info(f"⏰ 时间范围已超过今天，等待明天重试")
+                    self.last_run_date = datetime.now().date()
+                else:
+                    logger.info(f"⏰ 时间范围已调整为 {self._format_time(self.start_time)} - {self._format_time(self.end_time)}，稍后重试")
+                    # 不设置last_run_date，让调度器继续在今天重试
+            else:
+                # 任务成功执行，记录今天已经执行过任务
+                self.last_run_date = datetime.now().date()
             
         except Exception as e:
             logger.error(f"❌ 执行任务时发生错误: {e}")
@@ -99,6 +128,10 @@ class DailyRandomScheduler:
                 
                 # 检查是否需要执行任务
                 if self.last_run_date != current_date:
+                    # 新的一天开始，重置时间范围为原始值
+                    self.start_time = self.original_start_time
+                    self.end_time = self.original_end_time
+                    
                     target_time = self.get_random_time_today()
                     
                     if current_time >= target_time:
@@ -162,29 +195,51 @@ async def main():
         try:
             news = get_60s("both")
 
+            # 检查新闻日期是否为今天
+            today = datetime.now().strftime('%Y-%m-%d')
+            if news.get('date') != today:
+                logger.info(f"📅 新闻日期 {news.get('date')} 不是今天 {today}，跳过推送")
+                return False  # 返回False表示未推送
+
             # 发送到微信
+            # payload = {
+            #     "At": "",
+            #     "Content": news['text'],
+            #     "ToWxid": "ocean446",
+            #     "Type": 1,
+            #     "Wxid": config.MY_WXID
+            # }
+            # await wechat_api("SEND_TEXT", payload)
+
+            time_now = datetime.now().strftime("%Y-%-m-%-d %H:%M")
+            user_info = await wechat_contacts.get_user_info("ocean446")
+            contact_name = user_info.name
+            avatar_url = user_info.avatar_url
+            xml_text = f"""<appmsg><title></title><des></des><type>19</type><url></url><appattach><cdnthumbaeskey /><aeskey /></appattach><recorditem><![CDATA[<recordinfo><info></info><datalist count="1"><dataitem datatype="1" dataid=""><srcMsgLocalid></srcMsgLocalid><sourcetime>{time_now}</sourcetime><fromnewmsgid></fromnewmsgid><srcMsgCreateTime></srcMsgCreateTime><datadesc>{news['text']}</datadesc><dataitemsource><hashusername></hashusername></dataitemsource><sourcename>{contact_name}</sourcename><sourceheadurl>{avatar_url}</sourceheadurl></dataitem></datalist><desc>{news['text']}</desc><fromscene>2</fromscene></recordinfo>]]></recorditem></appmsg>"""
             payload = {
-                "At": "",
-                "Content": news['text'],
                 "ToWxid": "ocean446",
-                "Type": 1,
-                "Wxid": config.MY_WXID
+                "Type": 49,
+                "Wxid": config.MY_WXID,
+                "Xml": xml_text
             }
-            await wechat_api("SEND_TEXT", payload)
+            await wechat_api("SEND_APP", payload)
 
             # 发送到Telegram
             tg_user_id = get_user_id()
             await telegram_sender.send_text(tg_user_id, news['html'])
+
+            return True  # 返回True表示成功推送
             
         except Exception as e:
             logger.error(f"❌ 获取新闻失败: {e}")
+            return False
 
     try:
         # 创建并启动调度器
         _scheduler_instance = DailyRandomScheduler("08:55", "09:05", get_news)
         await _scheduler_instance.start()
         
-        logger.info("📰 调度器服务已启动，将在每天 07:55-08:05 之间随机推送新闻")
+        logger.info("📰 调度器服务已启动，将在每天 08:55-09:05 之间随机推送新闻")
         
         # 等待调度器任务完成
         await _scheduler_instance.scheduler_task

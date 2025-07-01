@@ -214,4 +214,4 @@ async def handle_agree_accept(update: Update, context: ContextTypes.DEFAULT_TYPE
       
     except Exception as e:
         logger.error(f"❌ 通过好友请求失败: {e}")
-        await query.answer("❌ 通过好友请求失败，请重试")
+        await query.answer("❌ 失敗")
