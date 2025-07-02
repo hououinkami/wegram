@@ -29,7 +29,7 @@ from utils.telegram_to_wechat import get_telethon_msg_id
 logger = logging.getLogger(__name__)
 
 tg_user_id = get_user_id()
-black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74]
+black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74, 'paymsg']
 
 def _get_message_handlers():
     """返回消息类型处理器映射"""
