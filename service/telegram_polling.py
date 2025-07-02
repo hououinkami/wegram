@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Callable
+from typing import Callable, Dict
+from collections import defaultdict, deque
 
 from telegram import Update
 from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler, MessageHandler, filters
@@ -13,6 +14,134 @@ from utils.telegram_commands import BotCommands
 from utils.telegram_to_wechat import process_telegram_update
 
 logger = logging.getLogger(__name__)
+
+class ChatUpdateQueue:
+    """单个聊天的更新队列管理器"""
+    
+    def __init__(self, chat_id: int, process_function: Callable):
+        self.chat_id = chat_id
+        self.process_function = process_function
+        self.queue = deque()
+        self.is_processing = False
+        self.worker_task = None
+        
+    async def add_update(self, update: Update):
+        """添加更新到队列"""
+        self.queue.append(update)
+        
+        # 如果没有在处理，启动处理任务
+        if not self.is_processing:
+            self.worker_task = asyncio.create_task(self._process_queue())
+    
+    async def _process_queue(self):
+        """处理队列中的更新"""
+        self.is_processing = True
+        
+        try:
+            while self.queue:
+                update = self.queue.popleft()
+                try:
+                    await self.process_function(update)
+                except Exception as e:
+                    logger.error(f"❌ 处理 chat_id {self.chat_id} 的 update 时发生错误: {e}")
+                
+                # 短暂延迟，避免过于频繁的处理
+                await asyncio.sleep(0.01)
+                
+        finally:
+            self.is_processing = False
+            self.worker_task = None
+    
+    async def stop(self):
+        """停止队列处理"""
+        if self.worker_task and not self.worker_task.done():
+            self.worker_task.cancel()
+            try:
+                await self.worker_task
+            except asyncio.CancelledError:
+                pass
+
+class UpdateQueueManager:
+    """更新队列管理器 - 按 chat_id 分组处理"""
+    
+    def __init__(self, process_function: Callable):
+        self.process_function = process_function
+        self.chat_queues: Dict[int, ChatUpdateQueue] = {}
+        self.cleanup_task = None
+        
+    async def add_update(self, update: Update):
+        """添加更新到对应的聊天队列"""
+        chat_id = self._get_chat_id(update)
+        
+        if chat_id not in self.chat_queues:
+            self.chat_queues[chat_id] = ChatUpdateQueue(chat_id, self.process_function)
+        
+        await self.chat_queues[chat_id].add_update(update)
+    
+    def _get_chat_id(self, update: Update) -> int:
+        """从 update 中提取 chat_id"""
+        if update.message:
+            return update.message.chat_id
+        elif update.callback_query:
+            return update.callback_query.message.chat_id
+        elif update.edited_message:
+            return update.edited_message.chat_id
+        elif update.channel_post:
+            return update.channel_post.chat_id
+        elif update.edited_channel_post:
+            return update.edited_channel_post.chat_id
+        else:
+            # 如果无法确定 chat_id，使用一个默认值
+            return 0
+    
+    async def start_cleanup_task(self):
+        """启动清理任务，定期清理空闲的队列"""
+        self.cleanup_task = asyncio.create_task(self._cleanup_idle_queues())
+    
+    async def _cleanup_idle_queues(self):
+        """清理空闲的队列（每5分钟检查一次）"""
+        while True:
+            try:
+                await asyncio.sleep(300)  # 5分钟
+                
+                idle_chat_ids = []
+                for chat_id, queue in self.chat_queues.items():
+                    if not queue.is_processing and len(queue.queue) == 0:
+                        idle_chat_ids.append(chat_id)
+                
+                # 清理空闲队列
+                for chat_id in idle_chat_ids:
+                    await self.chat_queues[chat_id].stop()
+                    del self.chat_queues[chat_id]
+                
+                if idle_chat_ids:
+                    logger.debug(f"🧹 清理了 {len(idle_chat_ids)} 个空闲聊天队列")
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"❌ 清理队列时发生错误: {e}")
+    
+    async def stop_all(self):
+        """停止所有队列"""
+        # 停止清理任务
+        if self.cleanup_task and not self.cleanup_task.done():
+            self.cleanup_task.cancel()
+            try:
+                await self.cleanup_task
+            except asyncio.CancelledError:
+                pass
+        
+        # 停止所有聊天队列
+        stop_tasks = []
+        for queue in self.chat_queues.values():
+            stop_tasks.append(queue.stop())
+        
+        if stop_tasks:
+            await asyncio.gather(*stop_tasks, return_exceptions=True)
+        
+        self.chat_queues.clear()
+        logger.info("🔴 所有更新队列已停止")
 
 class TelegramPollingService:
     """Telegram 轮询服务类"""
@@ -36,6 +165,7 @@ class TelegramPollingService:
         self.callback_handlers = callback_handlers or {}
         self.application = None
         self.is_running = False
+        self.queue_manager = UpdateQueueManager(process_function)
         
     def create_application(self):
         """创建Application实例，优化网络配置"""
@@ -51,12 +181,12 @@ class TelegramPollingService:
         return Application.builder().token(self.bot_token).request(request).build()
         
     async def handle_update(self, update: Update, context: CallbackContext):
-        """处理接收到的 update"""
+        """处理接收到的 update - 现在通过队列管理器处理"""
         try:
-            # 调用外部指定的处理函数
-            await self.process_function(update)
+            # 将 update 添加到对应的聊天队列中
+            await self.queue_manager.add_update(update)
         except Exception as e:
-            logger.error(f"❌ 处理 update 时发生错误: {e}")
+            logger.error(f"❌ 添加 update 到队列时发生错误: {e}")
     
     async def error_handler(self, update: Update, context: CallbackContext):
         """错误处理器 - 只记录日志，让轮询机制自然处理"""
@@ -115,6 +245,9 @@ class TelegramPollingService:
             # 设置机器人命令
             await self.setup_commands()
             
+            # 启动队列管理器的清理任务
+            await self.queue_manager.start_cleanup_task()
+            
             # 启动轮询 - 让 python-telegram-bot 自己处理重试
             await self.application.updater.start_polling(
                 poll_interval=1.0,  # 轮询间隔
@@ -147,6 +280,9 @@ class TelegramPollingService:
         self.is_running = False
         
         try:
+            # 停止队列管理器
+            await self.queue_manager.stop_all()
+            
             # 停止轮询器
             if hasattr(self.application, 'updater') and self.application.updater.running:
                 await self.application.updater.stop()
