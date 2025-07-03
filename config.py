@@ -21,7 +21,8 @@ PHONE_NUMBER = os.getenv("PHONE_NUMBER")
 if not PHONE_NUMBER:
     raise ValueError("PHONE_NUMBER environment variable is required")
 DEVICE_MODEL = os.getenv("DEVICE_MODEL", "WeGram")
-WECHAT_FOLDER_NAME = os.getenv("WECHAT_FOLDER_NAME", "WeChat")
+WECHAT_CHAT_FOLDER = os.getenv("WECHAT_CHAT_FOLDER", "チャット")
+WECHAT_OFFICAL_FOLDER = os.getenv("WECHAT_OFFICAL_FOLDER", "WeChat")
 POLLING_INTERVAL = int(os.getenv("POLLING_INTERVAL", "1"))
 AUTO_CREATE_GROUPS = os.getenv("AUTO_CREATE_GROUPS", "True").lower() == "true"
 

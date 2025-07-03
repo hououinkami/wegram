@@ -286,11 +286,13 @@ class GroupManager:
                 avatar_set = await self._set_group_avatar(client, chat_id, avatar_url)
             
             # 将群组移动到文件夹
+            folder_name = config.WECHAT_CHAT_FOLDER
+            if wxid.startswith('gh_'):
+                folder_name = config.WECHAT_OFFICAL_FOLDER
             moved_to_folder = False
-            if hasattr(config, 'WECHAT_FOLDER_NAME'):
-                moved_to_folder = await self._move_chat_to_folder(client, chat_id, config.WECHAT_FOLDER_NAME)
-                if not moved_to_folder:
-                    logger.warning(f"移动群组到文件夹失败，但群组创建成功")
+            moved_to_folder = await self._move_chat_to_folder(client, chat_id, folder_name)
+            if not moved_to_folder:
+                logger.warning(f"移动群组到文件夹失败，但群组创建成功")
 
             # 保存映射关系
             await self.contact_manager.save_chat_wxid_mapping(wxid, contact_name, chat_id, avatar_url)
