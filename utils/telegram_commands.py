@@ -1,5 +1,6 @@
 import logging
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -7,7 +8,10 @@ import config
 from config import LOCALE as locale
 from api import wechat_contacts, wechat_login
 from api.telegram_sender import telegram_sender
+from api.wechat_api import wechat_api
 from utils.contact_manager import contact_manager
+from utils.group_binding import process_avatar_from_url
+from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import revoke_by_telegram_bot_command
 
 logger = logging.getLogger(__name__)
@@ -76,6 +80,73 @@ class BotCommands:
                 
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+    
+    @staticmethod
+    async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """添加联系人"""
+        chat_id = update.effective_chat.id
+        
+        # 获取命令后的参数
+        args = context.args  # 这是一个列表，包含命令后的所有参数
+        if len(args) > 0:
+            phone_number = args[0]
+            add_message = args[1] if len(args) > 1 else ""
+        else:
+            await telegram_sender.send_text(chat_id, locale.common("no_phone"))
+            return
+
+        try:           
+            search_payload = {
+                "FromScene": 0,
+                "SearchScene": 1,
+                "ToUserName": str(phone_number),
+                "Wxid": config.MY_WXID
+            }
+            search_result = await wechat_api("USER_SEARCH", search_payload)
+
+            search_data = search_result.get("Data", {})
+
+            # 用户不存在
+            if search_data.get('BaseResponse', {}).get('ret') == -4:
+                await telegram_sender.send_text(chat_id, locale.common("no_user"))
+                return
+            
+            # 用户存在
+            nickname = search_data.get('NickName', {}).get('string', '')
+            username = search_data.get('UserName', {}).get('string', '')
+            ticket = search_data.get('AntispamTicket')
+            avatar_url = search_data.get('BigHeadImgUrl') or search_data.get('SmallHeadImgUrl')
+
+            # 已经是好友
+            if not ticket:
+                await telegram_sender.send_text(chat_id, locale.common("user_added"))
+                return
+            
+            # 发送搜索结果
+            if avatar_url:
+                processed_photo_content = await process_avatar_from_url(avatar_url)
+
+            callback_data = {
+                "Opcode": 2,
+                "Scene": 0,
+                "V1": username,
+                "V2": ticket,
+                "VerifyContent": add_message,
+                "Wxid": config.MY_WXID
+            }
+
+            keyboard = [
+                [InlineKeyboardButton(
+                    f"{locale.common('add_contact')}", 
+                    callback_data=create_callback_data("add_contact", callback_data)
+                )]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            send_text = f"<blockquote>{nickname}</blockquote>"
+            await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_markup=reply_markup)
+                
+        except Exception as e:
+            await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
     async def revoke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -117,6 +188,7 @@ class BotCommands:
             ["update", locale.command("update")],
             ["receive", locale.command("receive")], 
             ["unbind", locale.command("unbind")],
+            ["add", locale.command("add")],
             ["rm", locale.command("revoke")],
             ["login", locale.command("login")]
         ]
@@ -129,6 +201,7 @@ class BotCommands:
             "update": cls.update_command,
             "receive": cls.receive_command,
             "unbind": cls.unbind_command,
+            "add": cls.add_command,
             "rm": cls.revoke_command,
             "login": cls.login_command
         }

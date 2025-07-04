@@ -32,6 +32,8 @@ class WeChatAPIPaths:
   USER_INFO = "/Friend/GetContractDetail"
   USER_LIST = "/Friend/GetContractList"
   USER_PASS = "/Friend/PassVerify"
+  USER_SEARCH = "/Friend/Search"
+  USER_ADD = "/Friend/SendRequest"
 
   # 工具
   GET_IMAGE_CDN = "/Tools/CdnDownloadImage"

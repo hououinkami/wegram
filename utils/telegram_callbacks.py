@@ -195,7 +195,7 @@ async def handle_simple_action(update: Update, context: ContextTypes.DEFAULT_TYP
 # 2. 新的带数据传递的回调处理器
 @CallbackRegistry.register_with_data("agree_accept")
 async def handle_agree_accept(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
-    """处理接受好友按钮 - 带数据传递"""
+    """处理接受好友按钮"""
     query = update.callback_query
     
     # 直接使用传入的数据
@@ -214,4 +214,32 @@ async def handle_agree_accept(update: Update, context: ContextTypes.DEFAULT_TYPE
       
     except Exception as e:
         logger.error(f"❌ 通过好友请求失败: {e}")
+        await query.answer("❌ 失敗")
+
+@CallbackRegistry.register_with_data("add_contact")
+async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理添加好友按钮"""
+    query = update.callback_query
+
+    if not data['V2']:
+        return
+    
+    # 直接使用传入的数据
+    payload = {
+        "Opcode": 2,
+        "Scene": 0,
+        "V1": data['V1'],
+        "V2": data['V2'],
+        "VerifyContent": data['VerifyContent'],
+        "Wxid": data['Wxid']
+    }
+
+    try:
+        await wechat_api("USER_ADD", payload)
+      
+        await query.edit_message_reply_markup(reply_markup=None)  # 移除按钮
+        await query.answer(f"✅ 成功")
+      
+    except Exception as e:
+        logger.error(f"❌ 添加好友失败: {e}")
         await query.answer("❌ 失敗")

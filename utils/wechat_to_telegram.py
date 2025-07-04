@@ -37,12 +37,13 @@ def _get_message_handlers():
         1: _forward_text,
         3: _forward_image,
         34: _forward_voice,
-        37: _forward_add_friend,
+        37: _forward_friend_request,
         42: _forward_contact,
         43: _forward_video,
         47: _forward_sticker,
         48: _forward_location,
         10000: _forward_text,
+        4: _forward_app_message,
         5: _forward_link,
         6: _forward_file,
         19: _forward_chat_history,
@@ -51,6 +52,7 @@ def _get_message_handlers():
         51: _forward_channel,
         53: _forward_groupnote,
         57: _forward_quote,
+        66: _forward_contact,
         2000: _forward_transfer,
         "revokemsg": _forward_revoke,
         "pat": _forward_pat,
@@ -93,7 +95,7 @@ async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: d
     
     return await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
 
-async def _forward_add_friend(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+async def _forward_friend_request(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
     """处理好友添加"""
     friend_msg = content.get('msg', {})
     from_nickname = friend_msg.get('fromnickname') or friend_msg.get('nickName') or ''
@@ -129,21 +131,26 @@ async def _forward_add_friend(chat_id: int, sender_name: str, content: str, **kw
 async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
     """处理名片信息"""
     contact_msg = content.get('msg', {})
-    contact_nickname = contact_msg.get('nickname') or locale.type(kwargs.get('msg_type'))
-    contact_wxid = contact_msg.get('username', '')
-    contact_avatar = contact_msg.get('bigheadimgurl', '')
-    scene = contact_msg.get('scene')
+    contact_nickname = contact_msg.get('nickname', '')
+    contact_username = contact_msg.get('username', '')
+    contact_ticket = contact_msg.get('antispamticket', '') or contact_msg.get('ticket', '')
+    contact_avatar = contact_msg.get('bigheadimgurl') or contact_msg.get('smallheadimgurl')
+    scene = contact_msg.get('scene') or ''
 
+    # 已经是好友
+    if not contact_ticket:
+        button_text = locale.common('user_added')
+    else:
+        button_text = locale.common('add_contact')
+    
     # 准备回调数据
     callback_data = {
-        'chat_id': chat_id,
-        'sender_name': sender_name,
-        'content': content,
-        'contact_nickname': contact_nickname,
-        'contact_wxid': contact_wxid,
-        'contact_avatar': contact_avatar,
-        'scene': scene,
-        **kwargs
+        "Opcode": 2,
+        "Scene": 0,
+        "V1": contact_username,
+        "V2": contact_ticket,
+        "VerifyContent": "",
+        "Wxid": config.MY_WXID
     }
 
     if contact_avatar:
@@ -151,12 +158,12 @@ async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwarg
 
     keyboard = [
         [InlineKeyboardButton(
-            f"{sender_name}\n{locale.common('add_to_contact')}", 
-            callback_data=create_callback_data("add_to_contact", callback_data)
+            f"{button_text}", 
+            callback_data=create_callback_data("add_contact", callback_data)
         )]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    return await telegram_sender.send_photo(chat_id, processed_photo_content, f"{locale.type(kwargs.get('msg_type'))}: {contact_nickname}", reply_markup=reply_markup)
+    return await telegram_sender.send_photo(chat_id, processed_photo_content, f"{sender_name}\n{locale.type(kwargs.get('msg_type'))}: {contact_nickname}", reply_markup=reply_markup)
 
 async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
@@ -187,6 +194,17 @@ async def _forward_location(chat_id: int, sender_name: str, content: dict, **kwa
         return await telegram_sender.send_location(chat_id, latitude, longitude, poiname, label)
     except (KeyError, TypeError) as e:
         raise Exception("定位信息提取失败")
+
+async def _forward_app_message(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理App消息"""
+    app_msg = content.get('msg', {}).get('appmsg', {})
+    app_title = message_formatter.escape_html_chars(app_msg.get('title', ''))
+    app_des = message_formatter.escape_html_chars(app_msg.get('des', ''))
+    app_url = app_msg.get('url', '')
+
+    send_text = f'{sender_name}\n<a href="{app_url}">{app_title}</a>\n<blockquote>{app_des}</blockquote>'
+    
+    return await telegram_sender.send_text(chat_id, send_text)
 
 async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理公众号消息"""
@@ -576,7 +594,26 @@ def silk_to_voice_file(silk_path):
                     os.remove(temp_file)
                 except OSError as e:
                     logger.warning(f"清理临时文件失败 {temp_file}: {e}")
-      
+
+# 从URL获取图片BytesIO数据
+async def get_image_from_url(self, url: str) -> Optional[io.BytesIO]:
+    """从URL下载图片并处理为BytesIO对象"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        async with self._get_session() as session:
+            async with session.get(url, headers=headers) as response:
+                response.raise_for_status()
+                image_data = await response.read()
+        
+        return io.BytesIO(image_data)
+        
+    except Exception as e:
+        logger.error(f"下载处理图片失败: {e}")
+        return None
+
 # 提取回调信息 - 保持同步，纯数据处理
 def extract_message(data):
     try:
@@ -721,7 +758,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         
         # 设置发送者显示名称
         if "chatroom" in from_wxid or contact_dic["isGroup"]:
-            sender_name = f"<blockquote expandable>{message_formatter.escape_html_chars(sender_name)}</blockquote>"
+            sender_name = f"<blockquote expandable>{message_formatter.escape_html_chars(sender_name)}: </blockquote>"
         else:
             sender_name = ""
         
@@ -739,7 +776,8 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             'msg_id': msg_id,
             'from_wxid': from_wxid,
             'message_info': message_info,
-            'msg_type': msg_type
+            'msg_type': msg_type,
+            'push_content': push_content
         }
         
         # 发送消息并处理响应
