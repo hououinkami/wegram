@@ -6,6 +6,7 @@ from functools import wraps
 from typing import Dict, Callable, Optional, Any
 from datetime import datetime
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -208,8 +209,13 @@ async def handle_agree_accept(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     try:
         await wechat_api("USER_PASS", payload)
-      
-        await query.edit_message_reply_markup(reply_markup=None)  # 移除按钮
+
+        new_keyboard = [
+            [InlineKeyboardButton(locale.common("accept_successed"), callback_data="_")]
+        ]
+        new_reply_markup = InlineKeyboardMarkup(new_keyboard)
+
+        await query.edit_message_reply_markup(reply_markup=new_reply_markup)
         await query.answer(f"✅ 成功")
       
     except Exception as e:
@@ -227,7 +233,7 @@ async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE,
     # 直接使用传入的数据
     payload = {
         "Opcode": 2,
-        "Scene": 0,
+        "Scene": data['Scene'],
         "V1": data['V1'],
         "V2": data['V2'],
         "VerifyContent": data['VerifyContent'],
@@ -237,7 +243,12 @@ async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE,
     try:
         await wechat_api("USER_ADD", payload)
       
-        await query.edit_message_reply_markup(reply_markup=None)  # 移除按钮
+        new_keyboard = [
+            [InlineKeyboardButton(locale.common("request_successed"), callback_data="_")]
+        ]
+        new_reply_markup = InlineKeyboardMarkup(new_keyboard)
+
+        await query.edit_message_reply_markup(reply_markup=new_reply_markup)
         await query.answer(f"✅ 成功")
       
     except Exception as e:

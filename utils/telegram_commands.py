@@ -9,6 +9,7 @@ from config import LOCALE as locale
 from api import wechat_contacts, wechat_login
 from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api
+from service.telethon_client import get_user_id
 from utils.contact_manager import contact_manager
 from utils.group_binding import process_avatar_from_url
 from utils.telegram_callbacks import create_callback_data
@@ -27,7 +28,7 @@ class BotCommands:
         try:
             to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
             if not to_wxid:
-                await telegram_sender.send_text(chat_id, locale.common("no_binding"))
+                await telegram_sender.send_text(chat_id, locale.command("no_binding"))
                 return
             
             user_info = await wechat_contacts.get_user_info(to_wxid)
@@ -54,9 +55,9 @@ class BotCommands:
             contact_now = await contact_manager.get_contact_by_chatid(chat_id)
             
             if contact_now and contact_now.get("isReceive"):
-                await telegram_sender.send_text(chat_id, locale.common("receive_on"))
+                await telegram_sender.send_text(chat_id, locale.command("receive_on"))
             else:
-                await telegram_sender.send_text(chat_id, locale.common("receive_off"))
+                await telegram_sender.send_text(chat_id, locale.command("receive_off"))
                 
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
@@ -69,12 +70,12 @@ class BotCommands:
         try:
             to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
             if not to_wxid:
-                await telegram_sender.send_text(chat_id, locale.common("no_binding"))
+                await telegram_sender.send_text(chat_id, locale.command("no_binding"))
                 return
             
             unbind_result = await contact_manager.delete_contact(to_wxid)
             if unbind_result:
-                await telegram_sender.send_text(chat_id, locale.common("unbind"))
+                await telegram_sender.send_text(chat_id, locale.command("unbind_successed"))
             else:
                 await telegram_sender.send_text(chat_id, locale.common('failed'))
                 
@@ -85,21 +86,29 @@ class BotCommands:
     async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """添加联系人"""
         chat_id = update.effective_chat.id
+
+        # 仅支持在Bot中使用该命令
+        if chat_id != get_user_id():
+            await telegram_sender.send_text(chat_id, locale.command("only_in_bot"))
+            return
         
+        scene_list = {"id": 3, "qq": 4, "group": 8, "phone": 15, "card": 17, "qr": 30}
+
         # 获取命令后的参数
         args = context.args  # 这是一个列表，包含命令后的所有参数
         if len(args) > 0:
-            phone_number = args[0]
+            user_id = args[0]
             add_message = args[1] if len(args) > 1 else ""
+            add_scene = scene_list.get(args[2], 0) if len(args) > 2 else 0
         else:
-            await telegram_sender.send_text(chat_id, locale.common("no_phone"))
+            await telegram_sender.send_text(chat_id, locale.command("no_phone"))
             return
 
         try:           
             search_payload = {
-                "FromScene": 0,
+                "FromScene": add_scene,
                 "SearchScene": 1,
-                "ToUserName": str(phone_number),
+                "ToUserName": str(user_id),
                 "Wxid": config.MY_WXID
             }
             search_result = await wechat_api("USER_SEARCH", search_payload)
@@ -108,7 +117,7 @@ class BotCommands:
 
             # 用户不存在
             if search_data.get('BaseResponse', {}).get('ret') == -4:
-                await telegram_sender.send_text(chat_id, locale.common("no_user"))
+                await telegram_sender.send_text(chat_id, locale.command("no_user"))
                 return
             
             # 用户存在
@@ -119,7 +128,7 @@ class BotCommands:
 
             # 已经是好友
             if not ticket:
-                await telegram_sender.send_text(chat_id, locale.common("user_added"))
+                await telegram_sender.send_text(chat_id, locale.command("user_added"))
                 return
             
             # 发送搜索结果
@@ -128,7 +137,7 @@ class BotCommands:
 
             callback_data = {
                 "Opcode": 2,
-                "Scene": 0,
+                "Scene": add_scene,
                 "V1": username,
                 "V2": ticket,
                 "VerifyContent": add_message,
@@ -156,7 +165,7 @@ class BotCommands:
         
         try:
             if not message.reply_to_message:
-                await telegram_sender.send_text(chat_id, locale.common("no_reply"))
+                await telegram_sender.send_text(chat_id, locale.command("no_reply"))
                 return
             
             await revoke_by_telegram_bot_command(chat_id, message)

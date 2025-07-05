@@ -1,13 +1,14 @@
 import asyncio
-import io
 import logging
 import os
 import re
 import threading
 from asyncio import Queue
 from datetime import datetime
+from io import BytesIO
 from typing import Any, Dict, Optional
 
+import aiohttp
 import ffmpeg
 import pilk
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -64,6 +65,7 @@ def _get_message_handlers():
 async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
     """处理文本消息"""
     text = message_formatter.escape_html_chars(content)
+    
     if kwargs.get('msg_type') == 10000:
         sender_name = ""
         text = f"<blockquote>{text}</blockquote>"
@@ -135,7 +137,7 @@ async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwarg
     contact_username = contact_msg.get('username', '')
     contact_ticket = contact_msg.get('antispamticket', '') or contact_msg.get('ticket', '')
     contact_avatar = contact_msg.get('bigheadimgurl') or contact_msg.get('smallheadimgurl')
-    scene = contact_msg.get('scene') or ''
+    scene = int(contact_msg.get('scene')) or 0
 
     # 已经是好友
     if not contact_ticket:
@@ -146,7 +148,7 @@ async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwarg
     # 准备回调数据
     callback_data = {
         "Opcode": 2,
-        "Scene": 0,
+        "Scene": scene,
         "V1": contact_username,
         "V2": contact_ticket,
         "VerifyContent": "",
@@ -163,7 +165,8 @@ async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwarg
         )]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    return await telegram_sender.send_photo(chat_id, processed_photo_content, f"{sender_name}\n{locale.type(kwargs.get('msg_type'))}: {contact_nickname}", reply_markup=reply_markup)
+    send_text = f"{sender_name}\n<blockquote>[{locale.type(kwargs.get('msg_type'))}]{message_formatter.escape_html_chars(contact_nickname)}</blockquote>"
+    return await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_markup=reply_markup)
 
 async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理视频消息"""
@@ -201,17 +204,27 @@ async def _forward_app_message(chat_id: int, sender_name: str, content: dict, **
     app_title = message_formatter.escape_html_chars(app_msg.get('title', ''))
     app_des = message_formatter.escape_html_chars(app_msg.get('des', ''))
     app_url = app_msg.get('url', '')
+    app_name = app_msg.get('appinfo', {}).get('appname', '')
+    if app_name:
+        app = f"[{app_name}]"
+    else:
+        app = ""
 
-    send_text = f'{sender_name}\n<a href="{app_url}">{app_title}</a>\n<blockquote>{app_des}</blockquote>'
+    send_text = f'{sender_name}\n<a href="{app_url}">{app}{app_title}</a>\n<blockquote>{app_des}</blockquote>'
     
     return await telegram_sender.send_text(chat_id, send_text)
 
 async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理公众号消息"""
-    url_items = message_formatter.extract_url_items(content)
-    send_text = f"{sender_name}\n{url_items}"
+    url_items, main_cover_url = message_formatter.extract_url_items(content)
 
-    return await telegram_sender.send_text(chat_id, send_text)
+    send_text = f"{sender_name}\n{url_items}"
+    
+    if main_cover_url:
+        main_cover = await get_image_from_url(main_cover_url)
+        return await telegram_sender.send_photo(chat_id, main_cover, send_text)
+    else:
+        return await telegram_sender.send_text(chat_id, send_text)
 
 async def _forward_file(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理文件消息"""
@@ -279,8 +292,18 @@ async def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs
 async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理转账"""
     try:
-        money = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {}).get('feedesc')
-        transfer_content = message_formatter.escape_html_chars(f"[{locale.type(kwargs.get('msg_type'))}]\n{money}")
+        transfer_info = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {})
+        transfer_money = transfer_info.get('feedesc')
+        transfer_type = transfer_info.get('paysubtype')
+
+        if transfer_type == 1:
+            transfer_title = f"[{locale.type(kwargs.get('msg_type'))}]"
+        elif transfer_type == 3:
+            transfer_title = f"[{locale.type(kwargs.get('msg_type'))}{locale.common('transfer_out')}]"
+        else:
+            transfer_title = f"[{locale.type(kwargs.get('msg_type'))}]"
+
+        transfer_content = message_formatter.escape_html_chars(f"<blockquote>{transfer_title}</blockquote>\n{transfer_money}")
         send_text = f"{sender_name}\n{transfer_content}"
         
         return await telegram_sender.send_text(chat_id, send_text)
@@ -544,7 +567,7 @@ def silk_to_voice(silk_path):
             raise Exception(f"FFmpeg转换失败: {stderr.decode() if stderr else 'Unknown error'}")
         
         # 创建BytesIO对象
-        audio_buffer = io.BytesIO(stdout)
+        audio_buffer = BytesIO(stdout)
         audio_buffer.seek(0)  # 重置指针到开头
         
         return audio_buffer, int(duration)
@@ -596,19 +619,19 @@ def silk_to_voice_file(silk_path):
                     logger.warning(f"清理临时文件失败 {temp_file}: {e}")
 
 # 从URL获取图片BytesIO数据
-async def get_image_from_url(self, url: str) -> Optional[io.BytesIO]:
+async def get_image_from_url(url: str) -> Optional[BytesIO]:
     """从URL下载图片并处理为BytesIO对象"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        async with self._get_session() as session:
+        async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 response.raise_for_status()
                 image_data = await response.read()
         
-        return io.BytesIO(image_data)
+        return BytesIO(image_data)
         
     except Exception as e:
         logger.error(f"下载处理图片失败: {e}")
