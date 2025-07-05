@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 
@@ -169,6 +170,9 @@ def extract_url_items(json_dict):
         if "msg" in json_dict and "appmsg" in json_dict["msg"]:
             appmsg = json_dict["msg"]["appmsg"]
             
+            # 获取主封面
+            main_cover_url = appmsg.get('thumburl', '')
+
             # 检查是否有mmreader和item列表
             if "mmreader" in appmsg:
                 mmreader = appmsg["mmreader"]
@@ -206,7 +210,7 @@ def extract_url_items(json_dict):
     except Exception as e:
         print(f"提取标题和URL时出错: {e}")
     
-    return result
+    return result, main_cover_url
 
 def extract_line_content(template_detail):
     """从template_detail中提取line_content"""
@@ -275,20 +279,34 @@ def escape_markdown_chars(text):
 def escape_html_chars(text):
     """
     转义文本中的HTML特殊字符，用于Telegram Bot API的HTML格式
-    
-    Args:
-        text (str): 需要转义的文本
-        
-    Returns:
-        str: 转义后的文本
     """
     if not isinstance(text, str):
         return str(text)
     
-    # 先处理 & 符号（必须最先处理，避免重复转义）
-    text = text.replace('&', '&amp;')
+    # 检查是否包含Telegram支持的HTML标签
+    telegram_html_patterns = [
+        r'<a\s+href=["\'][^"\']*["\'][^>]*>.*?</a>',  # 链接
+        r'<b>.*?</b>',      # 粗体
+        r'<strong>.*?</strong>',  # 粗体
+        r'<i>.*?</i>',      # 斜体
+        r'<em>.*?</em>',    # 斜体
+        r'<code>.*?</code>',  # 代码
+        r'<pre>.*?</pre>',  # 预格式化
+        r'<blockquote>.*?</blockquote>',
+        r'<blockquote expandable>.*?</blockquote>',
+    ]
     
-    # 处理 < 和 > 符号
+    # 检查是否包含任何有效的Telegram HTML标签
+    has_valid_html = any(
+        re.search(pattern, text, re.IGNORECASE | re.DOTALL) 
+        for pattern in telegram_html_patterns
+    )
+    
+    if has_valid_html:
+        return text  # 保留HTML标签
+    
+    # 转义特殊字符
+    text = text.replace('&', '&amp;')   # 先处理 & 符号（必须最先处理，避免重复转义）
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
     
