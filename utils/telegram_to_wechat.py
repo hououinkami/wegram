@@ -509,7 +509,7 @@ async def revoke_by_telegram_bot_command(chat_id, message):
 
         # 撤回失败时发送提示
         if not delete_wx_msgid:
-            return await telegram_sender.send_text(chat_id, locale.common("revoke_failed"), reply_to_message_id=delete_message_id)
+            return await telegram_sender.send_text(chat_id, locale.command("revoke_failed"), reply_to_message_id=delete_message_id)
         
         # 撤回
         to_wxid = delete_wx_msgid["towxid"]

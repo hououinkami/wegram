@@ -77,7 +77,7 @@ async def process_telethon_update(event: NewMessage.Event) -> None:
                 to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
                 unbind_result = await contact_manager.delete_contact(to_wxid)
                 if unbind_result:
-                    await telegram_sender.send_text(chat_id, locale.common("unbind"))
+                    await telegram_sender.send_text(chat_id, locale.command("unbind_successed"))
                 return
             
             # 撤回
@@ -91,9 +91,9 @@ async def process_telethon_update(event: NewMessage.Event) -> None:
                 await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
                 contact_now = await contact_manager.get_contact_by_chatid(chat_id)
                 if contact_now["isReceive"]:
-                    await telegram_sender.send_text(chat_id, locale.common("receive_on"))
+                    await telegram_sender.send_text(chat_id, locale.command("receive_on"))
                 else:
-                    await telegram_sender.send_text(chat_id, locale.common("receive_off"))
+                    await telegram_sender.send_text(chat_id, locale.command("receive_off"))
                 return
             
             # 执行二次登录
@@ -480,7 +480,7 @@ async def revoke_telethon(chat_id, message, client):
 
         # 撤回失败时发送提示
         if not delete_wx_msgid:
-            return await telegram_sender.send_text(chat_id, locale.common("revoke_failed"), reply_to_message_id=delete_message_id)
+            return await telegram_sender.send_text(chat_id, locale.command("revoke_failed"), reply_to_message_id=delete_message_id)
         
         # 撤回
         to_wxid = delete_wx_msgid["towxid"]
