@@ -57,11 +57,16 @@ class LocaleConfig:
                 'no_user': '⚠️ ユーザーは存在していません',
                 'user_added': '✅ この友人はすでに登録しています',
                 'remark': 'コメントを設定',
+                'no_remark_name': '⚠️ コメントが必要',
+                'quit': 'グループから退出',
                 'revoke': 'メッセージの撤回',
                 'revoke_failed': '❌ 撤回失敗',
                 'no_reply': '⚠️ 撤回したいメッセージを引用',
                 'login': '二次ログイン',
-                'only_in_bot': '⚠️ このコマンドはボットのみで有効'
+                'only_in_bot': '⚠️ このコマンドはボットのみで有効',
+                'only_in_group': '⚠️ このコマンドはグループのみで有効',
+                'only_in_chat': '⚠️ このコマンドはチャットのみで有効',
+                'not_in_bot': '⚠️ このコマンドはボット以外で有効'
             }
         },
         'zh': {
@@ -120,11 +125,17 @@ class LocaleConfig:
                 'no_phone': '⚠️ 请在命令后面输入搜索变量',
                 'no_user': '⚠️ 用户不存在',
                 'user_added': '✅ 已经添加为好友',
+                'remark': '设置备注名',
+                'no_remark_name': '⚠️ 请输入备注名',
+                'quit': '退出群聊',
                 'revoke': '撤回消息',
                 'revoke_failed': '❌ 撤回失败',
                 'no_reply': '⚠️ 请回复要撤回的信息',
                 'login': '二次登录',
-                'only_in_bot': '⚠️ 此命令仅在Bot中有效'
+                'only_in_bot': '⚠️ 此命令仅在Bot中有效',
+                'only_in_group': '⚠️ 此命令仅在群聊中有效',
+                'only_in_chat': '⚠️ 此命令仅在私聊中有效',
+                'not_in_bot': '⚠️ 此命令仅在Bot中无效'
             }
         }
     }

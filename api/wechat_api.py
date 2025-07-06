@@ -39,6 +39,9 @@ class WeChatAPIPaths:
     WECOM_APPLY = "/QWContact/QWApplyAddContact"
     WECOM_SEARCH = "/QWContact/SearchQWContact"
 
+    # 群聊
+    GROUP_QUIT = "/Group/Quit"
+
     # 工具
     GET_IMAGE_CDN = "/Tools/CdnDownloadImage"
     GET_IMAGE = "/Tools/DownloadImg"

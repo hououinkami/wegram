@@ -1,4 +1,5 @@
 import logging
+from enum import Enum
 from functools import wraps
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,6 +18,54 @@ from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import revoke_by_telegram_bot_command
 
 logger = logging.getLogger(__name__)
+
+class CommandScope(Enum):
+    BOT_ONLY = "bot_only"
+    GROUP_ONLY = "group_only"
+    CHAT_ONLY = "chat_only"
+    NOT_BOT = "not_bot"
+    ALL = "all"
+
+def command_scope(scope: CommandScope):
+    """装饰器：限制命令使用范围"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            chat_id = update.effective_chat.id
+            chat_type = update.effective_chat.type
+            
+            # 如果是 BOT_ONLY 或 NOT_BOT，不需要查询 wxid
+            if scope == CommandScope.BOT_ONLY:
+                if chat_id != get_user_id():
+                    await telegram_sender.send_text(chat_id, locale.command("only_in_bot"))
+                    return
+            elif scope == CommandScope.NOT_BOT:
+                if chat_id == get_user_id():
+                    await telegram_sender.send_text(chat_id, locale.command("not_in_bot"))
+                    return
+            elif scope in [CommandScope.GROUP_ONLY, CommandScope.CHAT_ONLY]:
+                # 只有需要区分微信群聊/私聊时才查询 wxid
+                try:
+                    wxid = await contact_manager.get_wxid_by_chatid(chat_id)
+                    if not wxid:
+                        await telegram_sender.send_text(chat_id, locale.command("no_binding"))
+                        return
+                    
+                    if scope == CommandScope.GROUP_ONLY and not wxid.endswith('@chatroom'):
+                        await telegram_sender.send_text(chat_id, locale.command("only_in_group"))
+                        return
+                    elif scope == CommandScope.CHAT_ONLY and wxid.endswith('@chatroom'):
+                        await telegram_sender.send_text(chat_id, locale.command("only_in_chat"))
+                        return
+                        
+                except Exception as e:
+                    await telegram_sender.send_text(chat_id, locale.common("failed") + f": {str(e)}")
+                    return
+            
+            # CommandScope.ALL 不需要检查
+            return await func(update, context)
+        return wrapper
+    return decorator
 
 def delete_command_message(func):
     """装饰器：自动删除命令消息"""
@@ -43,6 +92,7 @@ class BotCommands:
     
     @staticmethod
     @delete_command_message
+    @command_scope(CommandScope.NOT_BOT)
     async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """更新联系人信息"""
         chat_id = update.effective_chat.id
@@ -69,6 +119,7 @@ class BotCommands:
 
     @staticmethod
     @delete_command_message
+    @command_scope(CommandScope.NOT_BOT)
     async def receive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """切换接收消息状态"""
         chat_id = update.effective_chat.id
@@ -87,6 +138,7 @@ class BotCommands:
 
     @staticmethod
     @delete_command_message
+    @command_scope(CommandScope.NOT_BOT)
     async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """删除联系人数据"""
         chat_id = update.effective_chat.id
@@ -108,15 +160,10 @@ class BotCommands:
     
     @staticmethod
     @delete_command_message
+    @command_scope(CommandScope.BOT_ONLY)
     async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """添加联系人"""
-        chat_id = update.effective_chat.id
-
-        # 仅支持在Bot中使用该命令
-        if chat_id != get_user_id():
-            await telegram_sender.send_text(chat_id, locale.command("only_in_bot"))
-            return
-        
+        chat_id = update.effective_chat.id        
         scene_list = {"id": 3, "qq": 4, "group": 8, "phone": 15, "card": 17, "qr": 30}
 
         # 获取命令后的参数
@@ -184,11 +231,21 @@ class BotCommands:
 
     @staticmethod
     @delete_command_message
+    @command_scope(CommandScope.NOT_BOT)
     async def remark_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """设置好友备注"""
         chat_id = update.effective_chat.id
         
+        # 添加参数检查
+        if not context.args or len(context.args) == 0:
+            await telegram_sender.send_text(chat_id, locale.command("no_remark_name"))
+            return
+        
         to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
+        if not to_wxid:
+            await telegram_sender.send_text(chat_id, locale.command("no_binding"))
+            return
+    
         remark_name = context.args[0]
 
         try:
@@ -210,9 +267,36 @@ class BotCommands:
             
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+    
+    @staticmethod
+    @delete_command_message
+    @command_scope(CommandScope.GROUP_ONLY)
+    async def quit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """退出群聊"""
+        chat_id = update.effective_chat.id
+        
+        to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
+        if not to_wxid:
+            await telegram_sender.send_text(chat_id, locale.command("no_binding"))
+            return
+
+        try:
+            payload = {
+                "QID": to_wxid,
+                "Wxid": config.MY_WXID
+            }
+            
+            await wechat_api("GROUP_QUIT", payload)
+
+            # 更新联系人文件
+            await contact_manager.delete_contact(to_wxid)
+            
+        except Exception as e:
+            await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
     @delete_command_message
+    @command_scope(CommandScope.NOT_BOT)
     async def revoke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """撤回消息"""
         chat_id = update.effective_chat.id
@@ -230,6 +314,7 @@ class BotCommands:
 
     @staticmethod
     @delete_command_message
+    @command_scope(CommandScope.BOT_ONLY)
     async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """执行二次登录"""
         chat_id = update.effective_chat.id
@@ -255,6 +340,7 @@ class BotCommands:
             ["unbind", locale.command("unbind")],
             ["add", locale.command("add")],
             ["remark", locale.command("remark")],
+            ["quit", locale.command("quit")],
             ["rm", locale.command("revoke")],
             ["login", locale.command("login")]
         ]
@@ -269,6 +355,7 @@ class BotCommands:
             "unbind": cls.unbind_command,
             "add": cls.add_command,
             "remark": cls.remark_command,
+            "quit": cls.quit_command,
             "rm": cls.revoke_command,
             "login": cls.login_command
         }
