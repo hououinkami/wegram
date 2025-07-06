@@ -11,6 +11,7 @@ from telegram.error import NetworkError, TelegramError, TimedOut
 
 import config
 from config import LOCALE as locale
+from utils import tools
 
 logger = logging.getLogger(__name__)
 
@@ -772,6 +773,129 @@ class TelegramSender:
             reply_to_message_id=reply_to_message_id
         )
 
+    async def set_chat_title(self, chat_id: Optional[int] = None, 
+                            title: str = ""):
+        """
+        设置群组标题
+        
+        Args:
+            chat_id: 聊天ID，为空时使用默认值
+            title: 新的群组标题（1-128个字符）
+            
+        Returns:
+            bool: 设置是否成功
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None:
+            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
+        
+        if not title.strip():
+            raise ValueError("群组标题不能为空")
+        
+        # 验证标题长度
+        if len(title) > 128:
+            raise ValueError("群组标题不能超过128个字符")
+        
+        return await self._retry_operation(
+            self.bot.set_chat_title,
+            chat_id=target_chat_id,
+            title=title
+        )
+    
+    async def set_chat_photo(self, chat_id: Optional[int] = None, 
+                            photo: Union[str, Path, io.BytesIO, bytes] = None):
+        """
+        设置群组头像
+        
+        Args:
+            chat_id: 聊天ID，为空时使用默认值
+            photo: 头像图片文件路径、Path对象、BytesIO对象、字节数据或图片URL
+            
+        Returns:
+            bool: 设置是否成功
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None:
+            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
+        
+        if photo is None:
+            raise ValueError("必须提供 photo 参数")
+        
+        # 处理不同类型的头像输入
+        if isinstance(photo, str):
+            # 检查是否为URL
+            if photo.startswith(('http://', 'https://')):
+                # 如果是URL，需要先下载图片
+                photo_bytesio = await tools.get_image_from_url(photo)
+                photo_input = InputFile(photo_bytesio, filename="avatar.jpg")
+            else:
+                # 本地文件路径
+                photo_path = Path(photo)
+                if not photo_path.exists():
+                    raise FileNotFoundError(f"头像文件不存在: {photo_path}")
+                photo_input = InputFile(photo_path.open('rb'), filename=photo_path.name)
+        elif isinstance(photo, Path):
+            if not photo.exists():
+                raise FileNotFoundError(f"头像文件不存在: {photo}")
+            photo_input = InputFile(photo.open('rb'), filename=photo.name)
+        elif isinstance(photo, io.BytesIO):
+            photo_input = InputFile(photo, filename="avatar.jpg")
+        elif isinstance(photo, bytes):
+            photo_input = InputFile(io.BytesIO(photo), filename="avatar.jpg")
+        else:
+            photo_input = photo
+        
+        return await self._retry_operation(
+            self.bot.set_chat_photo,
+            chat_id=target_chat_id,
+            photo=photo_input
+        )
+
+    async def set_chat_description(self, chat_id: Optional[int] = None, 
+                                  description: str = ""):
+        """
+        设置群组描述
+        
+        Args:
+            chat_id: 聊天ID，��空时使用默认值
+            description: 新的群组描述（0-255个字符）
+            
+        Returns:
+            bool: 设置是否成功
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None:
+            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
+        
+        # 验证描述长度
+        if len(description) > 255:
+            raise ValueError("群组描述不能超过255个字符")
+        
+        return await self._retry_operation(
+            self.bot.set_chat_description,
+            chat_id=target_chat_id,
+            description=description
+        )
+
+    async def delete_chat_photo(self, chat_id: Optional[int] = None):
+        """
+        删除群组头像
+        
+        Args:
+            chat_id: 聊天ID，为空时使用默认值
+            
+        Returns:
+            bool: 删除是否成功
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None:
+            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
+        
+        return await self._retry_operation(
+            self.bot.delete_chat_photo,
+            chat_id=target_chat_id
+        )
+    
     def get_thread_info(self) -> Dict[str, Any]:
         """
         获取当前线程的信息（调试用）

@@ -4,11 +4,9 @@ import os
 import re
 import threading
 from asyncio import Queue
-from datetime import datetime
 from io import BytesIO
 from typing import Any, Dict, Optional
 
-import aiohttp
 import ffmpeg
 import pilk
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -20,9 +18,9 @@ from config import LOCALE as locale
 from api import wechat_contacts, wechat_download
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_client, get_user_id
+from utils import tools
 from utils import message_formatter
 from utils.contact_manager import contact_manager
-from utils.group_binding import process_avatar_from_url
 from utils.message_mapper import msgid_mapping
 from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import get_telethon_msg_id
@@ -118,7 +116,7 @@ async def _forward_friend_request(chat_id: int, sender_name: str, content: str, 
     }
 
     if avatar_url:
-        processed_photo_content = await process_avatar_from_url(avatar_url)
+        processed_photo_content = await tools.get_image_from_url(avatar_url)
 
     keyboard = [
         [InlineKeyboardButton(
@@ -156,7 +154,7 @@ async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwarg
     }
 
     if contact_avatar:
-        processed_photo_content = await process_avatar_from_url(contact_avatar)
+        processed_photo_content = await tools.get_image_from_url(contact_avatar)
 
     keyboard = [
         [InlineKeyboardButton(
@@ -221,7 +219,7 @@ async def _forward_link(chat_id: int, sender_name: str, content: dict, **kwargs)
     send_text = f"{sender_name}\n{url_items}"
     
     if main_cover_url:
-        main_cover = await get_image_from_url(main_cover_url)
+        main_cover = await tools.get_image_from_url(main_cover_url)
         return await telegram_sender.send_photo(chat_id, main_cover, send_text)
     else:
         return await telegram_sender.send_text(chat_id, send_text)
@@ -306,7 +304,7 @@ async def _forward_wecom_contact(chat_id: int, sender_name: str, content: str, *
     }
 
     if contact_avatar:
-        processed_photo_content = await process_avatar_from_url(contact_avatar)
+        processed_photo_content = await tools.get_image_from_url(contact_avatar)
 
     keyboard = [
         [InlineKeyboardButton(
@@ -509,7 +507,7 @@ def process_chathistory(content):
     if not isinstance(data_items, list):
         data_items = [data_items]  # 单个项目包装成列表
         
-    sourcetimes_dt = [parse_time_without_seconds(item['sourcetime']) for item in data_items]
+    sourcetimes_dt = [tools.parse_time_without_seconds(item['sourcetime']) for item in data_items]
     
     # 确定日期范围
     start_date = sourcetimes_dt[0].strftime("%Y/%m/%d")
@@ -558,16 +556,6 @@ def process_chathistory(content):
     # 返回格式化后的文本
     chat_history = "\n".join(chat_history)
     return f"<blockquote expandable>{chat_history}</blockquote>"
-
-def parse_time_without_seconds(time_str):
-    """解析时间并忽略秒数"""
-    time_str = re.sub(r'(\d{4}-\d{1,2}-\d{1,2} \d{1,2}:\d{1,2}):\d{1,2}', r'\1', time_str)
-    
-    try:
-        return datetime.strptime(time_str, "%Y-%m-%d %H:%M")
-    except ValueError:
-        logger.warning(f"无法解析时间格式: {time_str}，使用当前时间")
-        return datetime.now()
 
 def silk_to_voice(silk_path):
     """转换微信语音为Telegram语音 - 保持同步，因为是CPU密集型任务"""
@@ -642,25 +630,6 @@ def silk_to_voice_file(silk_path):
                     os.remove(temp_file)
                 except OSError as e:
                     logger.warning(f"清理临时文件失败 {temp_file}: {e}")
-
-# 从URL获取图片BytesIO数据
-async def get_image_from_url(url: str) -> Optional[BytesIO]:
-    """从URL下载图片并处理为BytesIO对象"""
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                response.raise_for_status()
-                image_data = await response.read()
-        
-        return BytesIO(image_data)
-        
-    except Exception as e:
-        logger.error(f"下载处理图片失败: {e}")
-        return None
 
 # 提取回调信息 - 保持同步，纯数据处理
 def extract_message(data):

@@ -1,11 +1,11 @@
 import logging
 
-import requests
+import aiohttp
 
 import config
 from api.wechat_api import wechat_api
 from api.telegram_sender import telegram_sender
-from utils.group_binding import process_avatar_from_url
+from utils import tools
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ async def update_info(chat_id, title=None, photo_url=None):
     if photo_url:
         try:            
             # 处理图片尺寸
-            processed_photo_content = await process_avatar_from_url(photo_url)
+            processed_photo_content = await tools.process_avatar_from_url(photo_url)
             
             result = await telegram_sender.set_chat_photo(chat_id, processed_photo_content)
             results['photo_update'] = {

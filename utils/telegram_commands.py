@@ -1,4 +1,5 @@
 import logging
+from functools import wraps
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
@@ -10,17 +11,38 @@ from api import wechat_contacts, wechat_login
 from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api
 from service.telethon_client import get_user_id
+from utils import tools
 from utils.contact_manager import contact_manager
-from utils.group_binding import process_avatar_from_url
 from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import revoke_by_telegram_bot_command
 
 logger = logging.getLogger(__name__)
 
+def delete_command_message(func):
+    """装饰器：自动删除命令消息"""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        message = update.message
+        
+        try:
+            # 执行原始命令
+            result = await func(update, context)
+            return result
+        finally:
+            # 无论成功还是失败都删除命令消息
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=message.message_id)
+            except Exception:
+                pass  # 忽略删除失败的错误
+    
+    return wrapper
+
 class BotCommands:
     """机器人命令处理类"""
     
     @staticmethod
+    @delete_command_message
     async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """更新联系人信息"""
         chat_id = update.effective_chat.id
@@ -46,6 +68,7 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
+    @delete_command_message
     async def receive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """切换接收消息状态"""
         chat_id = update.effective_chat.id
@@ -63,6 +86,7 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
+    @delete_command_message
     async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """删除联系人数据"""
         chat_id = update.effective_chat.id
@@ -83,6 +107,7 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
     
     @staticmethod
+    @delete_command_message
     async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """添加联系人"""
         chat_id = update.effective_chat.id
@@ -133,7 +158,7 @@ class BotCommands:
             
             # 发送搜索结果
             if avatar_url:
-                processed_photo_content = await process_avatar_from_url(avatar_url)
+                processed_photo_content = await tools.get_image_from_url(avatar_url)
 
             callback_data = {
                 "Opcode": 2,
@@ -158,10 +183,10 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
+    @delete_command_message
     async def remark_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """设置好友备注"""
         chat_id = update.effective_chat.id
-        message = update.message
         
         to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
         remark_name = context.args[0]
@@ -175,6 +200,11 @@ class BotCommands:
             
             await wechat_api("USER_REMARK", payload)
 
+            # 更新联系人文件
+            await contact_manager.update_contact_by_chatid(chat_id, {
+                "name": remark_name
+            })
+
             # 设置完成后更新群组信息
             await BotCommands.update_command(update, context)
             
@@ -182,6 +212,7 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
+    @delete_command_message
     async def revoke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """撤回消息"""
         chat_id = update.effective_chat.id
@@ -198,6 +229,7 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
+    @delete_command_message
     async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """执行二次登录"""
         chat_id = update.effective_chat.id

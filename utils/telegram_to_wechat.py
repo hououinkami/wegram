@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import logging
 import os
 import re
@@ -14,10 +13,10 @@ from telegram import Update
 
 import config
 from config import LOCALE as locale
-from api import wechat_contacts, wechat_login
 from api.wechat_api import wechat_api
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_client
+from utils import tools
 from utils.contact_manager import contact_manager
 from utils.message_mapper import msgid_mapping
 from utils.sticker_converter import converter
@@ -174,7 +173,7 @@ async def _send_telegram_photo(to_wxid: str, photo: list) -> bool:
     file_id = photo[-1].file_id  # 最后一个通常是最大尺寸
     
     try:
-        image_base64 = await get_file_base64(file_id)
+        image_base64 = await tools.telegram_file_to_base64(file_id)
         
         payload = {
             "Base64": image_base64,
@@ -200,8 +199,8 @@ async def _send_telegram_video(to_wxid: str, video) -> bool:
     duration = video.duration
     
     try:
-        video_base64 = await get_file_base64(file_id)
-        thumb_base64 = await get_file_base64(thumb_file_id)
+        video_base64 = await tools.telegram_file_to_base64(file_id)
+        thumb_base64 = await tools.telegram_file_to_base64(thumb_file_id)
         
         payload = {
             "Base64": video_base64,
@@ -265,9 +264,8 @@ async def _send_telegram_sticker(to_wxid: str, sticker) -> bool:
                     logger.error(f"转换失败: {sticker_path}")
                     return False
                 
-                
                 # 转换成功，准备发送
-                # sticker_base64 = local_file_to_base64(gif_path)
+                # sticker_base64 = tools.local_file_to_base64(gif_path)
                 # if not sticker_base64:
                 #     logger.error("转换贴纸文件为base64失败")
                 #     return False
@@ -330,7 +328,7 @@ async def _send_telegram_voice(to_wxid: str, voice):
             return False
         
         # 3. 生成base64
-        silk_base64 = local_file_to_base64(silk_path)
+        silk_base64 = tools.local_file_to_base64(silk_path)
         if not silk_base64:
             logger.error("转换SILK文件为base64失败")
             return False
@@ -387,7 +385,7 @@ async def _send_telegram_document(to_wxid: str, document) -> bool:
             return False
         
         # 下载文件并转换为base64
-        file_base64 = await get_file_base64(file_id)
+        file_base64 = await tools.telegram_file_to_base64(file_id)
         if not file_base64:
             logger.error("获取文件base64失败")
             return False
@@ -531,42 +529,6 @@ async def revoke_by_telegram_bot_command(chat_id, message):
         
     except Exception as e:
         logger.error(f"处理消息删除逻辑时出错: {e}")
-
-# 获取文件的 Base64 编码
-async def get_file_base64(file_id):
-    """获取文件并转换为 Base64 格式"""
-    try:
-        # Step 1: 获取文件信息
-        file = await telegram_sender.get_file(file_id)
-        
-        # Step 2: 下载文件到内存
-        file_content = await file.download_as_bytearray()
-        
-        # Step 3: 转换为 Base64
-        file_base64 = base64.b64encode(file_content).decode('utf-8')
-        
-        return file_base64
-        
-    except Exception as e:
-        logger.error(f"获取文件并转换为Base64失败: {e}")
-        return False
-
-def local_file_to_base64(file_path: str) -> str:
-    """将本地文件转换为base64编码"""
-    try:
-        if not os.path.exists(file_path):
-            logger.error(f"文件不存在: {file_path}")
-            return None
-            
-        with open(file_path, 'rb') as f:
-            file_content = f.read()
-            
-        file_base64 = base64.b64encode(file_content).decode('utf-8')
-        return file_base64
-        
-    except Exception as e:
-        logger.error(f"转换文件为base64失败 {file_path}: {e}")
-        return None
 
 async def _download_telegram_voice(file_id: str, voice_dir: str) -> str:
     """
@@ -814,10 +776,10 @@ def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
         response_data = data
 
     if response_data:
-        to_wx_id = multi_get(response_data, 'ToUsetName.string', 'toUserName.string', 'ToUserName.string', 'toUserName', 'ToUserName')
-        new_msg_id = multi_get(response_data, 'NewMsgId', 'Newmsgid', 'newMsgId')
-        client_msg_id = multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
-        create_time = multi_get(response_data, 'Createtime', 'createtime', 'createTime', 'CreateTime')
+        to_wx_id = tools.multi_get(response_data, 'ToUsetName.string', 'toUserName.string', 'ToUserName.string', 'toUserName', 'ToUserName')
+        new_msg_id = tools.multi_get(response_data, 'NewMsgId', 'Newmsgid', 'newMsgId')
+        client_msg_id = tools.multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
+        create_time = tools.multi_get(response_data, 'Createtime', 'createtime', 'createTime', 'CreateTime')
         if new_msg_id:
             msgid_mapping.add(
                 tg_msg_id=tg_msgid,
@@ -833,27 +795,6 @@ def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
             logger.warning(f"NewMsgId 不存在: {response_data}")
     else:
         logger.warning("消息列表为空")
-
-def multi_get(data, *keys, default=''):
-    """从多个键中获取第一个有效值"""
-    for key in keys:
-        if '.' in key:
-            # 处理嵌套键如 'ToUserName.string'
-            parts = key.split('.')
-            value = data
-            for part in parts:
-                if isinstance(value, dict):
-                    value = value.get(part, {})
-                else:
-                    value = {}
-                    break
-            if value != {} and value is not None:
-                return value
-        else:
-            value = data.get(key)
-            if value is not None:
-                return value
-    return default
 
 async def get_telethon_msg_id(client, chat_id, sender_id, text=None, send_time=None, tolerance=2):
     """根据时间和文本获取Telethon消息ID"""    

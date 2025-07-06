@@ -1,20 +1,16 @@
 import asyncio
-import json
 import logging
-import os
-import threading
 import concurrent.futures
-from io import BytesIO
-from typing import Dict, Optional, Union
+from typing import Dict, Optional
 from contextlib import asynccontextmanager
 
 import aiohttp
-from PIL import Image
 from telethon.tl.functions.messages import CreateChatRequest, EditChatAdminRequest, EditChatPhotoRequest, GetDialogFiltersRequest, UpdateDialogFilterRequest
 from telethon.tl.types import InputChatUploadedPhoto, InputPeerChat, InputPeerChannel, DialogFilter, TextWithEntities
 
 import config
 from service.telethon_client import get_client, get_client_instance
+from utils import tools
 
 logger = logging.getLogger(__name__)
 
@@ -78,71 +74,6 @@ class GroupManager:
         except Exception as e:
             logger.error(f"获取 Telethon 客户端失败: {e}")
             raise
-
-    async def _process_image_from_url(self, url: str) -> Optional[BytesIO]:
-        """从URL下载图片并处理为BytesIO对象"""
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            
-            async with self._get_session() as session:
-                async with session.get(url, headers=headers) as response:
-                    response.raise_for_status()
-                    image_data = await response.read()
-            
-            loop = asyncio.get_event_loop()
-            processed_image = await loop.run_in_executor(
-                None,
-                self._process_avatar_image,
-                image_data
-            )
-            
-            return processed_image
-            
-        except Exception as e:
-            logger.error(f"下载处理图片失败: {e}")
-            return None
-
-    def _process_avatar_image(self, image_data: bytes, min_size: int = 512) -> BytesIO:
-        """处理头像图片内容"""
-        try:
-            img = Image.open(BytesIO(image_data))
-            
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            
-            width, height = img.size
-            if width < min_size or height < min_size:
-                ratio = max(min_size / width, min_size / height)
-                new_width = int(width * ratio)
-                new_height = int(height * ratio)
-                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            
-            if img.width != img.height:
-                size = min(img.size)
-                left = (img.width - size) // 2
-                top = (img.height - size) // 2
-                img = img.crop((left, top, left + size, top + size))
-            
-            output = BytesIO()
-            img.save(output, format='JPEG', quality=95)
-            output.seek(0)
-            return output
-            
-        except Exception as e:
-            logger.error(f"图片处理失败: {e}")
-            try:
-                img = Image.open(BytesIO(image_data))
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
-                output = BytesIO()
-                img.save(output, format='JPEG', quality=95)
-                output.seek(0)
-                return output
-            except Exception:
-                return BytesIO(image_data)
 
     async def _get_bot_entity(self, client):
         """获取机器人实体"""
@@ -211,7 +142,7 @@ class GroupManager:
             return True
         
         try:
-            processed_image_data = await self._process_image_from_url(avatar_url)
+            processed_image_data = await tools.process_image_from_url(avatar_url)
             
             if not processed_image_data:
                 logger.error("下载或处理头像图片失败")
@@ -481,48 +412,3 @@ def create_group_sync(wxid: str, contact_name: str, description: str = "", avata
     except Exception as e:
         logger.error(f"同步创建群组失败: {e}")
         return {'success': False, 'error': str(e)}
-
-async def process_avatar_image(image_data: bytes, min_size: int = 512) -> Optional[BytesIO]:
-    """
-    异步方式处理头像图片
-    
-    Args:
-        image_data: 图片的二进制数据
-        min_size: 最小尺寸要求，默认512像素
-    
-    Returns:
-        处理后的图片BytesIO对象，失败时返回None
-    """
-    try:
-        loop = asyncio.get_event_loop()
-        group_manager = GroupManager()
-        
-        # 在线程池中执行图片处理，避免阻塞事件循环
-        result = await loop.run_in_executor(
-            None,
-            group_manager._process_avatar_image,
-            image_data,
-            min_size
-        )
-        return result
-    except Exception as e:
-        logger.error(f"异步处理头像图片失败: {e}")
-        return None
-
-async def process_avatar_from_url(image_url: str, min_size: int = 512) -> Optional[BytesIO]:
-    """
-    异步方式从URL下载并处理头像图片
-    
-    Args:
-        image_url: 图片URL
-        min_size: 最小尺寸要求，默认512像素
-    
-    Returns:
-        处理后的图片BytesIO对象，失败时返回None
-    """
-    try:
-        async with GroupManager() as group_manager:
-            return await group_manager._process_image_from_url(image_url)
-    except Exception as e:
-        logger.error(f"异步处理图片失败: {e}")
-        return None
