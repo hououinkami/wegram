@@ -16,6 +16,10 @@ class UserInfo:
         self.avatar_url = avatar_url
 
 async def get_user_info(towxids):
+    # 企业微信用户无信息，跳过调用API
+    if towxids.endswith('@openim'):
+        return UserInfo('企业微信', 'https://raw.githubusercontent.com/finalpi/wechat2tg/refs/heads/wx2tg-v3/qywx.jpg')
+    
     # 构建请求体
     body = {
         "Wxid": config.MY_WXID,
