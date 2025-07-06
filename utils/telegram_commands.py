@@ -158,6 +158,30 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
+    async def remark_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """设置好友备注"""
+        chat_id = update.effective_chat.id
+        message = update.message
+        
+        to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
+        remark_name = context.args[0]
+
+        try:
+            payload = {
+                "Remarks": remark_name,
+                "ToWxid": to_wxid,
+                "Wxid": config.MY_WXID
+            }
+            
+            await wechat_api("USER_REMARK", payload)
+
+            # 设置完成后更新群组信息
+            await BotCommands.update_command(update, context)
+            
+        except Exception as e:
+            await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+
+    @staticmethod
     async def revoke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """撤回消息"""
         chat_id = update.effective_chat.id
@@ -198,6 +222,7 @@ class BotCommands:
             ["receive", locale.command("receive")], 
             ["unbind", locale.command("unbind")],
             ["add", locale.command("add")],
+            ["remark", locale.command("remark")],
             ["rm", locale.command("revoke")],
             ["login", locale.command("login")]
         ]
@@ -211,6 +236,7 @@ class BotCommands:
             "receive": cls.receive_command,
             "unbind": cls.unbind_command,
             "add": cls.add_command,
+            "remark": cls.remark_command,
             "rm": cls.revoke_command,
             "login": cls.login_command
         }

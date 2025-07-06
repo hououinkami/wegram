@@ -34,6 +34,7 @@ class WeChatAPIPaths:
     USER_PASS = "/Friend/PassVerify"
     USER_SEARCH = "/Friend/Search"
     USER_ADD = "/Friend/SendRequest"
+    USER_REMARK = "/Friend/SetRemarks"
     WECOM_ADD = "/QWContact/QWAddContact"
     WECOM_APPLY = "/QWContact/QWApplyAddContact"
     WECOM_SEARCH = "/QWContact/SearchQWContact"

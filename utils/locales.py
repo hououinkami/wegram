@@ -56,6 +56,7 @@ class LocaleConfig:
                 'no_phone': '⚠️ 検索変数が必要',
                 'no_user': '⚠️ ユーザーは存在していません',
                 'user_added': '✅ この友人はすでに登録しています',
+                'remark': 'コメントを設定',
                 'revoke': 'メッセージの撤回',
                 'revoke_failed': '❌ 撤回失敗',
                 'no_reply': '⚠️ 撤回したいメッセージを引用',
