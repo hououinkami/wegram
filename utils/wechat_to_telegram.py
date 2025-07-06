@@ -390,11 +390,11 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
     if contact_saved:
         contact_name = contact_saved["name"]
         avatar_url = contact_saved["avatarLink"]
-    
-    # 异步获取联系人信息
-    user_info = await wechat_contacts.get_user_info(wxid)
-    contact_name = user_info.name
-    avatar_url = user_info.avatar_url
+    else:
+        # 异步获取联系人信息
+        user_info = await wechat_contacts.get_user_info(wxid)
+        contact_name = user_info.name
+        avatar_url = user_info.avatar_url
 
     # 企业微信
     if contact_name == "未知用户" and push_content:
