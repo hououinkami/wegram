@@ -53,7 +53,7 @@ def _get_message_handlers():
         51: _forward_channel,
         53: _forward_groupnote,
         57: _forward_quote,
-        66: _forward_contact,
+        66: _forward_wecom_contact,
         2000: _forward_transfer,
         "revokemsg": _forward_revoke,
         "pat": _forward_pat,
@@ -135,8 +135,8 @@ async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwarg
     contact_msg = content.get('msg', {})
     contact_nickname = contact_msg.get('nickname', '')
     contact_username = contact_msg.get('username', '')
-    contact_ticket = contact_msg.get('antispamticket', '') or contact_msg.get('ticket', '')
-    contact_avatar = contact_msg.get('bigheadimgurl') or contact_msg.get('smallheadimgurl')
+    contact_ticket = contact_msg.get('antispamticket', '')
+    contact_avatar = contact_msg.get('bigheadimgurl') or contact_msg.get('smallheadimgurl') or ''
     scene = int(contact_msg.get('scene')) or 0
 
     # 已经是好友
@@ -289,6 +289,35 @@ async def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs
     
     return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
+async def _forward_wecom_contact(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+    """处理企业微信名片信息"""
+    contact_msg = content.get('msg', {})
+    contact_nickname = contact_msg.get('nickname', '')
+    contact_username = contact_msg.get('username', '')
+    contact_company = contact_msg.get('openimdesc', '')
+    contact_ticket = contact_msg.get('ticket', '')
+    contact_avatar = contact_msg.get('bigheadimgurl') or contact_msg.get('smallheadimgurl') or ''
+    
+    # 准备回调数据
+    callback_data = {
+        "Username": contact_username,
+        "V1": contact_ticket,
+        "Wxid": config.MY_WXID
+    }
+
+    if contact_avatar:
+        processed_photo_content = await process_avatar_from_url(contact_avatar)
+
+    keyboard = [
+        [InlineKeyboardButton(
+            locale.common('add_contact'), 
+            callback_data=create_callback_data("add_wecom_contact", callback_data)
+        )]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    send_text = f"{sender_name}\n<blockquote>[{locale.type(kwargs.get('msg_type'))}]{message_formatter.escape_html_chars(contact_nickname)}@{message_formatter.escape_html_chars(contact_company)}</blockquote>"
+    return await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_markup=reply_markup)
+
 async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理转账"""
     try:
@@ -396,13 +425,9 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
         contact_name = user_info.name
         avatar_url = user_info.avatar_url
 
-    # 企业微信
-    if contact_name == "未知用户" and push_content:
+    # 从推送内容获取用户名称
+    if (contact_name == "未知用户" or contact_name == "企业微信") and push_content:
         contact_name = push_content.split(" : ")[0].split("さん")[0]
-    if wxid.endswith('@openim'):
-        avatar_url = "https://raw.githubusercontent.com/hououinkami/wechat2tg/refs/heads/wx2tg-mac-dev/qywx.jpg"
-        if contact_name == "未知用户":
-            contact_name = "企业微信"
             
     # 服务通知
     if wxid == "service_notification":

@@ -254,3 +254,42 @@ async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE,
     except Exception as e:
         logger.error(f"❌ 添加好友失败: {e}")
         await query.answer("❌ 失敗")
+
+@CallbackRegistry.register_with_data("add_wecom_contact")
+async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理添加企业微信好友按钮"""
+    query = update.callback_query
+
+    if not data['V1']:
+        return
+    
+    # 尝试直接添加
+    add_payload = {
+        "Username": data['Username'],
+        "V1": data['V1'],
+        "Wxid": data['Wxid']
+    }
+    add_result = await wechat_api("WECOM_ADD", add_payload)
+
+    # 若直接添加失败则发送好友申请
+    if add_result.get("Data", {}).get('BaseResponse', {}).get('ret') == -44:
+        new_payload = {
+            "Context": "",
+            "Username": data['Username'],
+            "V1": data['V1'],
+            "Wxid": data['Wxid']
+        }
+        await wechat_api("WECOM_APPLY", new_payload)
+
+    try:      
+        new_keyboard = [
+            [InlineKeyboardButton(locale.common("request_successed"), callback_data="_")]
+        ]
+        new_reply_markup = InlineKeyboardMarkup(new_keyboard)
+
+        await query.edit_message_reply_markup(reply_markup=new_reply_markup)
+        await query.answer(f"✅ 成功")
+      
+    except Exception as e:
+        logger.error(f"❌ 添加好友失败: {e}")
+        await query.answer("❌ 失敗")
