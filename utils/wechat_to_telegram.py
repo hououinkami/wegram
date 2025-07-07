@@ -61,11 +61,16 @@ def _get_message_handlers():
         "sysmsgtemplate": _forward_sysmsg
     }
 
-async def _forward_text(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+async def _forward_text(chat_id: int, sender_name: str, from_wxid: str, content: str, msg_type: int, **kwargs) -> dict:
     """处理文本消息"""
-    if kwargs.get('msg_type') == 10000:
+    if msg_type == 10000:
         sender_name = ""
         content = f"<blockquote>{content}</blockquote>"
+
+        # 更新群信息
+        if from_wxid.endswith("@chatroom"):
+            group_manager.update_group_member(from_wxid)
+
     send_text = f"{sender_name}\n{content}"
     
     return await telegram_sender.send_text(chat_id, send_text)
@@ -94,7 +99,7 @@ async def _forward_voice(chat_id: int, sender_name: str, msg_id: str, content: d
     
     return await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
 
-async def _forward_friend_request(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+async def _forward_friend_request(chat_id: int, sender_name: str, content: str, msg_type: int, **kwargs) -> dict:
     """处理好友添加"""
     friend_msg = content.get('msg', {})
     from_nickname = friend_msg.get('fromnickname') or friend_msg.get('nickName') or ''
@@ -124,10 +129,10 @@ async def _forward_friend_request(chat_id: int, sender_name: str, content: str, 
         )]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    send_text = f"<blockquote>{locale.type(kwargs.get('msg_type'))}: {from_nickname}</blockquote>\n{content}"
+    send_text = f"<blockquote>{locale.type(msg_type)}: {from_nickname}</blockquote>\n{content}"
     return await telegram_sender.send_photo(tg_user_id, processed_photo_content, send_text, reply_markup=reply_markup)
 
-async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+async def _forward_contact(chat_id: int, sender_name: str, content: str, msg_type: int, **kwargs) -> dict:
     """处理名片信息"""
     contact_msg = content.get('msg', {})
     contact_nickname = contact_msg.get('nickname', '')
@@ -162,10 +167,10 @@ async def _forward_contact(chat_id: int, sender_name: str, content: str, **kwarg
         )]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    send_text = f"{sender_name}\n<blockquote>[{locale.type(kwargs.get('msg_type'))}]{contact_nickname}</blockquote>"
+    send_text = f"{sender_name}\n<blockquote>[{locale.type(msg_type)}]{contact_nickname}</blockquote>"
     return await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_markup=reply_markup)
 
-async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, **kwargs) -> dict:
+async def _forward_video(chat_id: int, sender_name: str, msg_id: str, from_wxid: str, content: dict, msg_type: int, **kwargs) -> dict:
     """处理视频消息"""
     success, file, _ = await wechat_download.get_video(msg_id, from_wxid, content)
     if success:
@@ -178,7 +183,7 @@ async def _forward_sticker(chat_id: int, sender_name: str, content: dict, **kwar
     success, file = await wechat_download.get_emoji(content)
     
     if success:
-        return await telegram_sender.send_animation(chat_id, file, sender_name, filename=f"[{locale.type(kwargs.get('msg_type'))}].gif")
+        return await telegram_sender.send_animation(chat_id, file, sender_name, filename=f"[{locale.type(msg_type)}].gif")
     else:
         raise Exception("贴纸下载失败")
 
@@ -243,21 +248,21 @@ async def _forward_chat_history(chat_id: int, sender_name: str, content: dict, *
     else:
         raise Exception("聊天记录处理失败")
 
-async def _forward_miniprogram(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_miniprogram(chat_id: int, sender_name: str, content: dict, msg_type: int, **kwargs) -> dict:
     """处理小程序消息"""
     mini_name = content.get('msg', {}).get('appmsg', {}).get('sourcedisplayname', '')
     mini_title = content.get('msg', {}).get('appmsg', {}).get('title', '')
-    send_text = f"{sender_name}\n<blockquote>[{locale.type(kwargs.get('msg_type'))}: {mini_name}]</blockquote>\n{mini_title}"
+    send_text = f"{sender_name}\n<blockquote>[{locale.type(msg_type)}: {mini_name}]</blockquote>\n{mini_title}"
     
     return await telegram_sender.send_text(chat_id, send_text)
 
-async def _forward_channel(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_channel(chat_id: int, sender_name: str, content: dict, msg_type: int, **kwargs) -> dict:
     """处理视频号"""
     try:
         finder_feed = content.get("msg", {}).get("appmsg", {}).get("finderFeed", {})
         channel_name = finder_feed["nickname"]
         channel_title = finder_feed["desc"]
-        channel_content = f"<blockquote>[{locale.type(kwargs.get('msg_type'))}: {channel_name}]</blockquote>\n{channel_title}"
+        channel_content = f"<blockquote>[{locale.type(msg_type)}: {channel_name}]</blockquote>\n{channel_title}"
         send_text = f"{sender_name}\n{channel_content}"
         
         return await telegram_sender.send_text(chat_id, send_text)
@@ -268,7 +273,7 @@ async def _forward_groupnote(chat_id: int, sender_name: str, content: dict, **kw
     """处理群接龙"""
     try:
         groupnote_title = content.get('msg', {}).get('appmsg', {}).get('title', '')
-        groupnote_content = f"[{locale.type(kwargs.get('msg_type'))}]\n{groupnote_title}"
+        groupnote_content = f"[{locale.type(msg_type)}]\n{groupnote_title}"
         send_text = f"{sender_name}\n<blockquote expandable>{groupnote_content}</blockquote>"
         
         return await telegram_sender.send_text(chat_id, send_text)
@@ -286,7 +291,7 @@ async def _forward_quote(chat_id: int, sender_name: str, content: dict, **kwargs
     
     return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
-async def _forward_wecom_contact(chat_id: int, sender_name: str, content: str, **kwargs) -> dict:
+async def _forward_wecom_contact(chat_id: int, sender_name: str, content: str, msg_type: int, **kwargs) -> dict:
     """处理企业微信名片信息"""
     contact_msg = content.get('msg', {})
     contact_nickname = contact_msg.get('nickname', '')
@@ -312,10 +317,10 @@ async def _forward_wecom_contact(chat_id: int, sender_name: str, content: str, *
         )]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    send_text = f"{sender_name}\n<blockquote>[{locale.type(kwargs.get('msg_type'))}]{contact_nickname}@{contact_company}</blockquote>"
+    send_text = f"{sender_name}\n<blockquote>[{locale.type(msg_type)}]{contact_nickname}@{contact_company}</blockquote>"
     return await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_markup=reply_markup)
 
-async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_transfer(chat_id: int, sender_name: str, content: dict, msg_type: int, **kwargs) -> dict:
     """处理转账"""
     try:
         transfer_info = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {})
@@ -323,11 +328,11 @@ async def _forward_transfer(chat_id: int, sender_name: str, content: dict, **kwa
         transfer_type = transfer_info.get('paysubtype')
 
         if transfer_type == 1:
-            transfer_title = f"[{locale.type(kwargs.get('msg_type'))}]"
+            transfer_title = f"[{locale.type(msg_type)}]"
         elif transfer_type == 3:
-            transfer_title = f"[{locale.type(kwargs.get('msg_type'))}{locale.common('transfer_out')}]"
+            transfer_title = f"[{locale.type(msg_type)}{locale.common('transfer_out')}]"
         else:
-            transfer_title = f"[{locale.type(kwargs.get('msg_type'))}]"
+            transfer_title = f"[{locale.type(msg_type)}]"
 
         transfer_content = f"<blockquote>{transfer_title}</blockquote>\n{transfer_money}"
         send_text = f"{sender_name}\n{transfer_content}"
@@ -347,7 +352,7 @@ async def _forward_revoke(chat_id: int, sender_name: str, content: dict, **kwarg
     
     return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
 
-async def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_pat(chat_id: int, sender_name: str, from_wxid: str, content: dict, **kwargs) -> dict:
     """处理拍一拍消息"""
     pat_msg = content["sysmsg"]["pat"]
     pat_template = pat_msg["template"]
@@ -356,7 +361,6 @@ async def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) 
     # 处理模板中的用户信息替换
     matches = re.findall(pattern, pat_template)
     result = pat_template
-    from_wxid = kwargs.get("from_wxid")
     for match in matches:
         if not from_wxid.endswith('@chatroom'):
             user_info = await wechat_contacts.get_user_info(match)
@@ -369,9 +373,9 @@ async def _forward_pat(chat_id: int, sender_name: str, content: dict, **kwargs) 
     
     return await telegram_sender.send_text(chat_id, send_text)
 
-async def _forward_voip(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_voip(chat_id: int, sender_name: str, content: dict, msg_type: int, **kwargs) -> dict:
     """处理通话消息"""
-    if kwargs.get('msg_type') == "ilinkvoip":
+    if msg_type == "ilinkvoip":
         voip_invite = content.get('sysmsg', {}).get('voipmt', {}).get('invite', "")
         voip_cancle = content.get('sysmsg', {}).get('voipmt', {}).get('cancel', "")
         voip_miss = content.get('sysmsg', {}).get('voipmt', {}).get('dismissapns', "")
@@ -380,7 +384,7 @@ async def _forward_voip(chat_id: int, sender_name: str, content: dict, **kwargs)
         else:
             return
 
-    if kwargs.get('msg_type') == "VoIPBubbleMsg":
+    if msg_type == "VoIPBubbleMsg":
         voip_msg = content["voipmsg"]["VoIPBubbleMsg"]["msg"]
     
     send_text = f"{sender_name}\n<blockquote>{voip_msg}</blockquote>"

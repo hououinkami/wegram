@@ -114,6 +114,36 @@ class GroupMemberManager:
             logger.error(f"❌ 更新群组信息失败: {e}")
             return False
     
+    async def delete_group(self, chatroom_id: str) -> bool:
+        """
+        删除指定群组的信息
+        
+        Args:
+            chatroom_id: 要删除的群组ID
+            
+        Returns:
+            bool: 删除是否成功
+        """
+        try:
+            if chatroom_id in self.data:                
+                # 从内存中删除
+                del self.data[chatroom_id]
+                
+                # 保存到JSON文件
+                if self.save_to_json():
+                    logger.info(f"✅ 成功删除群组 {chatroom_id}")
+                    return True
+                else:
+                    logger.error(f"❌ 删除群组 {chatroom_id} 后保存文件失败")
+                    return False
+            else:
+                logger.warning(f"⚠️ 群组 {chatroom_id} 不存在，无需删除")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ 删除群组 {chatroom_id} 时发生错误: {e}")
+            return False
+    
     async def get_display_name(self, chatroom_id: str, username: str) -> str:
         """获取用户在指定群中的显示名称"""
         if chatroom_id not in self.data:

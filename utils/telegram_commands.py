@@ -14,6 +14,7 @@ from api.wechat_api import wechat_api
 from service.telethon_client import get_user_id
 from utils import tools
 from utils.contact_manager import contact_manager
+from utils.group_manager import group_manager
 from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import revoke_by_telegram_bot_command
 
@@ -290,6 +291,7 @@ class BotCommands:
 
             # 更新联系人文件
             await contact_manager.delete_contact(to_wxid)
+            await group_manager.delete_group(to_wxid)
             
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
