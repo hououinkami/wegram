@@ -142,7 +142,7 @@ class GroupManager:
             return True
         
         try:
-            processed_image_data = await tools.process_image_from_url(avatar_url)
+            processed_image_data = await tools.process_avatar_from_url(avatar_url)
             
             if not processed_image_data:
                 logger.error("下载或处理头像图片失败")
