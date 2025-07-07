@@ -1,4 +1,5 @@
 import base64
+import datetime
 import io
 import logging
 import math
@@ -200,7 +201,11 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
     try:
         # 提取文件信息
         file_info = data_json["msg"][file_key]
-        md5 = file_info["md5"]
+        md5 = file_info.get("md5")
+        if not md5:
+            # 生成 8位日期 + 6位时间 的替代值
+            now = datetime.datetime.now()
+            md5 = now.strftime("%Y%m%d%H%M%S")
         data_length = int(file_info.get("length") or file_info.get("appattach").get("totallen"))
         file_title = (file_info.get("title") or "")
         
@@ -399,4 +404,4 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
         
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")
-        return False, f"下载失败: {str(e)}"
+        return False, f"下载失败: {str(e)}", ""

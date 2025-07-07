@@ -1,7 +1,5 @@
 import logging
 
-import aiohttp
-
 import config
 from api.wechat_api import wechat_api
 from api.telegram_sender import telegram_sender

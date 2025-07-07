@@ -278,36 +278,90 @@ def escape_markdown_chars(text):
 
 def escape_html_chars(text):
     """
-    转义文本中的HTML特殊字符，用于Telegram Bot API的HTML格式
+    智能转义HTML特殊字符，专门针对Telegram Bot API
+    保留Telegram支持的HTML标签，转义其他特殊字符
     """
     if not isinstance(text, str):
         return str(text)
     
-    # 检查是否包含Telegram支持的HTML标签
+    # Telegram Bot API 支持的HTML标签模式
     telegram_html_patterns = [
-        r'<a\s+href=["\'][^"\']*["\'][^>]*>.*?</a>',  # 链接
-        r'<b>.*?</b>',      # 粗体
-        r'<strong>.*?</strong>',  # 粗体
-        r'<i>.*?</i>',      # 斜体
-        r'<em>.*?</em>',    # 斜体
-        r'<code>.*?</code>',  # 代码
-        r'<pre>.*?</pre>',  # 预格式化
-        r'<blockquote>.*?</blockquote>',
-        r'<blockquote expandable>.*?</blockquote>',
+        # 基础格式标签
+        r'<b>.*?</b>',
+        r'<strong>.*?</strong>',
+        r'<i>.*?</i>',
+        r'<em>.*?</em>',
+        r'<u>.*?</u>',
+        r'<s>.*?</s>',
+        r'<strike>.*?</strike>',
+        r'<del>.*?</del>',
+        
+        # 剧透标签
+        r'<span\s+class=["\']tg-spoiler["\']>.*?</span>',
+        
+        # 链接标签
+        r'<a\s+href=["\'][^"\']*["\'](?:\s+[^>]*)?>.*?</a>',
+        
+        # 代码标签
+        r'<code>.*?</code>',
+        r'<pre>.*?</pre>',
+        r'<pre><code(?:\s+class=["\']language-[^"\']*["\'])?>.*?</code></pre>',
+        
+        # 引用块
+        r'<blockquote(?:\s+expandable)?(?:\s+[^>]*)?>.*?</blockquote>',
+        
+        # 自定义emoji
+        r'<tg-emoji\s+emoji-id=["\'][^"\']*["\']>.*?</tg-emoji>',
     ]
     
-    # 检查是否包含任何有效的Telegram HTML标签
-    has_valid_html = any(
-        re.search(pattern, text, re.IGNORECASE | re.DOTALL) 
-        for pattern in telegram_html_patterns
-    )
+    # 找到所有有效HTML标签的位置
+    html_ranges = []
+    for pattern in telegram_html_patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL):
+            html_ranges.append((match.start(), match.end()))
     
-    if has_valid_html:
-        return text  # 保留HTML标签
+    # 如果没有HTML标签，直接转义所有特殊字符
+    if not html_ranges:
+        return escape_special_chars(text)
     
-    # 转义特殊字符
-    text = text.replace('&', '&amp;')   # 先处理 & 符号（必须最先处理，避免重复转义）
+    # 合并重叠的HTML标签范围
+    html_ranges.sort()
+    merged_ranges = []
+    for start, end in html_ranges:
+        if merged_ranges and start <= merged_ranges[-1][1]:
+            merged_ranges[-1] = (merged_ranges[-1][0], max(merged_ranges[-1][1], end))
+        else:
+            merged_ranges.append((start, end))
+    
+    # 分段处理：HTML标签内不转义，标签外转义
+    result = []
+    last_end = 0
+    
+    for start, end in merged_ranges:
+        # 转义HTML标签前的普通文本
+        before_html = text[last_end:start]
+        if before_html:
+            result.append(escape_special_chars(before_html))
+        
+        # 保留HTML标签原样
+        html_tag = text[start:end]
+        result.append(html_tag)
+        last_end = end
+    
+    # 转义最后一段普通文本
+    after_html = text[last_end:]
+    if after_html:
+        result.append(escape_special_chars(after_html))
+    
+    return ''.join(result)
+
+
+def escape_special_chars(text):
+    """
+    转义HTML特殊字符
+    注意顺序：必须先转义 & 符号
+    """
+    text = text.replace('&', '&amp;')
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
-    
     return text

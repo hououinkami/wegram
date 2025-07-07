@@ -12,6 +12,7 @@ from telegram.error import NetworkError, TelegramError, TimedOut
 import config
 from config import LOCALE as locale
 from utils import tools
+from utils.message_formatter import escape_html_chars, escape_markdown_chars
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,7 @@ class TelegramSender:
         return await self._retry_operation(
             self.bot.send_message,
             chat_id=target_chat_id,
-            text=text,
+            text=self.text_formatter(text, parse_mode),
             parse_mode=parse_mode,
             reply_to_message_id=reply_to_message_id,
             disable_web_page_preview=disable_web_page_preview,
@@ -207,7 +208,7 @@ class TelegramSender:
             self.bot.send_photo,
             chat_id=target_chat_id,
             photo=photo_input,
-            caption=caption,
+            caption=self.text_formatter(caption, parse_mode),
             parse_mode=parse_mode,
             reply_to_message_id=reply_to_message_id,
             reply_markup=reply_markup
@@ -256,7 +257,7 @@ class TelegramSender:
             self.bot.send_document,
             chat_id=target_chat_id,
             document=doc_input,
-            caption=caption,
+            caption=self.text_formatter(caption, parse_mode),
             parse_mode=parse_mode,
             reply_to_message_id=reply_to_message_id,
             reply_markup=reply_markup
@@ -311,7 +312,7 @@ class TelegramSender:
             self.bot.send_video,
             chat_id=target_chat_id,
             video=video_input,
-            caption=caption,
+            caption=self.text_formatter(caption, parse_mode),
             parse_mode=parse_mode,
             duration=duration,
             width=width,
@@ -369,7 +370,7 @@ class TelegramSender:
             self.bot.send_audio,
             chat_id=target_chat_id,
             audio=audio_input,
-            caption=caption,
+            caption=self.text_formatter(caption, parse_mode),
             parse_mode=parse_mode,
             duration=duration,
             performer=performer,
@@ -428,7 +429,7 @@ class TelegramSender:
             self.bot.send_voice,
             chat_id=target_chat_id,
             voice=voice_input,
-            caption=caption,
+            caption=self.text_formatter(caption, parse_mode),
             parse_mode=parse_mode,
             duration=duration,
             reply_to_message_id=reply_to_message_id,
@@ -500,7 +501,7 @@ class TelegramSender:
             self.bot.send_animation,
             chat_id=target_chat_id,
             animation=animation_input,
-            caption=caption,
+            caption=self.text_formatter(caption, parse_mode),
             parse_mode=parse_mode,
             duration=duration,
             width=width,
@@ -668,7 +669,7 @@ class TelegramSender:
         
         return await self._retry_operation(
             self.bot.edit_message_text,
-            text=text,
+            text=self.text_formatter(text, parse_mode),
             chat_id=chat_id,
             message_id=message_id,
             inline_message_id=inline_message_id,
@@ -896,6 +897,15 @@ class TelegramSender:
             chat_id=target_chat_id
         )
     
+    def text_formatter(self, text: str, parse_mode: str = ""):
+        """格式化发送文本"""
+        if parse_mode == ParseMode.HTML:
+            return escape_html_chars(text)
+        elif parse_mode == ParseMode.MARKDOWN:
+            return escape_markdown_chars(text)
+        else:
+            return text
+
     def get_thread_info(self) -> Dict[str, Any]:
         """
         获取当前线程的信息（调试用）

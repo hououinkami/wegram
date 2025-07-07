@@ -41,6 +41,7 @@ class WeChatAPIPaths:
 
     # 群聊
     GROUP_QUIT = "/Group/Quit"
+    GROUP_MEMBER = "/Group/GetChatRoomMemberDetail"
 
     # 工具
     GET_IMAGE_CDN = "/Tools/CdnDownloadImage"
