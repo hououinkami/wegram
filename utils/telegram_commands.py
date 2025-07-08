@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from enum import Enum
 from functools import wraps
@@ -158,6 +159,108 @@ class BotCommands:
                 
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+
+    @staticmethod
+    @delete_command_message
+    @command_scope(CommandScope.BOT_ONLY)
+    async def friend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """获取联系人列表并同步到contact.json"""
+        chat_id = update.effective_chat.id
+        
+        try:
+            # 发送开始处理的消息
+            logger.info("🔄 正在获取联系人列表...")
+            
+            # 获取联系人列表
+            friend_contacts, chatroom_contacts, gh_contacts = await wechat_contacts.get_friends()
+            
+            if not friend_contacts:
+                await telegram_sender.send_text(chat_id, "❌ 未获取到好友联系人")
+                return
+            
+            logger.info(f"📋 获取到 {len(friend_contacts)} 个好友，正在同步信息...")
+            
+            # 将friend_contacts按每组20个分割
+            batch_size = 20
+            batches = [friend_contacts[i:i + batch_size] for i in range(0, len(friend_contacts), batch_size)]
+            
+            new_contacts_count = 0
+            total_batches = len(batches)
+            
+            # 处理每个批次
+            for batch_index, batch in enumerate(batches):
+                try:
+                    # 发送进度更新
+                    if batch_index % 5 == 0 or batch_index == total_batches - 1:  # 每5个批次或最后一个批次更新进度
+                        progress = f"⏳ 处理进度: {batch_index + 1}/{total_batches} 批次"
+                        logger.info(progress)
+                    
+                    # 调用get_user_info获取用户信息
+                    user_info_dict = await wechat_contacts.get_user_info(batch)
+                    
+                    if not user_info_dict:
+                        logger.warning(f"批次 {batch_index + 1} 未获取到用户信息")
+                        continue
+                    
+                    # 遍历用户信息
+                    for wxid, user_info in user_info_dict.items():
+                        if user_info is None:
+                            logger.warning(f"用户 {wxid} 信息获取失败")
+                            continue
+                        
+                        # 检查wxId是否已存在于contact.json中
+                        existing_contact = await contact_manager.get_contact(wxid)
+                        
+                        if existing_contact is None:
+                            # 不存在则创建新联系人
+                            new_contact = {
+                                "name": user_info.name,
+                                "wxId": wxid,
+                                "chatId": -9999999999,
+                                "isGroup": False,
+                                "isReceive": True,
+                                "alias": "",
+                                "avatarLink": user_info.avatar_url if user_info.avatar_url else ""
+                            }
+                            
+                            # 添加到联系人管理器
+                            contact_manager.contacts.append(new_contact)
+                            contact_manager.wxid_to_contact[wxid] = new_contact
+                            
+                            new_contacts_count += 1
+                            logger.info(f"添加新联系人: {user_info.name} ({wxid})")
+                    
+                    # 每处理几个批次休眠一下，避免请求过于频繁
+                    if batch_index < total_batches - 1:  # 不是最后一个批次
+                        await asyncio.sleep(0.5)  # 休眠500毫秒
+                        
+                except Exception as e:
+                    logger.error(f"处理批次 {batch_index + 1} 时出错: {str(e)}")
+                    continue
+            
+            # 保存所有更改到文件
+            if new_contacts_count > 0:
+                await contact_manager._save_contacts()
+                success_msg = f"✅ 同步完成！新增 {new_contacts_count} 个联系人到contact.json"
+            else:
+                success_msg = "✅ 同步完成！所有联系人已存在，无新增联系人"
+            
+            logger.info(success_msg)
+            
+            # 发送统计信息
+            stats_msg = f"""
+    📊 **同步统计**
+    • 总好友数: {len(friend_contacts)}
+    • 新增联系人: {new_contacts_count}
+    • 处理批次: {total_batches}
+    • 当前联系人总数: {len(contact_manager.contacts)}
+            """
+            logger.info(stats_msg)
+            
+        except Exception as e:
+            error_msg = f"❌ {locale.common('failed')}: {str(e)}"
+            await telegram_sender.send_text(chat_id, error_msg)
+            logger.error(f"friend_command执行失败: {str(e)}")
     
     @staticmethod
     @delete_command_message
@@ -340,6 +443,7 @@ class BotCommands:
             ["update", locale.command("update")],
             ["receive", locale.command("receive")], 
             ["unbind", locale.command("unbind")],
+            ["friend", locale.command("friend")],
             ["add", locale.command("add")],
             ["remark", locale.command("remark")],
             ["quit", locale.command("quit")],
@@ -355,6 +459,7 @@ class BotCommands:
             "update": cls.update_command,
             "receive": cls.receive_command,
             "unbind": cls.unbind_command,
+            "friend": cls.friend_command,
             "add": cls.add_command,
             "remark": cls.remark_command,
             "quit": cls.quit_command,
