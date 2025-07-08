@@ -75,7 +75,7 @@ async def _forward_text(chat_id: int, msg_type: int, from_wxid: str, sender_name
     
     return await telegram_sender.send_text(chat_id, send_text)
 
-async def _forward_image(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_image(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, **kwargs) -> dict:
     """处理图片消息"""
     # 异步下载图片
     success, file, _ = await wechat_download.get_image(msg_id, from_wxid, content)
@@ -491,8 +491,13 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str,
     
     if contact_dic and not contact_dic["isReceive"]:
         return None
-        
-    if contact_dic and contact_dic["isReceive"]:
+    
+    # 删除占位信息
+    if contact_dic["chatId"] == -9999999999:
+        await contact_manager.delete_contact(from_wxid)
+
+    # 检查是否已有有效的chatId
+    if contact_dic and contact_dic["isReceive"] and contact_dic["chatId"] != -9999999999:
         return contact_dic["chatId"]
     
     # 检查是否允许自动创建群组
@@ -815,7 +820,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         }
         
         # 发送消息并处理响应
-        response = await _send_message_with_handler(chat_id, msg_type, from_wxid, sender_name, content, handler_params)
+        response = await _send_message_with_handler(chat_id, msg_type, handler_params)
 
         # ========== 存储消息ID映射 ==========
         if response and not from_wxid.startswith('gh_'):
