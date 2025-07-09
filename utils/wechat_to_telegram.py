@@ -491,10 +491,6 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str,
     
     if contact_dic and not contact_dic["isReceive"]:
         return None
-    
-    # 删除占位信息
-    if contact_dic["chatId"] == -9999999999:
-        await contact_manager.delete_contact(from_wxid)
 
     # 检查是否已有有效的chatId
     if contact_dic and contact_dic["isReceive"] and contact_dic["chatId"] != -9999999999:
