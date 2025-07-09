@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Dict, Optional
 
+from api import wechat_contacts, telegram_sender
 from utils.group_binding import create_group
 
 logger = logging.getLogger(__name__)
@@ -196,6 +197,11 @@ class ContactManager:
     async def create_group_for_contact_async(self, wxid: str, contact_name: str, bot_token: str = None, description: str = "", avatar_url: str = None) -> Optional[Dict]:
         """异步方式创建群组"""        
         try:
+            # 删除占位信息
+            contact_dic = await contact_manager.get_contact(wxid)
+            if contact_dic and contact_dic["chatId"] == -9999999999:
+                await contact_manager.delete_contact(wxid)
+
             # 使用线程池执行同步版本，避免事件循环冲突
             result = await create_group(wxid, contact_name, description, avatar_url)
             
@@ -258,6 +264,103 @@ class ContactManager:
         self.chatid_to_wxid[chat_id] = wxid
         
         await self._save_contacts()
+    
+    async def update_contacts_and_sync_to_json(self, chat_id: int):
+        """获取联系人列表并同步到contact.json"""
+        try:
+            # 发送开始处理的消息
+            logger.info("🔄 正在获取联系人列表...")
+            
+            # 获取联系人列表
+            friend_contacts, chatroom_contacts, gh_contacts = await wechat_contacts.get_friends()
+            all_contacts = friend_contacts + chatroom_contacts
+            if not all_contacts:
+                await telegram_sender.send_text(chat_id, "❌ 未获取到好友联系人")
+                return
+            
+            logger.info(f"📋 获取到 {len(all_contacts)} 个好友，正在同步信息...")
+            
+            # 将all_contacts按每组20个分割
+            batch_size = 20
+            batches = [all_contacts[i:i + batch_size] for i in range(0, len(all_contacts), batch_size)]
+            
+            new_contacts_count = 0
+            total_batches = len(batches)
+            
+            # 处理每个批次
+            for batch_index, batch in enumerate(batches):
+                try:
+                    # 发送进度更新
+                    if batch_index % 5 == 0 or batch_index == total_batches - 1:  # 每5个批次或最后一个批次更新进度
+                        progress = f"⏳ 处理进度: {batch_index + 1}/{total_batches} 批次"
+                        logger.info(progress)
+                    
+                    # 调用get_user_info获取用户信息
+                    user_info_dict = await wechat_contacts.get_user_info(batch)
+                    
+                    if not user_info_dict:
+                        logger.warning(f"批次 {batch_index + 1} 未获取到用户信息")
+                        continue
+                    
+                    # 遍历用户信息
+                    for wxid, user_info in user_info_dict.items():
+                        if user_info is None:
+                            logger.warning(f"用户 {wxid} 信息获取失败")
+                            continue
+                        
+                        # 检查wxId是否已存在于contact.json中
+                        existing_contact = await self.get_contact(wxid)
+                        
+                        if existing_contact is None:
+                            # 不存在则创建新联系人
+                            new_contact = {
+                                "name": user_info.name,
+                                "wxId": wxid,
+                                "chatId": -9999999999,
+                                "isGroup": False,
+                                "isReceive": True,
+                                "alias": "",
+                                "avatarLink": user_info.avatar_url if user_info.avatar_url else ""
+                            }
+                            
+                            # 添加到联系人管理器
+                            self.contacts.append(new_contact)
+                            self.wxid_to_contact[wxid] = new_contact
+                            
+                            new_contacts_count += 1
+                            logger.info(f"添加新联系人: {user_info.name} ({wxid})")
+                    
+                    # 每处理几个批次休眠一下，避免请求过于频繁
+                    if batch_index < total_batches - 1:  # 不是最后一个批次
+                        await asyncio.sleep(0.5)  # 休眠500毫秒
+                        
+                except Exception as e:
+                    logger.error(f"处理批次 {batch_index + 1} 时出错: {str(e)}")
+                    continue
+            
+            # 保存所有更改到文件
+            if new_contacts_count > 0:
+                await self._save_contacts()
+                success_msg = f"✅ 同步完成！新增 {new_contacts_count} 个联系人到contact.json"
+            else:
+                success_msg = "✅ 同步完成！所有联系人已存在，无新增联系人"
+            
+            logger.info(success_msg)
+            
+            # 发送统计信息
+            stats_msg = f"""
+    📊 **同步统计**
+    • 总好友数: {len(all_contacts)}
+    • 新增联系人: {new_contacts_count}
+    • 处理批次: {total_batches}
+    • 当前联系人总数: {len(self.contacts)}
+            """
+            logger.info(stats_msg)
+            
+        except Exception as e:
+            error_msg = f"❌ 更新联系人失败: {str(e)}"
+            await telegram_sender.send_text(chat_id, error_msg)
+            logger.error(f"update_contacts执行失败: {str(e)}")
 
 # 创建全局实例
 contact_manager = ContactManager()
