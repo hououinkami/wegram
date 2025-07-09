@@ -194,7 +194,7 @@ class ContactManager:
             return False
     
     # 异步创建群组
-    async def create_group_for_contact_async(self, wxid: str, contact_name: str, bot_token: str = None, description: str = "", avatar_url: str = None) -> Optional[Dict]:
+    async def create_group_for_contact_async(self, wxid: str, contact_name: str, description: str = "", avatar_url: str = None) -> Optional[Dict]:
         """异步方式创建群组"""        
         try:
             # 删除占位信息
