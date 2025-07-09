@@ -193,6 +193,30 @@ class ContactManager:
             logger.error(f"更新联系人字段失败 - ChatID: {chat_id}, 更新: {updates}, 错误: {e}")
             return False
     
+    async def search_contacts_by_name(self, username: str = "") -> list:
+        """根据用户名搜索联系人"""
+        try:
+            # 先加载最新的联系人信息
+            await self.load_contacts()
+            
+            if not username or not username.strip():
+                return self.contacts
+            
+            # 搜索name字段包含username的联系人（不区分大小写）
+            username_lower = username.strip().lower()
+            matching_contacts = []
+            
+            for contact in self.contacts:
+                contact_name = contact.get("name", "")
+                if contact_name and username_lower in contact_name.lower():
+                    matching_contacts.append(contact)
+            
+            return matching_contacts
+            
+        except Exception as e:
+            logger.error(f"搜索联系人失败 - 用户名: {username}, 错误: {e}")
+            return []
+
     # 异步创建群组
     async def create_group_for_contact_async(self, wxid: str, contact_name: str, description: str = "", avatar_url: str = None) -> Optional[Dict]:
         """异步方式创建群组"""        

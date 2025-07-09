@@ -172,6 +172,9 @@ class BotCommands:
             if args and args[0].lower() == 'update':
                 # 执行更新功能
                 await contact_manager.update_contacts_and_sync_to_json(chat_id)
+            elif args and args[0].lower() != 'update':
+                # 执行搜索
+                await BotCommands.list_contacts(chat_id, args[0])
             else:
                 # 执行联系人列表显示功能
                 await BotCommands.list_contacts(chat_id)
@@ -355,21 +358,24 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
-    async def list_contacts(chat_id: int):
+    async def list_contacts(chat_id: int, search_word: str = ""):
         """显示联系人列表 - 简化版本，直接跳转到分页处理器"""
         try:
             from utils.contact_manager import contact_manager
             
             # 加载联系人数据
-            await contact_manager.load_contacts()
-            contacts = contact_manager.contacts
+            if not search_word:
+                await contact_manager.load_contacts()
+                contacts = contact_manager.contacts
+            else:   # 搜索联系人
+                contacts = await contact_manager.search_contacts_by_name(search_word)
             
             if not contacts:
                 await telegram_sender.send_text(chat_id, locale.command('no_contacts'))
                 return
             
             # 如果有联系人，直接显示第一页
-            await BotCommands._show_contacts_page(chat_id, 0)
+            await BotCommands._show_contacts_page(chat_id, contacts, 0, search_word)
             
         except Exception as e:
             logger.error(f"显示联系人列表失败: {e}")
@@ -379,11 +385,11 @@ class BotCommands:
             )
     
     @staticmethod
-    async def _show_contacts_page(chat_id: int, page: int = 0):
+    async def _show_contacts_page(chat_id: int, contacts: list, page: int = 0, search_word: str = ""):
         """显示联系人分页 - 发送新消息版本"""
         try:
             # 使用共享的构建方法
-            message_text, reply_markup = await BotCommands.build_contacts_page_data(page)
+            message_text, reply_markup = await BotCommands.build_contacts_page_data(contacts, page, search_word)
             
             if reply_markup is None:
                 await telegram_sender.send_text(chat_id, message_text)
@@ -398,13 +404,9 @@ class BotCommands:
             )
             
     @staticmethod
-    async def build_contacts_page_data(page: int = 0):
+    async def build_contacts_page_data(contacts: list, page: int = 0, search_word: str = ""):
         """构建联系人页面数据 - 供回调处理器使用"""
-        try:
-            # 获取所有联系人
-            await contact_manager.load_contacts()
-            contacts = contact_manager.contacts
-            
+        try:            
             if not contacts:
                 return None, None
             
@@ -447,7 +449,9 @@ class BotCommands:
                     "is_group": contact1.get('isGroup', False),
                     "is_receive": contact1.get('isReceive', True),
                     "alias": contact1.get('alias', ''),
-                    "avatar_url": contact1.get('avatarLink', '')
+                    "avatar_url": contact1.get('avatarLink', ''),
+                    'source_page': page,
+                    'search_word': search_word
                 }
                 
                 row.append(InlineKeyboardButton(
@@ -472,7 +476,9 @@ class BotCommands:
                         "is_group": contact2.get('isGroup', False),
                         "is_receive": contact2.get('isReceive', True),
                         "alias": contact2.get('alias', ''),
-                        "avatar_url": contact2.get('avatarLink', '')
+                        "avatar_url": contact2.get('avatarLink', ''),
+                        'source_page': page,
+                        'search_word': search_word
                     }
                     
                     row.append(InlineKeyboardButton(
@@ -489,7 +495,7 @@ class BotCommands:
                 if page > 0:
                     pagination_row.append(InlineKeyboardButton(
                         f"{locale.command('previous_page')}",
-                        callback_data=create_callback_data("contact_page", {"page": page - 1})
+                        callback_data=create_callback_data("contact_page", {"contacts": contacts, "page": page - 1, "search_word": search_word})
                     ))
                 
                 pagination_row.append(InlineKeyboardButton(
@@ -500,7 +506,7 @@ class BotCommands:
                 if page < total_pages - 1:
                     pagination_row.append(InlineKeyboardButton(
                         f"{locale.command('next_page')}",
-                        callback_data=create_callback_data("contact_page", {"page": page + 1})
+                        callback_data=create_callback_data("contact_page", {"contacts": contacts, "page": page + 1, "search_word": search_word})
                     ))
                 
                 keyboard.append(pagination_row)

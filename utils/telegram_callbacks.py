@@ -300,12 +300,21 @@ async def handle_contact_page(update: Update, context: ContextTypes.DEFAULT_TYPE
     """处理联系人列表分页回调"""
     query = update.callback_query
     page = data.get("page", 0)
+    search_word = data.get("search_word", "")
     
     try:
+        if search_word and search_word.strip():
+            # 有搜索词，执行搜索
+            contacts = await contact_manager.search_contacts_by_name(search_word)
+        else:
+            # 无搜索词，获取所有联系人（可能已缓存）
+            await contact_manager.load_contacts()
+            contacts = contact_manager.contacts
+        
         # 直接调用 BotCommands 的方法来构建页面数据
         from utils.telegram_commands import BotCommands
         
-        message_text, reply_markup = await BotCommands.build_contacts_page_data(page)
+        message_text, reply_markup = await BotCommands.build_contacts_page_data(contacts, page, search_word)
         
         if reply_markup is None:
             await query.edit_message_text(message_text, reply_markup=None)
@@ -326,10 +335,12 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         wxid = data.get('wxid', '')
         name = data.get('name', wxid)
         chat_id = data.get('chat_id', '')
-        alias = data.get('alias', '') or ''
+        alias = data.get('alias', '')
         is_group = data.get('is_group', False)
         is_receive = data.get('is_receive', True)
-        avatar_url = data.get('avatar_url', '') or ''
+        avatar_url = data.get('avatar_url', '')
+        source_page = data.get('source_page', 0)
+        search_word = data.get('search_word', "")
         
         contact_info = f"👤 {name}"
         
@@ -388,7 +399,9 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         # 删除联系人按钮
         delete_data = {
             "wxid": wxid,
-            "name": name
+            "name": name,
+            "source_page": source_page,
+            "search_word": search_word
         }
         second_row.append(InlineKeyboardButton(
             f"{locale.command('delete_contact')}",
@@ -401,7 +414,7 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         keyboard.append([
             InlineKeyboardButton(
                 f"{locale.command('back')}",
-                callback_data=create_callback_data("contact_page", {"page": 0})
+                callback_data=create_callback_data("contact_page", {"page": source_page, "search_word": search_word})
             )
         ])
         
@@ -545,30 +558,32 @@ async def handle_delete_contact(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         wxid = data.get('wxid')
         name = data.get('name', wxid)
+        source_page = data.get("source_page", 0)
+        search_word = data.get("search_word", "")
         
         if not wxid:
             await query.answer("❌ 联系人ID无效", show_alert=True)
             return
         
         # 显示确认删除界面
-        confirm_text = f"""⚠️ **确认删除联系人**"""
+        confirm_text = f"""⚠️ **削除の確認**"""
       
         # 确认删除的键盘
         keyboard = [
             [
                 InlineKeyboardButton(
-                    "✅ 确认删除",
-                    callback_data=create_callback_data("confirm_delete", {"wxid": wxid, "name": name})
+                    locale.command('ok'),
+                    callback_data=create_callback_data("confirm_delete", {"wxid": wxid, "name": name, "source_page": source_page, "search_word": search_word})
                 ),
                 InlineKeyboardButton(
-                    "❌ 取消删除",
+                    locale.command('cancel'),
                     callback_data=create_callback_data("contact_info", data)
                 )
             ],
             [
                 InlineKeyboardButton(
-                    "🔙 返回列表",
-                    callback_data=create_callback_data("contact_page", {"page": 0})
+                    locale.command('back'),
+                    callback_data=create_callback_data("contact_page", {"page": source_page, "search_word": search_word})
                 )
             ]
         ]
@@ -588,6 +603,8 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         wxid = data.get('wxid')
         name = data.get('name', wxid)
+        source_page = data.get("source_page", 0)
+        search_word = data.get("search_word", "")
         
         if not wxid:
             await query.answer("❌ 联系人ID无效", show_alert=True)
@@ -597,21 +614,17 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
         success = await contact_manager.delete_contact(wxid)
         
         if success:
-            await query.answer(f"✅ 已删除联系人: {name}")
+            await query.answer(f"✅ 削除成功: {name}")
             
             # 显示删除成功页面
-            success_text = f"""✅ **删除成功**"""
+            success_text = locale.common('successed')
           
             # 成功页面的键盘
             keyboard = [
                 [
                     InlineKeyboardButton(
-                        "🔙 返回列表",
-                        callback_data=create_callback_data("contact_page", {"page": 0})
-                    ),
-                    InlineKeyboardButton(
-                        "🔄 刷新列表",
-                        callback_data=create_callback_data("contact_page", {"page": 0})
+                        locale.command('back'),
+                        callback_data=create_callback_data("contact_page", {"page": source_page, "search_word": search_word})
                     )
                 ]
             ]
