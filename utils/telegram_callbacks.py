@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 
 from config import LOCALE as locale
 from api.wechat_api import wechat_api
+from utils.contact_manager import contact_manager
 
 logger = logging.getLogger(__name__)
 
@@ -293,3 +294,339 @@ async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE,
     except Exception as e:
         logger.error(f"❌ 添加好友失败: {e}")
         await query.answer("❌ 失敗")
+
+@CallbackRegistry.register_with_data("contact_page")
+async def handle_contact_page(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理联系人列表分页回调"""
+    query = update.callback_query
+    page = data.get("page", 0)
+    
+    try:
+        # 直接调用 BotCommands 的方法来构建页面数据
+        from utils.telegram_commands import BotCommands
+        
+        message_text, reply_markup = await BotCommands.build_contacts_page_data(page)
+        
+        if reply_markup is None:
+            await query.edit_message_text(message_text, reply_markup=None)
+        else:
+            await query.edit_message_text(message_text, reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"处理联系人分页失败: {e}")
+        await query.answer(f"❌ 操作失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register_with_data("contact_info")
+async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理联系人信息查看回调"""
+    query = update.callback_query
+    
+    try:
+        # 构建联系人详细信息
+        wxid = data.get('wxid', '')
+        name = data.get('name', wxid)
+        chat_id = data.get('chat_id', '')
+        alias = data.get('alias', '') or ''
+        is_group = data.get('is_group', False)
+        is_receive = data.get('is_receive', True)
+        avatar_url = data.get('avatar_url', '') or ''
+        
+        contact_info = f"👤 {name}"
+        
+        # 构建操作按钮
+        keyboard = []
+        
+        # 第一行：聊天和接收状态
+        first_row = []
+        
+        # 如果有有效的chatId，添加"前往聊天"按钮
+        if chat_id and chat_id != -9999999999:
+            first_row.append(InlineKeyboardButton(
+                    f"{locale.command('group_binded')}", 
+                    callback_data="page_info"
+                ))
+        else:
+            bind_data = {
+                "wxid": wxid,
+                "name": name,
+                "avatar_url": avatar_url
+            }
+            first_row.append(InlineKeyboardButton(
+                f"{locale.command('group_binding')}", 
+                callback_data=create_callback_data("group_binding", bind_data)
+            ))
+        
+        # 切换接收状态按钮
+        receive_text = f"{locale.command('receive_off')}" if is_receive else f"{locale.command('receive_on')}"
+        receive_emoji = "🔕" if is_receive else "🔔"
+        toggle_data = {
+            "wxid": wxid,
+            "current_receive": is_receive
+        }
+        first_row.append(InlineKeyboardButton(
+            f"{receive_emoji} {receive_text}",
+            callback_data=create_callback_data("toggle_receive", toggle_data)
+        ))
+        
+        if first_row:
+            keyboard.append(first_row)
+        
+        # 第二行：管理操作
+        second_row = []
+        
+        # 编辑联系人按钮（如果需要的话）
+        edit_data = {
+            "wxid": wxid,
+            "name": name,
+            "alias": alias
+        }
+        second_row.append(InlineKeyboardButton(
+            f"{locale.command('edit_contact')}",
+            callback_data=create_callback_data("page_info", edit_data)
+        ))
+        
+        # 删除联系人按钮
+        delete_data = {
+            "wxid": wxid,
+            "name": name
+        }
+        second_row.append(InlineKeyboardButton(
+            f"{locale.command('delete_contact')}",
+            callback_data=create_callback_data("delete_contact", delete_data)
+        ))
+        
+        keyboard.append(second_row)
+        
+        # 第三行：返回按钮
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{locale.command('back')}",
+                callback_data=create_callback_data("contact_page", {"page": 0})
+            )
+        ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # 编辑消息显示联系人详情
+        await query.edit_message_text(contact_info, reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"获取联系人信息失败: {e}")
+        await query.answer(f"❌ 获取联系人信息失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register_with_data("group_binding")
+async def handle_group_binding(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理群组绑定回调"""
+    query = update.callback_query
+    
+    try:
+        wxid = data.get('wxid')
+        name = data.get('name', wxid)
+        avatar_url = data.get('avatar_url', '')
+        
+        if not wxid:
+            await query.answer("❌ 联系人ID无效", show_alert=True)
+            return
+        
+        await query.answer("🔄 正在创建群组...")
+        
+        # 创建群组
+        result = await contact_manager.create_group_for_contact_async(
+            wxid=wxid,
+            contact_name=name,
+            avatar_url=avatar_url
+        )
+        
+        if result:
+            # 简单替换：直接查找包含特定文本的按钮并替换
+            current_markup = query.message.reply_markup
+            if current_markup:
+                new_keyboard = []
+                for row in current_markup.inline_keyboard:
+                    new_row = []
+                    for button in row:
+                        if button.text == locale.command('group_binding'):
+                            # 找到目标按钮，替换它
+                            new_button = InlineKeyboardButton(
+                                f"{locale.command('group_binded')}", 
+                                callback_data="page_info"
+                            )
+                            new_row.append(new_button)
+                        else:
+                            new_row.append(button)
+                    new_keyboard.append(new_row)
+                
+                new_reply_markup = InlineKeyboardMarkup(new_keyboard)
+                await query.edit_message_reply_markup(reply_markup=new_reply_markup)
+            
+            await query.answer("✅ 群组创建成功！")
+        else:
+            await query.answer("❌ 群组创建失败", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"群组绑定失败: {e}")
+        await query.answer(f"❌ 操作失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register_with_data("toggle_receive")
+async def handle_toggle_receive(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理切换接收状态回调"""
+    query = update.callback_query
+    
+    try:
+        wxid = data.get('wxid')
+        current_receive = data.get('current_receive', True)
+        
+        if not wxid:
+            await query.answer("❌ 联系人ID无效", show_alert=True)
+            return
+        
+        # 获取联系人信息
+        contact = await contact_manager.get_contact(wxid)
+        if not contact:
+            await query.answer("❌ 联系人不存在", show_alert=True)
+            return
+        
+        chat_id = contact.get('chatId')
+        if not chat_id:
+            await query.answer("❌ 联系人未绑定Telegram聊天", show_alert=True)
+            return
+        
+        # 切换接收状态
+        await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
+        
+        # 获取更新后的状态
+        updated_contact = await contact_manager.get_contact(wxid)
+        new_receive_status = updated_contact.get('isReceive', True)
+        
+        # 显示操作结果
+        status_text = "✅ 已开启消息接收" if new_receive_status else "🔕 已关闭消息接收"
+        await query.answer(status_text)
+        
+        # 只更新键盘，不重新构建整个消息
+        current_markup = query.message.reply_markup
+        if current_markup and current_markup.inline_keyboard:
+            # 复制现有的键盘
+            new_keyboard = []
+            
+            for row in current_markup.inline_keyboard:
+                new_row = []
+                for button in row:
+                    # 检查是否是接收状态按钮
+                    if button.callback_data and "toggle_receive:" in button.callback_data:
+                        # 更新接收状态按钮
+                        receive_text = locale.command('receive_off') if new_receive_status else locale.command('receive_on')
+                        receive_emoji = "🔕" if new_receive_status else "🔔"
+                        toggle_data = {
+                            "wxid": wxid,
+                            "current_receive": new_receive_status
+                        }
+                        new_button = InlineKeyboardButton(
+                            f"{receive_emoji} {receive_text}",
+                            callback_data=create_callback_data("toggle_receive", toggle_data)
+                        )
+                        new_row.append(new_button)
+                    else:
+                        # 保持其他按钮不变
+                        new_row.append(button)
+                new_keyboard.append(new_row)
+            
+            new_reply_markup = InlineKeyboardMarkup(new_keyboard)
+            await query.edit_message_reply_markup(reply_markup=new_reply_markup)
+        
+    except Exception as e:
+        logger.error(f"切换接收状态失败: {e}")
+        await query.answer(f"❌ 操作失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register_with_data("delete_contact")
+async def handle_delete_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理删除联系人回调"""
+    query = update.callback_query
+    
+    try:
+        wxid = data.get('wxid')
+        name = data.get('name', wxid)
+        
+        if not wxid:
+            await query.answer("❌ 联系人ID无效", show_alert=True)
+            return
+        
+        # 显示确认删除界面
+        confirm_text = f"""⚠️ **确认删除联系人**"""
+      
+        # 确认删除的键盘
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ 确认删除",
+                    callback_data=create_callback_data("confirm_delete", {"wxid": wxid, "name": name})
+                ),
+                InlineKeyboardButton(
+                    "❌ 取消删除",
+                    callback_data=create_callback_data("contact_info", data)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 返回列表",
+                    callback_data=create_callback_data("contact_page", {"page": 0})
+                )
+            ]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(confirm_text, reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"显示删除确认失败: {e}")
+        await query.answer(f"❌ 操作失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register_with_data("confirm_delete")
+async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理确认删除联系人回调"""
+    query = update.callback_query
+    
+    try:
+        wxid = data.get('wxid')
+        name = data.get('name', wxid)
+        
+        if not wxid:
+            await query.answer("❌ 联系人ID无效", show_alert=True)
+            return
+        
+        # 执行删除操作
+        success = await contact_manager.delete_contact(wxid)
+        
+        if success:
+            await query.answer(f"✅ 已删除联系人: {name}")
+            
+            # 显示删除成功页面
+            success_text = f"""✅ **删除成功**"""
+          
+            # 成功页面的键盘
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "🔙 返回列表",
+                        callback_data=create_callback_data("contact_page", {"page": 0})
+                    ),
+                    InlineKeyboardButton(
+                        "🔄 刷新列表",
+                        callback_data=create_callback_data("contact_page", {"page": 0})
+                    )
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(success_text, reply_markup=reply_markup)
+        else:
+            await query.answer("❌ 删除失败，请稍后重试", show_alert=True)
+        
+    except Exception as e:
+        logger.error(f"确认删除联系人失败: {e}")
+        await query.answer(f"❌ 删除失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register("page_info")
+async def handle_page_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理页面信息按钮（不执行任何操作）"""
+    query = update.callback_query
+    await query.answer("📄 当前页面信息")  # 只是确认点击，显示提示

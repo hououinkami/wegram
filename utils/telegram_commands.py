@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from enum import Enum
 from functools import wraps
@@ -161,102 +160,22 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
-    @delete_command_message
     @command_scope(CommandScope.BOT_ONLY)
     async def friend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """获取联系人列表并同步到contact.json"""
+        """处理friend命令，支持update参数"""
         chat_id = update.effective_chat.id
         
         try:
-            # 发送开始处理的消息
-            logger.info("🔄 正在获取联系人列表...")
+            # 获取命令参数
+            args = context.args if context.args else []
             
-            # 获取联系人列表
-            friend_contacts, chatroom_contacts, gh_contacts = await wechat_contacts.get_friends()
-            
-            if not friend_contacts:
-                await telegram_sender.send_text(chat_id, "❌ 未获取到好友联系人")
-                return
-            
-            logger.info(f"📋 获取到 {len(friend_contacts)} 个好友，正在同步信息...")
-            
-            # 将friend_contacts按每组20个分割
-            batch_size = 20
-            batches = [friend_contacts[i:i + batch_size] for i in range(0, len(friend_contacts), batch_size)]
-            
-            new_contacts_count = 0
-            total_batches = len(batches)
-            
-            # 处理每个批次
-            for batch_index, batch in enumerate(batches):
-                try:
-                    # 发送进度更新
-                    if batch_index % 5 == 0 or batch_index == total_batches - 1:  # 每5个批次或最后一个批次更新进度
-                        progress = f"⏳ 处理进度: {batch_index + 1}/{total_batches} 批次"
-                        logger.info(progress)
-                    
-                    # 调用get_user_info获取用户信息
-                    user_info_dict = await wechat_contacts.get_user_info(batch)
-                    
-                    if not user_info_dict:
-                        logger.warning(f"批次 {batch_index + 1} 未获取到用户信息")
-                        continue
-                    
-                    # 遍历用户信息
-                    for wxid, user_info in user_info_dict.items():
-                        if user_info is None:
-                            logger.warning(f"用户 {wxid} 信息获取失败")
-                            continue
-                        
-                        # 检查wxId是否已存在于contact.json中
-                        existing_contact = await contact_manager.get_contact(wxid)
-                        
-                        if existing_contact is None:
-                            # 不存在则创建新联系人
-                            new_contact = {
-                                "name": user_info.name,
-                                "wxId": wxid,
-                                "chatId": -9999999999,
-                                "isGroup": False,
-                                "isReceive": True,
-                                "alias": "",
-                                "avatarLink": user_info.avatar_url if user_info.avatar_url else ""
-                            }
-                            
-                            # 添加到联系人管理器
-                            contact_manager.contacts.append(new_contact)
-                            contact_manager.wxid_to_contact[wxid] = new_contact
-                            
-                            new_contacts_count += 1
-                            logger.info(f"添加新联系人: {user_info.name} ({wxid})")
-                    
-                    # 每处理几个批次休眠一下，避免请求过于频繁
-                    if batch_index < total_batches - 1:  # 不是最后一个批次
-                        await asyncio.sleep(0.5)  # 休眠500毫秒
-                        
-                except Exception as e:
-                    logger.error(f"处理批次 {batch_index + 1} 时出错: {str(e)}")
-                    continue
-            
-            # 保存所有更改到文件
-            if new_contacts_count > 0:
-                await contact_manager._save_contacts()
-                success_msg = f"✅ 同步完成！新增 {new_contacts_count} 个联系人到contact.json"
+            if args and args[0].lower() == 'update':
+                # 执行更新功能
+                await contact_manager.update_contacts_and_sync_to_json(chat_id)
             else:
-                success_msg = "✅ 同步完成！所有联系人已存在，无新增联系人"
-            
-            logger.info(success_msg)
-            
-            # 发送统计信息
-            stats_msg = f"""
-    📊 **同步统计**
-    • 总好友数: {len(friend_contacts)}
-    • 新增联系人: {new_contacts_count}
-    • 处理批次: {total_batches}
-    • 当前联系人总数: {len(contact_manager.contacts)}
-            """
-            logger.info(stats_msg)
-            
+                # 执行联系人列表显示功能
+                await BotCommands.list_contacts(chat_id)
+                
         except Exception as e:
             error_msg = f"❌ {locale.common('failed')}: {str(e)}"
             await telegram_sender.send_text(chat_id, error_msg)
@@ -434,7 +353,179 @@ class BotCommands:
                 
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+
+    @staticmethod
+    async def list_contacts(chat_id: int):
+        """显示联系人列表 - 简化版本，直接跳转到分页处理器"""
+        try:
+            from utils.contact_manager import contact_manager
+            
+            # 加载联系人数据
+            await contact_manager.load_contacts()
+            contacts = contact_manager.contacts
+            
+            if not contacts:
+                await telegram_sender.send_text(chat_id, locale.command('no_contacts'))
+                return
+            
+            # 如果有联系人，直接显示第一页
+            await BotCommands._show_contacts_page(chat_id, 0)
+            
+        except Exception as e:
+            logger.error(f"显示联系人列表失败: {e}")
+            await telegram_sender.send_text(
+                chat_id=chat_id,
+                text=f"❌ 获取联系人列表失败: {str(e)}"
+            )
     
+    @staticmethod
+    async def _show_contacts_page(chat_id: int, page: int = 0):
+        """显示联系人分页 - 发送新消息版本"""
+        try:
+            # 使用共享的构建方法
+            message_text, reply_markup = await BotCommands.build_contacts_page_data(page)
+            
+            if reply_markup is None:
+                await telegram_sender.send_text(chat_id, message_text)
+            else:
+                await telegram_sender.send_text(chat_id, message_text, reply_markup=reply_markup)
+                
+        except Exception as e:
+            logger.error(f"显示联系人分页失败: {e}")
+            await telegram_sender.send_text(
+                chat_id=chat_id,
+                text=f"❌ 显示联系人列表失败: {str(e)}"
+            )
+            
+    @staticmethod
+    async def build_contacts_page_data(page: int = 0):
+        """构建联系人页面数据 - 供回调处理器使用"""
+        try:
+            # 获取所有联系人
+            await contact_manager.load_contacts()
+            contacts = contact_manager.contacts
+            
+            if not contacts:
+                return None, None
+            
+            # 分页设置
+            items_per_page = 8
+            total_contacts = len(contacts)
+            total_pages = (total_contacts + items_per_page - 1) // items_per_page
+            
+            # 确保页码有效
+            if page < 0:
+                page = 0
+            elif page >= total_pages:
+                page = total_pages - 1
+            
+            # 获取当前页的联系人
+            start_index = page * items_per_page
+            end_index = min(start_index + items_per_page, total_contacts)
+            current_page_contacts = contacts[start_index:end_index]
+            
+            # 构建键盘布局
+            keyboard = []
+            
+            # 每行2个按钮，显示联系人
+            for i in range(0, len(current_page_contacts), 2):
+                row = []
+                
+                # 第一个联系人
+                contact1 = current_page_contacts[i]
+                contact1_name = contact1.get('name', '未知')
+                if len(contact1_name) > 8:
+                    contact1_name = contact1_name[:8] + "..."
+                
+                contact1_type = get_contact_type_icon(contact1)
+                contact1_receive = get_contact_receive_icon(contact1)
+                
+                contact1_data = {
+                    "wxid": contact1.get('wxId', ''),
+                    "name": contact1.get('name', ''),
+                    "chat_id": contact1.get('chatId', ''),
+                    "is_group": contact1.get('isGroup', False),
+                    "is_receive": contact1.get('isReceive', True),
+                    "alias": contact1.get('alias', ''),
+                    "avatar_url": contact1.get('avatarLink', '')
+                }
+                
+                row.append(InlineKeyboardButton(
+                    f"{contact1_type}{contact1_receive} {contact1_name}",
+                    callback_data=create_callback_data("contact_info", contact1_data)
+                ))
+                
+                # 第二个联系人（如果存在）
+                if i + 1 < len(current_page_contacts):
+                    contact2 = current_page_contacts[i + 1]
+                    contact2_name = contact2.get('name', '未知')
+                    if len(contact2_name) > 8:
+                        contact2_name = contact2_name[:8] + "..."
+                    
+                    contact2_type = get_contact_type_icon(contact2)
+                    contact2_receive = get_contact_receive_icon(contact2)
+                    
+                    contact2_data = {
+                        "wxid": contact2.get('wxId', ''),
+                        "name": contact2.get('name', ''),
+                        "chat_id": contact2.get('chatId', ''),
+                        "is_group": contact2.get('isGroup', False),
+                        "is_receive": contact2.get('isReceive', True),
+                        "alias": contact2.get('alias', ''),
+                        "avatar_url": contact2.get('avatarLink', '')
+                    }
+                    
+                    row.append(InlineKeyboardButton(
+                        f"{contact2_type}{contact2_receive} {contact2_name}",
+                        callback_data=create_callback_data("contact_info", contact2_data)
+                    ))
+                
+                keyboard.append(row)
+            
+            # 添加分页按钮
+            if total_pages > 1:
+                pagination_row = []
+                
+                if page > 0:
+                    pagination_row.append(InlineKeyboardButton(
+                        f"{locale.command('previous_page')}",
+                        callback_data=create_callback_data("contact_page", {"page": page - 1})
+                    ))
+                
+                pagination_row.append(InlineKeyboardButton(
+                    f"📄 {page + 1}/{total_pages}",
+                    callback_data="page_info"
+                ))
+                
+                if page < total_pages - 1:
+                    pagination_row.append(InlineKeyboardButton(
+                        f"{locale.command('next_page')}",
+                        callback_data=create_callback_data("contact_page", {"page": page + 1})
+                    ))
+                
+                keyboard.append(pagination_row)
+            
+            # 构建消息文本
+            offical_count = len([c for c in contacts if c.get('wxId', '').startswith('gh_')])
+            friends_count = len([c for c in contacts if not c.get('isGroup', False)])
+            groups_count = len([c for c in contacts if c.get('isGroup', False)])
+            active_count = len([c for c in contacts if c.get('isReceive', True)])
+            
+            message_text = f"""📋 **{locale.command('contact_list')}** (第 {page + 1}/{total_pages} {locale.command('page')})
+
+  • {locale.command('total_contacts')}: {total_contacts}
+  • {locale.command('chat_count')}: {friends_count - offical_count} | {locale.command('group_count')}: {groups_count} | {locale.command('offical_count')}: {offical_count}
+  • {locale.command('receive_yes')}: {active_count} | {locale.command('receive_no')}: {total_contacts - active_count}
+"""
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            return message_text, reply_markup
+            
+        except Exception as e:
+            logger.error(f"构建联系人页面数据失败: {e}")
+            return f"❌ 构建联系人页面失败: {str(e)}", None
+
     # 命令配置
     @classmethod
     def get_command_config(cls):
@@ -466,3 +557,62 @@ class BotCommands:
             "rm": cls.revoke_command,
             "login": cls.login_command
         }
+
+def get_contact_type_icon(contact):
+    """
+    获取联系人类型图标
+    
+    Args:
+        contact (dict): 联系人信息字典
+        
+    Returns:
+        str: 对应的图标
+            👤 - 个人好友
+            👥 - 群组聊天
+            📢 - 公众号
+    """
+    if contact.get('isGroup', False):
+        wxid = contact.get('wxId', '')
+        if wxid.startswith('gh_'):
+            return "📢"  # 公众号
+        else:
+            return "👥"  # 群组
+    else:
+        return "👤"  # 个人好友
+
+def get_contact_type_text(contact):
+    """
+    获取联系人类型文本描述
+    
+    Args:
+        contact (dict): 联系人信息字典
+        
+    Returns:
+        str: 类型描述文本
+    """
+    if contact.get('isGroup', False):
+        wxid = contact.get('wxId', '')
+        if wxid.startswith('gh_'):
+            return "📢 公式アカウント"
+        else:
+            return "👥 グループ"
+    else:
+        return "👤 チャット"
+
+def get_contact_receive_icon(contact):
+  """
+  获取状态
+  
+  Args:
+      contact (dict): 联系人信息字典
+      
+  Returns:
+      str: 对应的图标
+          👤 - 个人好友
+          👥 - 群组聊天
+          📢 - 公众号
+  """
+  if not contact.get('isReceive', True):
+        return "🔕"
+  else:
+        return ""
