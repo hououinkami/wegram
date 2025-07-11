@@ -25,7 +25,7 @@ async def get_user_info(towxids):
         # 企业微信用户无信息，跳过调用API
         if towxids.endswith('@openim'):
             qwid = towxids[:-8]
-            return UserInfo(f'企微{qwid}', 'https://raw.githubusercontent.com/finalpi/wechat2tg/refs/heads/wx2tg-v3/qywx.jpg')
+            return UserInfo(f'企微_{qwid}', 'https://raw.githubusercontent.com/finalpi/wechat2tg/refs/heads/wx2tg-v3/qywx.jpg')
         
         wxid_list = [towxids]
         towxids_str = towxids
@@ -54,7 +54,7 @@ async def get_user_info(towxids):
                             contact = contact_list[i]
                             name = (contact.get("Remark", {}).get("string") or 
                                    contact.get("NickName", {}).get("string") or 
-                                   wxid)
+                                   f"微信_{wxid}")
                             avatar_url = (contact.get("BigHeadImgUrl") or 
                                          contact.get("SmallHeadImgUrl") or 
                                          "")

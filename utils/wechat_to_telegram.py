@@ -430,7 +430,7 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
         avatar_url = user_info.avatar_url
 
     # 从推送内容获取用户名称
-    if (contact_name == "未知用户" or contact_name == "企业微信") and push_content:
+    if (contact_name.startswith('微信_') or contact_name.startswith('企微_')) and push_content:
         contact_name = push_content.split(" : ")[0].split("さん")[0]
             
     # 服务通知
