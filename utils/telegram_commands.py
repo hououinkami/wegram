@@ -578,13 +578,13 @@ def get_contact_type_icon(contact):
             📢 - 公众号
     """
     if contact.get('isGroup', False):
+        return "👥"  # 群组
+    else:
         wxid = contact.get('wxId', '')
         if wxid.startswith('gh_'):
             return "📢"  # 公众号
         else:
-            return "👥"  # 群组
-    else:
-        return "👤"  # 个人好友
+            return "👤"  # 个人好友
 
 def get_contact_type_text(contact):
     """
