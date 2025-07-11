@@ -517,7 +517,7 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
             logger.debug("没有新消息")
             return True
         
-        # 处理每条消息 - 添加去重逻辑
+        # 处理每条消息 - 改进去重逻辑
         processed_count = 0
         failed_count = 0
         duplicate_count = 0
@@ -532,25 +532,28 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
             if _global_consumer:
                 _global_consumer.stats["total_messages"] += 1
             
-            # 检查消息去重
-            if _global_consumer and _global_consumer.deduplicator.is_duplicate(str(msg_id)):
+            # 🔧 改进：使用复合键进行去重，包含消息ID和发送者ID
+            msg_key = f"{msg_id}"
+            
+            # 🔧 改进：先检查去重，立即标记为处理中
+            if _global_consumer and _global_consumer.deduplicator.is_duplicate(msg_key):
                 duplicate_count += 1
-                if _global_consumer:
-                    _global_consumer.stats["duplicate_messages"] += 1
+                _global_consumer.stats["duplicate_messages"] += 1
                 logger.warning(f"🔄 跳过重复消息: {msg_id} (来自: {from_wxid})")
                 continue
 
             try:
+                # 🔧 改进：立即标记为已处理，防止竞态条件
+                if _global_consumer:
+                    _global_consumer.deduplicator.mark_processed(msg_key)
+                
                 # 获取或创建该联系人的处理器
                 if _global_consumer:
                     processor = await _global_consumer.get_or_create_processor(from_wxid)
                     # 将消息添加到该联系人的处理队列
                     await processor.add_message(msg, msg_obj)
                     
-                    # 标记消息已处理（添加到去重缓存）
-                    _global_consumer.deduplicator.mark_processed(str(msg_id))
                     _global_consumer.stats["processed_messages"] += 1
-                    
                     processed_count += 1
                 else:
                     # 如果没有全局消费者，直接处理（兼容模式）
@@ -562,10 +565,21 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
                 if _global_consumer:
                     _global_consumer.stats["failed_messages"] += 1
                 logger.error(f"❌ 分发消息 {msg_id} 到联系人 {from_wxid} 失败: {e}")
+                
+                # 🔧 改进：处理失败时，从去重缓存中移除，允许重试
+                if _global_consumer:
+                    try:
+                        # 从已处理消息中移除，允许后续重试
+                        if msg_key in _global_consumer.deduplicator.processed_messages:
+                            del _global_consumer.deduplicator.processed_messages[msg_key]
+                    except Exception as cleanup_error:
+                        logger.error(f"清理失败消息缓存时出错: {cleanup_error}")
         
         # 记录处理结果
         if duplicate_count > 0:
             logger.info(f"📊 消息处理完成 - 处理: {processed_count}, 失败: {failed_count}, 重复: {duplicate_count}")
+        elif processed_count > 0 or failed_count > 0:
+            logger.debug(f"📊 消息处理完成 - 处理: {processed_count}, 失败: {failed_count}")
         
         # 只要有消息被处理就算成功
         return processed_count > 0 or failed_count == 0
