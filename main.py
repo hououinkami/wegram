@@ -67,7 +67,7 @@ def setup_logging():
     )
     
     # 设置第三方库日志级别
-    for logger_name in ['telethon', 'telethon.client.updates', 'telethon.network', 'httpx', 'aiohttp']:
+    for logger_name in ['telethon', 'telethon.client.updates', 'telethon.network', 'telegram.ext.Updater', 'httpx', 'aiohttp']:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
     
     return logging.getLogger()
@@ -94,6 +94,8 @@ class ServiceManager:
         # 服务配置
         if config.TG_MODE == "polling":
             tele_services = ["telethon_monitor", "telegram_polling"]
+        elif config.TG_MODE == "webhook":
+            tele_services = ["telethon_monitor", "telegram_webhook"]
         elif config.TG_MODE == "telethon":
             tele_services = ["telethon_monitor"]
         

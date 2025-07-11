@@ -25,6 +25,10 @@ WECHAT_CHAT_FOLDER = os.getenv("WECHAT_CHAT_FOLDER", "チャット")
 WECHAT_OFFICAL_FOLDER = os.getenv("WECHAT_OFFICAL_FOLDER", "WeChat")
 POLLING_INTERVAL = int(os.getenv("POLLING_INTERVAL", "1"))
 AUTO_CREATE_GROUPS = os.getenv("AUTO_CREATE_GROUPS", "True").lower() == "true"
+WEBHOOK_DOMAIN = os.getenv("WEBHOOK_DOMAIN")
+WEBHOOK_PORT = os.getenv("WEBHOOK_PORT", 8443)
+SSL_CERT_NAME = os.getenv("SSL_CERT_NAME", "cert.pem")
+SSL_KEY_NAME = os.getenv("SSL_KEY_NAME", "key.pem")
 
 # WeChat API
 PORT = int(os.getenv("PORT", "8088"))

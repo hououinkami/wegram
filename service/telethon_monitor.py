@@ -214,7 +214,7 @@ async def main():
         monitor_instance = await create_monitor()
         
         # 启动监控
-        if config.TG_MODE == "polling":
+        if config.TG_MODE == "polling" or config.TG_MODE == "webhook":
             handle_new = False
         else:
             handle_new = True
