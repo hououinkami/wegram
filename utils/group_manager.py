@@ -65,8 +65,8 @@ class GroupMemberManager:
     def extract_members(self, response: Dict[str, Any]) -> Dict[str, List[Dict[str, str]]]:
         """提取API响应"""
         data = response["Data"]
-        chatroom_name = data["ChatroomUserName"]
-        members_data = data["NewChatroomData"]["ChatRoomMember"]
+        chatroom_name = data.get("ChatroomUserName", "")
+        members_data = data.get("NewChatroomData", {}).get("ChatRoomMember")
         
         members = []
         for member in members_data:
