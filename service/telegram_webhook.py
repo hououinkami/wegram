@@ -193,6 +193,10 @@ class TelegramWebhookService:
         self.is_running = False
         self.queue_manager = UpdateQueueManager(process_function)
         
+        # 创建处理器实例用于手动调用
+        self._command_handlers = {}
+        self._callback_handlers = {}
+        
     def create_application(self):
         """创建Application实例"""
         request = HTTPXRequest(
@@ -204,6 +208,16 @@ class TelegramWebhookService:
         )
         
         return Application.builder().token(self.bot_token).request(request).build()
+    
+    def setup_handlers(self):
+        """设置处理器实例（用于手动调用）"""
+        # 创建命令处理器实例
+        for command, handler_func in self.command_handlers.items():
+            self._command_handlers[command] = CommandHandler(command, handler_func)
+        
+        # 创建回调查询处理器实例
+        for pattern, handler_func in self.callback_handlers.items():
+            self._callback_handlers[pattern] = CallbackQueryHandler(handler_func, pattern=pattern)
     
     async def webhook_handler(self, request: Request) -> Response:
         """处理 Webhook 请求"""
@@ -247,23 +261,26 @@ class TelegramWebhookService:
         return Response(status=200, text="OK", content_type="text/plain")
     
     async def handle_update(self, update: Update):
-        """处理接收到的 update - 通过队列管理器处理"""
+        """处理接收到的 update - 使用 Handler 模块处理"""
         try:
-            # 检查是否是命令或回调查询，需要特殊处理
             context = CallbackContext(self.application)
             
-            # 处理命令
+            # 处理命令 - 让 CommandHandler 自己判断（支持 /command@bot_name 格式）
             if update.message and update.message.text and update.message.text.startswith('/'):
-                command = update.message.text.split()[0][1:]  # 去掉 '/'
-                if command in self.command_handlers:
-                    await self.command_handlers[command](update, context)
-                    return
+                # 遍历所有命令处理器，让它们自己判断是否匹配
+                for command, command_handler in self._command_handlers.items():
+                    check_result = command_handler.check_update(update)
+                    if check_result:
+                        await command_handler.handle_update(update, self.application, check_result, context)
+                        return
             
-            # 处理回调查询
+            # 处理回调查询 - 使用 CallbackQueryHandler 检查
             if update.callback_query:
-                for pattern, handler in self.callback_handlers.items():
-                    if pattern in update.callback_query.data:
-                        await handler(update, context)
+                for pattern, callback_handler in self._callback_handlers.items():
+                    # 检查回调查询是否匹配
+                    check_result = callback_handler.check_update(update)
+                    if check_result:
+                        await callback_handler.handle_update(update, self.application, check_result, context)
                         return
             
             # 其他消息通过队列处理
@@ -339,6 +356,9 @@ class TelegramWebhookService:
             self.application = self.create_application()
             await self.application.initialize()
             await self.application.start()
+            
+            # 设置处理器
+            self.setup_handlers()
             
             # 设置机器人命令
             await self.setup_commands()
@@ -435,9 +455,9 @@ async def main():
             logger.warning('⚠️ 请先在环境变量中配置Webhook域名')
 
         if config.WEBHOOK_PORT == 443:
-            webhook_url = f"https://home.{config.WEBHOOK_DOMAIN}/webhook"
+            webhook_url = f"https://{config.WEBHOOK_DOMAIN}/webhook"
         else:
-            webhook_url = f"https://home.{config.WEBHOOK_DOMAIN}:{config.WEBHOOK_PORT}/webhook"
+            webhook_url = f"https://{config.WEBHOOK_DOMAIN}:{config.WEBHOOK_PORT}/webhook"
         
         cert_name = config.SSL_CERT_NAME
         key_name = config.SSL_KEY_NAME
