@@ -70,11 +70,12 @@ class GroupMemberManager:
         
         members = []
         for member in members_data:
-            members.append({
-                "username": member.get("UserName", ""),
-                "nickname": member.get("NickName", ""),
-                "displayname": member.get("DisplayName", "")
-            })
+            if member:
+                members.append({
+                    "username": member.get("UserName", ""),
+                    "nickname": member.get("NickName", ""),
+                    "displayname": member.get("DisplayName", "")
+                })
         
         return {chatroom_name: members}
     
