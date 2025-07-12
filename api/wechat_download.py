@@ -101,6 +101,10 @@ async def get_emoji(data_json) -> Tuple[bool, str]:
         
         if url == "":
             url = await get_url_by_api()
+        
+        url = str(url) if url else ""
+        if not url:
+            raise ValueError("Empty URL provided")
 
         # 下载文件到内存并备份到磁盘
         async with aiohttp.ClientSession() as session:
