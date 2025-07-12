@@ -11,7 +11,6 @@ import ffmpeg
 import pilk
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
-from telegram.ext import CallbackQueryHandler
 
 import config
 from config import LOCALE as locale

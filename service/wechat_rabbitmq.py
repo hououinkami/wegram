@@ -27,38 +27,53 @@ class ContactMessageProcessor:
         self.message_queue = asyncio.Queue()
         self.processing_task = None
         self.is_running = False
+        self.last_activity = time.time()  # 记录最后活动时间
         
+    async def add_message(self, message_data: dict):
+        """添加消息到队列"""
+        self.last_activity = time.time()
+        await self.message_queue.put(message_data)
+    
     async def start(self):
-        """启动处理任务"""
+        """启动消息处理器"""
         if not self.is_running:
             self.is_running = True
             self.processing_task = asyncio.create_task(self._process_messages())
             logger.debug(f"🚀 启动联系人 {self.contact_id} 的消息处理器")
     
     async def stop(self):
-        """停止处理任务"""
+        """停止消息处理器"""
         self.is_running = False
+        
         if self.processing_task and not self.processing_task.done():
             self.processing_task.cancel()
             try:
                 await self.processing_task
             except asyncio.CancelledError:
                 pass
+        
+        # 清空剩余消息
+        while not self.message_queue.empty():
+            try:
+                self.message_queue.get_nowait()
+                self.message_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+        
         logger.debug(f"🔴 停止联系人 {self.contact_id} 的消息处理器")
-    
-    async def add_message(self, message_data: dict, msg_obj: AbstractIncomingMessage):
-        """添加消息到队列"""
-        await self.message_queue.put((message_data, msg_obj))
     
     async def _process_messages(self):
         """处理消息的主循环"""
         while self.is_running:
             try:
                 # 等待消息，设置超时以便能够响应停止信号
-                message_data, msg_obj = await asyncio.wait_for(
+                message_data = await asyncio.wait_for(
                     self.message_queue.get(), 
                     timeout=1.0
                 )
+                
+                # 更新活动时间
+                self.last_activity = time.time()
                 
                 # 处理消息
                 try:
@@ -201,19 +216,21 @@ class WeChatRabbitMQConsumer:
                 await asyncio.sleep(300)  # 每5分钟检查一次
                 
                 async with self.processor_lock:
+                    current_time = time.time()
                     idle_contacts = []
+                    
                     for contact_id, processor in self.contact_processors.items():
-                        # 如果队列为空且没有正在处理的消息，标记为空闲
-                        if processor.message_queue.empty():
+                        # 检查队列是否为空且最后活动时间超过10分钟
+                        if (processor.message_queue.empty() and 
+                            current_time - processor.last_activity > 600):  # 10分钟无活动
                             idle_contacts.append(contact_id)
                     
-                    # 移除空闲的处理器（保留最近活跃的）
-                    if len(idle_contacts) > 10:  # 只有超过10个空闲时才清理
-                        for contact_id in idle_contacts[:-5]:  # 保留最后5个
-                            processor = self.contact_processors.pop(contact_id)
-                            await processor.stop()
-                            logger.debug(f"🧹 清理空闲处理器: {contact_id}")
-                            
+                    # 只清理长时间无活动的处理器，保留活跃的
+                    for contact_id in idle_contacts[:10]:  # 限制每次最多清理10个
+                        processor = self.contact_processors.pop(contact_id)
+                        await processor.stop()
+                        logger.debug(f"🧹 清理空闲处理器: {contact_id}")
+                        
             except Exception as e:
                 logger.error(f"❌ 清理处理器时出错: {e}")
     
@@ -550,8 +567,8 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
                 # 获取或创建该联系人的处理器
                 if _global_consumer:
                     processor = await _global_consumer.get_or_create_processor(from_wxid)
-                    # 将消息添加到该联系人的处理队列
-                    await processor.add_message(msg, msg_obj)
+                    # 🔧 关键修改：只传递单个消息数据，移除msg_obj参数
+                    await processor.add_message(msg)  # 只传msg，不传msg_obj
                     
                     _global_consumer.stats["processed_messages"] += 1
                     processed_count += 1
