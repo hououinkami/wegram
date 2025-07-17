@@ -1,11 +1,11 @@
 import asyncio
-import io
 import logging
 import threading
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from telegram import Bot, InlineKeyboardMarkup, InputFile
+from telegram import Bot, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAnimation
 from telegram.constants import ParseMode
 from telegram.error import NetworkError, TelegramError, TimedOut
 
@@ -169,7 +169,7 @@ class TelegramSender:
             reply_markup=reply_markup
         )
 
-    async def send_photo(self, chat_id: Optional[int] = None, photo: Union[str, Path, io.BytesIO, bytes] = None, caption: str = "", 
+    async def send_photo(self, chat_id: Optional[int] = None, photo: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
                         parse_mode: str = ParseMode.HTML,
                         reply_to_message_id: Optional[int] = None,
                         reply_markup: Optional[InlineKeyboardMarkup] = None):
@@ -197,10 +197,10 @@ class TelegramSender:
             if not photo_path.exists():
                 raise FileNotFoundError(f"图片文件不存在: {photo_path}")
             photo_input = InputFile(photo_path.open('rb'), filename=photo_path.name)
-        elif isinstance(photo, io.BytesIO):
+        elif isinstance(photo, BytesIO):
             photo_input = InputFile(photo, filename=f"{locale.type(3)}.jpg")
         elif isinstance(photo, bytes):
-            photo_input = InputFile(io.BytesIO(photo), filename=f"{locale.type(3)}.jpg")
+            photo_input = InputFile(BytesIO(photo), filename=f"{locale.type(3)}.jpg")
         else:
             photo_input = photo
         
@@ -214,7 +214,7 @@ class TelegramSender:
             reply_markup=reply_markup
         )
 
-    async def send_document(self, chat_id: Optional[int] = None, document: Union[str, Path, io.BytesIO, bytes] = None, caption: str = "", 
+    async def send_document(self, chat_id: Optional[int] = None, document: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
                            parse_mode: str = ParseMode.HTML,
                            reply_to_message_id: Optional[int] = None,
                            reply_markup: Optional[InlineKeyboardMarkup] = None,
@@ -245,10 +245,10 @@ class TelegramSender:
                 raise FileNotFoundError(f"文档文件不存在: {doc_path}")
             doc_input = InputFile(doc_path.open('rb'), 
                                  filename=filename or doc_path.name)
-        elif isinstance(document, io.BytesIO):
+        elif isinstance(document, BytesIO):
             doc_input = InputFile(document, filename=filename or locale.type(6))
         elif isinstance(document, bytes):
-            doc_input = InputFile(io.BytesIO(document), 
+            doc_input = InputFile(BytesIO(document), 
                                  filename=filename or locale.type(6))
         else:
             doc_input = document
@@ -263,7 +263,7 @@ class TelegramSender:
             reply_markup=reply_markup
         )
 
-    async def send_video(self, chat_id: Optional[int] = None, video: Union[str, Path, io.BytesIO, bytes] = None, caption: str = "", 
+    async def send_video(self, chat_id: Optional[int] = None, video: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
                         parse_mode: str = ParseMode.HTML,
                         duration: Optional[int] = None,
                         width: Optional[int] = None,
@@ -300,10 +300,10 @@ class TelegramSender:
                 raise FileNotFoundError(f"视频文件不存在: {video_path}")
             video_input = InputFile(video_path.open('rb'), 
                                    filename=filename or video_path.name)
-        elif isinstance(video, io.BytesIO):
+        elif isinstance(video, BytesIO):
             video_input = InputFile(video, filename=filename or f"{locale.type(43)}.mp4")
         elif isinstance(video, bytes):
-            video_input = InputFile(io.BytesIO(video), 
+            video_input = InputFile(BytesIO(video), 
                                    filename=filename or f"{locale.type(43)}.mp4")
         else:
             video_input = video
@@ -321,7 +321,7 @@ class TelegramSender:
             reply_markup=reply_markup
         )
 
-    async def send_audio(self, chat_id: Optional[int] = None, audio: Union[str, Path, io.BytesIO, bytes] = None, caption: str = "", 
+    async def send_audio(self, chat_id: Optional[int] = None, audio: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
                         parse_mode: str = ParseMode.HTML,
                         duration: Optional[int] = None,
                         performer: Optional[str] = None,
@@ -358,10 +358,10 @@ class TelegramSender:
                 raise FileNotFoundError(f"音频文件不存在: {audio_path}")
             audio_input = InputFile(audio_path.open('rb'), 
                                    filename=filename or audio_path.name)
-        elif isinstance(audio, io.BytesIO):
+        elif isinstance(audio, BytesIO):
             audio_input = InputFile(audio, filename=filename or f"{locale.type(34)}.mp3")
         elif isinstance(audio, bytes):
-            audio_input = InputFile(io.BytesIO(audio), 
+            audio_input = InputFile(BytesIO(audio), 
                                    filename=filename or f"{locale.type(34)}.mp3")
         else:
             audio_input = audio
@@ -380,7 +380,7 @@ class TelegramSender:
         )
     
     async def send_voice(self, chat_id: Optional[int] = None, 
-                        voice: Union[str, Path, io.BytesIO, bytes] = None, 
+                        voice: Union[str, Path, BytesIO, bytes] = None, 
                         caption: str = "", 
                         duration: Optional[int] = None,
                         parse_mode: str = ParseMode.HTML,
@@ -417,10 +417,10 @@ class TelegramSender:
                 raise FileNotFoundError(f"语音文件不存在: {voice_path}")
             voice_input = InputFile(voice_path.open('rb'), 
                                    filename=filename or voice_path.name)
-        elif isinstance(voice, io.BytesIO):
+        elif isinstance(voice, BytesIO):
             voice_input = InputFile(voice, filename=filename or f"{locale.type(34)}.ogg")
         elif isinstance(voice, bytes):
-            voice_input = InputFile(io.BytesIO(voice), 
+            voice_input = InputFile(BytesIO(voice), 
                                    filename=filename or f"{locale.type(34)}.ogg")
         else:
             voice_input = voice
@@ -436,12 +436,12 @@ class TelegramSender:
             reply_markup=reply_markup
         )
 
-    async def send_animation(self, chat_id: Optional[int] = None, animation: Union[str, Path, io.BytesIO, bytes] = None, caption: str = "",  
+    async def send_animation(self, chat_id: Optional[int] = None, animation: Union[str, Path, BytesIO, bytes] = None, caption: str = "",  
                            parse_mode: str = ParseMode.HTML,
                            duration: Optional[int] = None,
                            width: Optional[int] = None,
                            height: Optional[int] = None,
-                           thumbnail: Optional[Union[str, Path, io.BytesIO, bytes]] = None,
+                           thumbnail: Optional[Union[str, Path, BytesIO, bytes]] = None,
                            reply_to_message_id: Optional[int] = None,
                            reply_markup: Optional[InlineKeyboardMarkup] = None,
                            filename: Optional[str] = None):
@@ -475,10 +475,10 @@ class TelegramSender:
                 raise FileNotFoundError(f"动画文件不存在: {animation_path}")
             animation_input = InputFile(animation_path.open('rb'), 
                                        filename=filename or animation_path.name)
-        elif isinstance(animation, io.BytesIO):
+        elif isinstance(animation, BytesIO):
             animation_input = InputFile(animation, filename=filename or f"{locale.type(47)}.gif")
         elif isinstance(animation, bytes):
-            animation_input = InputFile(io.BytesIO(animation), 
+            animation_input = InputFile(BytesIO(animation), 
                                        filename=filename or f"{locale.type(47)}.gif")
         else:
             animation_input = animation
@@ -490,10 +490,10 @@ class TelegramSender:
                 thumb_path = Path(thumbnail)
                 if thumb_path.exists():
                     thumb_input = InputFile(thumb_path.open('rb'), filename=thumb_path.name)
-            elif isinstance(thumbnail, io.BytesIO):
+            elif isinstance(thumbnail, BytesIO):
                 thumb_input = InputFile(thumbnail, filename="thumb.jpg")
             elif isinstance(thumbnail, bytes):
-                thumb_input = InputFile(io.BytesIO(thumbnail), filename="thumb.jpg")
+                thumb_input = InputFile(BytesIO(thumbnail), filename="thumb.jpg")
             else:
                 thumb_input = thumbnail
         
@@ -678,6 +678,112 @@ class TelegramSender:
             reply_markup=reply_markup
         )
 
+    async def edit_message_caption(self, chat_id: Optional[int] = None, 
+                              caption: str = "",
+                              message_id: Optional[int] = None,
+                              inline_message_id: Optional[str] = None,
+                              parse_mode: str = ParseMode.HTML,
+                              reply_markup: Optional[InlineKeyboardMarkup] = None):
+        """
+        编辑媒体消息的说明文字
+        
+        Args:
+            chat_id: 聊天ID
+            caption: 新的说明文字
+            message_id: 消息ID
+            inline_message_id: 内联消息ID
+            parse_mode: 解析模式
+            reply_markup: 内联键盘
+            
+        Returns:
+            Message: 编辑后的消息对象
+        """
+        return await self._retry_operation(
+            self.bot.edit_message_caption,
+            chat_id=chat_id,
+            message_id=message_id,
+            inline_message_id=inline_message_id,
+            caption=self.text_formatter(caption, parse_mode),
+            parse_mode=parse_mode,
+            reply_markup=reply_markup
+        )
+
+    async def edit_message_media(self, chat_id: Optional[int] = None,
+                               message_id: Optional[int] = None,
+                               inline_message_id: Optional[str] = None,
+                               media: Union[str, BytesIO, InputMedia] = None,
+                               media_type: str = "photo",
+                               filename: Optional[str] = None,
+                               caption: Optional[str] = None, 
+                               parse_mode: str = ParseMode.HTML,
+                               reply_markup: Optional[InlineKeyboardMarkup] = None):
+        """
+        编辑消息的媒体内容
+        
+        Args:
+            chat_id: 聊天ID
+            message_id: 消息ID
+            inline_message_id: 内联消息ID
+            media: 媒体文件，可以是文件路径(str)、BytesIO对象或InputMedia对象
+            media_type: 媒体类型 ("photo", "video", "document", "animation")
+            filename: 文件名（当media为BytesIO时使用）
+            caption: 媒体说明文字（如果不传入则不设置caption）
+            parse_mode: 解析模式
+            reply_markup: 内联键盘
+            
+        Returns:
+            Message: 编辑后的消息对象
+        """
+        
+        # 如果已经是InputMedia对象，直接使用
+        if isinstance(media, (InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAnimation)):
+            input_media = media
+        else:
+            # 处理文件路径或BytesIO对象
+            media_file = media
+            
+            # 如果是BytesIO对象且没有name属性，设置filename
+            if isinstance(media, BytesIO) and filename and not hasattr(media, 'name'):
+                media.name = filename
+            
+            # 根据媒体类型创建对应的InputMedia对象
+            if media_type.lower() == "photo":
+                input_media = InputMediaPhoto(
+                    media=media_file,
+                    caption=caption,
+                    parse_mode=parse_mode if caption else None
+                )
+            elif media_type.lower() == "video":
+                input_media = InputMediaVideo(
+                    media=media_file,
+                    caption=caption,
+                    parse_mode=parse_mode if caption else None
+                )
+            elif media_type.lower() == "document":
+                input_media = InputMediaDocument(
+                    media=media_file,
+                    filename=filename,
+                    caption=caption,
+                    parse_mode=parse_mode if caption else None
+                )
+            elif media_type.lower() == "animation":
+                input_media = InputMediaAnimation(
+                    media=media_file,
+                    caption=caption,
+                    parse_mode=parse_mode if caption else None
+                )
+            else:
+                raise ValueError(f"不支持的媒体类型: {media_type}")
+        
+        return await self._retry_operation(
+            self.bot.edit_message_media,
+            chat_id=chat_id,
+            message_id=message_id,
+            inline_message_id=inline_message_id,
+            media=input_media,
+            reply_markup=reply_markup
+        )
+
     async def delete_message(self, chat_id: Optional[int] = None, 
                             message_id: int = None):
         """
@@ -804,7 +910,7 @@ class TelegramSender:
         )
     
     async def set_chat_photo(self, chat_id: Optional[int] = None, 
-                            photo: Union[str, Path, io.BytesIO, bytes] = None):
+                            photo: Union[str, Path, BytesIO, bytes] = None):
         """
         设置群组头像
         
@@ -839,10 +945,10 @@ class TelegramSender:
             if not photo.exists():
                 raise FileNotFoundError(f"头像文件不存在: {photo}")
             photo_input = InputFile(photo.open('rb'), filename=photo.name)
-        elif isinstance(photo, io.BytesIO):
+        elif isinstance(photo, BytesIO):
             photo_input = InputFile(photo, filename="avatar.jpg")
         elif isinstance(photo, bytes):
-            photo_input = InputFile(io.BytesIO(photo), filename="avatar.jpg")
+            photo_input = InputFile(BytesIO(photo), filename="avatar.jpg")
         else:
             photo_input = photo
         
