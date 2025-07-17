@@ -5,6 +5,7 @@ import os
 from typing import Dict, Optional
 
 from api import wechat_contacts, telegram_sender
+from config import LOCALE as locale
 from utils.group_binding import create_group
 
 logger = logging.getLogger(__name__)
@@ -385,6 +386,65 @@ class ContactManager:
             error_msg = f"❌ 更新联系人失败: {str(e)}"
             await telegram_sender.send_text(chat_id, error_msg)
             logger.error(f"update_contacts执行失败: {str(e)}")
+    
+    def get_contact_type_icon(self, contact):
+        """
+        获取联系人类型图标
+        
+        Args:
+            contact (dict): 联系人信息字典
+            
+        Returns:
+            str: 对应的图标
+                👤 - 个人好友
+                👥 - 群组聊天
+                📢 - 公众号
+        """
+        if contact.get('isGroup', False):
+            return "👥"  # 群组
+        else:
+            wxid = contact.get('wxId', '')
+            if wxid.startswith('gh_'):
+                return "📢"  # 公众号
+            else:
+                return "👤"  # 个人好友
+
+    def get_contact_type_text(self, contact):
+        """
+        获取联系人类型文本描述
+        
+        Args:
+            contact (dict): 联系人信息字典
+            
+        Returns:
+            str: 类型描述文本
+        """
+        if contact.get('isGroup', False):
+            wxid = contact.get('wxId', '')
+            if wxid.startswith('gh_'):
+                return f"📢 {locale.common ('offical_account')}"
+            else:
+                return f"👥 {locale.common('group_account')}"
+        else:
+            return "👤 {locale.common('chat_account')}"
+
+    def get_contact_receive_icon(self, contact):
+        """
+        获取状态
+        
+        Args:
+            contact (dict): 联系人信息字典
+            
+        Returns:
+            str: 对应的图标
+                👤 - 个人好友
+                👥 - 群组聊天
+                📢 - 公众号
+        """
+        if not contact.get('isReceive', True):
+                return "🔕"
+        else:
+                return ""
 
 # 创建全局实例
 contact_manager = ContactManager()

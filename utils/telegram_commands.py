@@ -149,8 +149,11 @@ class BotCommands:
             if not to_wxid:
                 await telegram_sender.send_text(chat_id, locale.command("no_binding"))
                 return
-            
-            unbind_result = await contact_manager.delete_contact(to_wxid)
+            # 直接删除
+            # unbind_result = await contact_manager.delete_contact(to_wxid)
+            # 解绑但不删除
+            unbind_result = await contact_manager.update_contact_by_chatid(chat_id, {"chatId": -9999999999})
+
             if unbind_result:
                 await telegram_sender.send_text(chat_id, locale.command("unbind_successed"))
             else:
@@ -411,7 +414,7 @@ class BotCommands:
                 return None, None
             
             # 分页设置
-            items_per_page = 8
+            items_per_page = 10
             total_contacts = len(contacts)
             total_pages = (total_contacts + items_per_page - 1) // items_per_page
             
@@ -439,8 +442,8 @@ class BotCommands:
                 if len(contact1_name) > 8:
                     contact1_name = contact1_name[:8] + "..."
                 
-                contact1_type = get_contact_type_icon(contact1)
-                contact1_receive = get_contact_receive_icon(contact1)
+                contact1_type = contact_manager.get_contact_type_icon(contact1)
+                contact1_receive = contact_manager.get_contact_receive_icon(contact1)
                 
                 contact1_data = {
                     "wxid": contact1.get('wxId', ''),
@@ -466,8 +469,8 @@ class BotCommands:
                     if len(contact2_name) > 8:
                         contact2_name = contact2_name[:8] + "..."
                     
-                    contact2_type = get_contact_type_icon(contact2)
-                    contact2_receive = get_contact_receive_icon(contact2)
+                    contact2_type = contact_manager.get_contact_type_icon(contact2)
+                    contact2_receive = contact_manager.get_contact_receive_icon(contact2)
                     
                     contact2_data = {
                         "wxid": contact2.get('wxId', ''),
@@ -520,7 +523,7 @@ class BotCommands:
             message_text = f"""📋 **{locale.command('contact_list')}** (第 {page + 1}/{total_pages} {locale.command('page')})
 
   • {locale.command('total_contacts')}: {total_contacts}
-  • {locale.command('chat_count')}: {friends_count - offical_count} | {locale.command('group_count')}: {groups_count} | {locale.command('offical_count')}: {offical_count}
+  • {locale.common('chat_account')}: {friends_count - offical_count} | {locale.common('group_account')}: {groups_count} | {locale.common('offical_account')}: {offical_count}
   • {locale.command('receive_yes')}: {active_count} | {locale.command('receive_no')}: {total_contacts - active_count}
 """
             
@@ -563,62 +566,3 @@ class BotCommands:
             "rm": cls.revoke_command,
             "login": cls.login_command
         }
-
-def get_contact_type_icon(contact):
-    """
-    获取联系人类型图标
-    
-    Args:
-        contact (dict): 联系人信息字典
-        
-    Returns:
-        str: 对应的图标
-            👤 - 个人好友
-            👥 - 群组聊天
-            📢 - 公众号
-    """
-    if contact.get('isGroup', False):
-        return "👥"  # 群组
-    else:
-        wxid = contact.get('wxId', '')
-        if wxid.startswith('gh_'):
-            return "📢"  # 公众号
-        else:
-            return "👤"  # 个人好友
-
-def get_contact_type_text(contact):
-    """
-    获取联系人类型文本描述
-    
-    Args:
-        contact (dict): 联系人信息字典
-        
-    Returns:
-        str: 类型描述文本
-    """
-    if contact.get('isGroup', False):
-        wxid = contact.get('wxId', '')
-        if wxid.startswith('gh_'):
-            return "📢 公式アカウント"
-        else:
-            return "👥 グループ"
-    else:
-        return "👤 チャット"
-
-def get_contact_receive_icon(contact):
-  """
-  获取状态
-  
-  Args:
-      contact (dict): 联系人信息字典
-      
-  Returns:
-      str: 对应的图标
-          👤 - 个人好友
-          👥 - 群组聊天
-          📢 - 公众号
-  """
-  if not contact.get('isReceive', True):
-        return "🔕"
-  else:
-        return ""

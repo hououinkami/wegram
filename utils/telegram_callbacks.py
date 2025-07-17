@@ -333,7 +333,7 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         # 构建联系人详细信息
         wxid = data.get('wxid', '')
-        name = data.get('name', wxid)
+        name = data.get('name', f"微信_{wxid}")
         chat_id = data.get('chat_id', '')
         alias = data.get('alias', '')
         is_group = data.get('is_group', False)
@@ -342,7 +342,8 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         source_page = data.get('source_page', 0)
         search_word = data.get('search_word', "")
         
-        contact_info = f"👤 {name}"
+        contact_dict = await contact_manager.get_contact(wxid)
+        contact_info = f"{contact_manager.get_contact_type_icon(contact_dict)} {name}"
         
         # 构建操作按钮
         keyboard = []
@@ -350,17 +351,25 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         # 第一行：聊天和接收状态
         first_row = []
         
-        # 如果有有效的chatId，添加"前往聊天"按钮
+        # 如果有有效的chatId，添加"解绑"按钮
         if chat_id and chat_id != -9999999999:
+            delete_data = {
+                "wxid": wxid,
+                "name": name,
+                "source_page": source_page,
+                "search_word": search_word
+            }
             first_row.append(InlineKeyboardButton(
-                    f"{locale.command('group_binded')}", 
-                    callback_data="page_info"
+                    f"{locale.command('delete_contact')}", 
+                    callback_data=create_callback_data("delete_contact", delete_data)
                 ))
         else:
             bind_data = {
                 "wxid": wxid,
                 "name": name,
-                "avatar_url": avatar_url
+                "avatar_url": avatar_url,
+                "source_page": source_page,
+                "search_word": search_word
             }
             first_row.append(InlineKeyboardButton(
                 f"{locale.command('group_binding')}", 
@@ -369,48 +378,19 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # 切换接收状态按钮
         receive_text = f"{locale.command('receive_off')}" if is_receive else f"{locale.command('receive_on')}"
-        receive_emoji = "🔕" if is_receive else "🔔"
         toggle_data = {
             "wxid": wxid,
             "current_receive": is_receive
         }
         first_row.append(InlineKeyboardButton(
-            f"{receive_emoji} {receive_text}",
+            f"{receive_text}",
             callback_data=create_callback_data("toggle_receive", toggle_data)
         ))
         
         if first_row:
             keyboard.append(first_row)
         
-        # 第二行：管理操作
-        second_row = []
-        
-        # 编辑联系人按钮（如果需要的话）
-        edit_data = {
-            "wxid": wxid,
-            "name": name,
-            "alias": alias
-        }
-        second_row.append(InlineKeyboardButton(
-            f"{locale.command('edit_contact')}",
-            callback_data=create_callback_data("page_info", edit_data)
-        ))
-        
-        # 删除联系人按钮
-        delete_data = {
-            "wxid": wxid,
-            "name": name,
-            "source_page": source_page,
-            "search_word": search_word
-        }
-        second_row.append(InlineKeyboardButton(
-            f"{locale.command('delete_contact')}",
-            callback_data=create_callback_data("delete_contact", delete_data)
-        ))
-        
-        keyboard.append(second_row)
-        
-        # 第三行：返回按钮
+        # 第二行：返回按钮
         keyboard.append([
             InlineKeyboardButton(
                 f"{locale.command('back')}",
@@ -434,8 +414,10 @@ async def handle_group_binding(update: Update, context: ContextTypes.DEFAULT_TYP
     
     try:
         wxid = data.get('wxid')
-        name = data.get('name', wxid)
+        name = data.get('name', f"微信_{wxid}")
         avatar_url = data.get('avatar_url', '')
+        source_page = data.get('source_page', '')
+        search_word = data.get('search_word', '')
         
         if not wxid:
             await query.answer("❌ 联系人ID无效", show_alert=True)
@@ -460,9 +442,15 @@ async def handle_group_binding(update: Update, context: ContextTypes.DEFAULT_TYP
                     for button in row:
                         if button.text == locale.command('group_binding'):
                             # 找到目标按钮，替换它
+                            delete_data = {
+                                "wxid": wxid,
+                                "name": name,
+                                "source_page": source_page,
+                                "search_word": search_word
+                            }
                             new_button = InlineKeyboardButton(
-                                f"{locale.command('group_binded')}", 
-                                callback_data="page_info"
+                                f"{locale.command('delete_contact')}", 
+                                callback_data=create_callback_data("delete_contact", delete_data)
                             )
                             new_row.append(new_button)
                         else:
@@ -557,7 +545,7 @@ async def handle_delete_contact(update: Update, context: ContextTypes.DEFAULT_TY
     
     try:
         wxid = data.get('wxid')
-        name = data.get('name', wxid)
+        name = data.get('name', f"微信_{wxid}")
         source_page = data.get("source_page", 0)
         search_word = data.get("search_word", "")
         
@@ -602,7 +590,7 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
     
     try:
         wxid = data.get('wxid')
-        name = data.get('name', wxid)
+        name = data.get('name', f"微信_{wxid}")
         source_page = data.get("source_page", 0)
         search_word = data.get("search_word", "")
         
@@ -611,7 +599,10 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
             return
         
         # 执行删除操作
-        success = await contact_manager.delete_contact(wxid)
+        # success = await contact_manager.delete_contact(wxid)
+        # 执行解绑操作
+        chat_id = await contact_manager.get_contact(wxid).get("chatId")
+        success = await contact_manager.update_contact_by_chatid(chat_id, {"chatId": -9999999999})
         
         if success:
             await query.answer(f"✅ 削除成功: {name}")
