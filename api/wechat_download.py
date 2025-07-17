@@ -1,12 +1,14 @@
 import base64
 import datetime
-import io
 import logging
 import math
 import os
+from io import BytesIO
 from typing import Tuple
 
 import aiohttp
+import aiofiles
+import aiofiles.os
 
 import config
 from api.wechat_api import wechat_api
@@ -53,7 +55,7 @@ async def get_file(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str, s
         file_extension=""
     )
     
-async def get_emoji(data_json) -> Tuple[bool, str]:
+async def get_emoji(data_json) -> Tuple[bool, str, str]:
     try:
         md5 = data_json["msg"]["emoji"]["md5"]
         data_length = int(data_json["msg"]["emoji"]["len"])
@@ -63,9 +65,12 @@ async def get_emoji(data_json) -> Tuple[bool, str]:
         filename = f"{md5}.gif"
         filepath = os.path.join(EMOJI_DIR, filename)
 
-        # 检查文件是否已存在
-        if os.path.exists(filepath):
-            return True, filepath
+        # ✅ 异步文件检查
+        try:
+            await aiofiles.os.stat(filepath)
+            return True, filepath, filename
+        except FileNotFoundError:
+            pass
         
         # 利用API请求下载
         async def get_url_by_api():
@@ -91,19 +96,25 @@ async def get_emoji(data_json) -> Tuple[bool, str]:
                         return url
                     else:
                         logger.error("emojiList中找不到url字段")
-                        return False, "emojiList中找不到url字段"
+                        return None
                 else:
                     logger.error("响应数据中找不到url")
-                    return False, "响应数据中找不到url"
+                    return None
             else:
                 logger.error("响应数据格式不正确")
-                return False, "响应数据格式不正确"
+                return None
         
-        if url == "":
-            url = await get_url_by_api()
+        # 如果原始URL为空，尝试通过API获取
+        if not url or url == "":
+            api_url = await get_url_by_api()
+            if api_url:
+                url = api_url
+            else:
+                logger.error("无法获取有效的URL")
+                return False, "无法获取有效的URL", ""
         
         url = str(url) if url else ""
-        if not url:
+        if not url or not url.startswith('http'):
             raise ValueError("Empty URL provided")
 
         # 下载文件到内存并备份到磁盘
@@ -114,31 +125,25 @@ async def get_emoji(data_json) -> Tuple[bool, str]:
                     data = await file_response.read()
                     
                     # 创建BytesIO对象
-                    file_buffer = io.BytesIO(data)
+                    file_buffer = BytesIO(data)
                     file_buffer.seek(0)  # 重置指针到开头
                     
-                    # 备份到磁盘文件
+                    # ✅ 异步备份到磁盘
                     try:
-                        # 确保目录存在
-                        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                        await aiofiles.os.makedirs(os.path.dirname(filepath), exist_ok=True)
                         
-                        # 写入文件
-                        with open(filepath, 'wb') as f:
-                            f.write(data)
+                        async with aiofiles.open(filepath, 'wb') as f:
+                            await f.write(data)
                         
                         logger.debug(f"文件已备份到: {filepath}")
                     except Exception as e:
                         logger.warning(f"备份文件失败: {e}")
                     
-                    return True, file_buffer
-                else:
-                    error_msg = f"下载URL失败，HTTP状态码: {file_response.status}"
-                    logger.error(error_msg)
-                    return False, error_msg
-                        
+                    return True, file_buffer, "sticker.gif"
+                    
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")
-        return False, f"下载失败: {str(e)}"
+        return False, f"下载失败: {str(e)}", ""
 
 async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
     try:
@@ -150,9 +155,12 @@ async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
         filename = f"{md5}.silk"
         filepath = os.path.join(VOICE_DIR, filename)
 
-        # 检查文件是否已存在
-        if os.path.exists(filepath):
+        # ✅ 异步文件检查
+        try:
+            await aiofiles.os.stat(filepath)
             return True, filepath
+        except FileNotFoundError:
+            pass
         
         # 构建请求参数
         payload = {
@@ -178,8 +186,8 @@ async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
             logger.error("响应数据格式不正确")
             return False, "响应数据格式不正确"
         
-        # 确保目录存在
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        # ✅ 异步目录创建和文件写入
+        await aiofiles.os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
         # 下载文件
         all_binary_data = bytearray()
@@ -191,9 +199,9 @@ async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
             voice_binary_data = base64.b64decode(voice_base64)
             all_binary_data.extend(voice_binary_data)
 
-            # 写入文件
-            with open(filepath, 'wb') as f:
-                f.write(all_binary_data)
+            # ✅ 异步文件写入
+            async with aiofiles.open(filepath, 'wb') as f:
+                await f.write(all_binary_data)
             return True, filepath
                 
     except Exception as e:
@@ -222,13 +230,16 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
         if save_dir:
             filepath = os.path.join(save_dir, filename)
         
-            # 检查文件是否已存在
-            if os.path.exists(filepath):
-                return True, filepath
+            # ✅ 异步文件检查
+            try:
+                await aiofiles.os.stat(filepath)
+                return True, filepath, filename  # 文件已存在
+            except FileNotFoundError:
+                pass  # 文件不存在，继续下载
             
-            # 确保保存目录存在
-            os.makedirs(save_dir, exist_ok=True)
-
+            # ✅ 异步目录创建
+            await aiofiles.os.makedirs(save_dir, exist_ok=True)
+            
         # 用于存储所有分段的二进制数据
         all_binary_data = bytearray()
         cdn_success = False
@@ -397,13 +408,13 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
                 next_chunk_size = min(chunk_size, remaining_data)
         
         if save_dir:
-            # 将完整的二进制数据写入文件
-            with open(filepath, 'wb') as f:
-                f.write(all_binary_data)
+            # ✅ 异步文件写入
+            async with aiofiles.open(filepath, 'wb') as f:
+                await f.write(all_binary_data)
             return True, filepath, filename
         else:
             # 转换为 BytesIO（推荐）
-            file_buffer = io.BytesIO(all_binary_data)
+            file_buffer = BytesIO(all_binary_data)
             return True, file_buffer, filename
         
     except Exception as e:
