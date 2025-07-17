@@ -127,11 +127,16 @@ class WeChatRabbitMQConsumer:
             "processed_messages": 0,
             "failed_messages": 0
         }
+        
+        # 添加心跳监控器
+        self.heartbeat_monitor = HeartbeatMonitor(timeout=300)  # 5分钟超时
     
     # 获取统计信息方法
     def get_stats(self) -> Dict[str, Any]:
         """获取消费者统计信息"""
         dedup_stats = self.deduplicator.get_stats()
+        
+        heartbeat_status = self.heartbeat_monitor.get_status()  # 添加心跳状态
         
         total = self.stats["total_messages"]
         duplicate_rate = (self.stats["duplicate_messages"] / total * 100) if total > 0 else 0
@@ -140,7 +145,8 @@ class WeChatRabbitMQConsumer:
             **self.stats,
             "duplicate_rate_percent": round(duplicate_rate, 2),
             "deduplicator": dedup_stats,
-            "active_processors": len(self.contact_processors)
+            "active_processors": len(self.contact_processors),
+            "heartbeat_monitor": heartbeat_status  # 添加心跳监控状态
         }
     
     async def connect(self) -> bool:
@@ -336,6 +342,8 @@ class WeChatRabbitMQConsumer:
             
             # 启动清理任务
             self.cleanup_task = asyncio.create_task(self.cleanup_idle_processors())
+            # 启动心跳监控
+            await self.heartbeat_monitor.start_monitoring()
             
             logger.info("✅ RabbiMQ消费者已启动，服务正在运行...")
             
@@ -351,6 +359,9 @@ class WeChatRabbitMQConsumer:
     async def stop_consuming(self):
         """停止消费消息"""
         self.is_running = False
+        
+        # 停止心跳监控
+        await self.heartbeat_monitor.stop_monitoring()
         
         # 停止清理任务
         if self.cleanup_task and not self.cleanup_task.done():
@@ -490,6 +501,104 @@ class MessageDeduplicator:
             "cache_size_limit": self.cache_size,
             "ttl_seconds": self.ttl
         }
+
+class HeartbeatMonitor:
+    """心跳监控器 - 监控服务是否正常运行"""
+    
+    def __init__(self, timeout: int = 300):  # 5分钟超时
+        """
+        初始化心跳监控器
+        
+        Args:
+            timeout: 超时时间（秒），默认5分钟
+        """
+        self.timeout = timeout
+        self.last_heartbeat = time.time()
+        self.is_running = False
+        self.monitor_task: Optional[asyncio.Task] = None
+        self.service_down = False
+        
+    def update_heartbeat(self):
+        """更新心跳时间"""
+        self.last_heartbeat = time.time()
+        if self.service_down:
+            # 服务恢复
+            self.service_down = False
+            logger.info("✅ 微信服务已恢复正常")
+    
+    async def start_monitoring(self):
+        """开始监控"""
+        if not self.is_running:
+            self.is_running = True
+            self.monitor_task = asyncio.create_task(self._monitor_loop())
+            logger.info(f"🔍 启动心跳监控，超时时间: {self.timeout}秒")
+    
+    async def stop_monitoring(self):
+        """停止监控"""
+        self.is_running = False
+        if self.monitor_task and not self.monitor_task.done():
+            self.monitor_task.cancel()
+            try:
+                await self.monitor_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("🔴 心跳监控已停止")
+    
+    async def _monitor_loop(self):
+        """监控循环"""
+        while self.is_running:
+            try:
+                current_time = time.time()
+                time_since_last = current_time - self.last_heartbeat
+                
+                if time_since_last > self.timeout:
+                    if not self.service_down:
+                        # 首次检测到服务异常
+                        self.service_down = True
+                        logger.error(f"❌ 微信服务疑似DOWN - 已超过{self.timeout}秒未收到消息")
+                        logger.error(f"⏰ 最后收到消息时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_heartbeat))}")
+                        
+                        # 可以在这里添加告警通知
+                        await self._send_service_down_alert(time_since_last)
+                
+                # 每30秒检查一次
+                await asyncio.sleep(30)
+                
+            except Exception as e:
+                logger.error(f"❌ 心跳监控出错: {e}")
+                await asyncio.sleep(10)
+    
+    async def _send_service_down_alert(self, down_time: float):
+        """发送服务异常告警"""
+        try:
+            tg_user_id = get_user_id()
+            down_minutes = int(down_time // 60)
+            
+            alert_message = f"⚠️ **WeChatサーバーに異常発生！**\n\n" \
+                          f"🔴 サーバー状態: ダウン\n" \
+                          f"⏰ 異常継続時間: {down_minutes}分\n" \
+                          f"📝 最終正常時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n\n" \
+                          f"サーバーの稼働状況をご確認ください！"
+            
+            await telegram_sender.send_text(tg_user_id, alert_message)
+            
+        except Exception as e:
+            logger.error(f"❌ 发送服务异常告警失败: {e}")
+    
+    def get_status(self) -> dict:
+        """获取监控状态"""
+        current_time = time.time()
+        time_since_last = current_time - self.last_heartbeat
+        
+        return {
+            "is_monitoring": self.is_running,
+            "service_down": self.service_down,
+            "last_heartbeat": self.last_heartbeat,
+            "time_since_last_seconds": int(time_since_last),
+            "time_since_last_minutes": round(time_since_last / 60, 1),
+            "timeout_seconds": self.timeout
+        }
+
 # =============================================================================
 # 消息处理函数
 # =============================================================================
@@ -499,7 +608,7 @@ _global_consumer: Optional[WeChatRabbitMQConsumer] = None
 
 async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) -> bool:
     """
-    处理微信消息（带去重功能）
+    处理微信消息（带去重功能和心跳功能）
     
     Args:
         message: 消息内容
@@ -510,7 +619,11 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
     """
     global _global_consumer
     
-    try:        
+    try:
+        # 更新心跳 - 无论什么消息都更新
+        if _global_consumer:
+            _global_consumer.heartbeat_monitor.update_heartbeat()
+            
         # 尝试解析JSON
         try:
             message_data = json.loads(message)
