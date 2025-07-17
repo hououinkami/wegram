@@ -1,3 +1,4 @@
+aiofiles
 aiohttp
 requests
 python-telegram-bot
@@ -8,3 +9,4 @@ pilk
 ffmpeg-python
 Pillow
 aio_pika
+openai-whisper
