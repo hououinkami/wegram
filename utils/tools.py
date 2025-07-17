@@ -3,11 +3,15 @@ import base64
 import logging
 import os
 import re
+import tempfile
+import warnings
 from datetime import datetime
 from io import BytesIO
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union, BinaryIO
 
 import aiohttp
+import whisper
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -158,3 +162,109 @@ def multi_get(data, *keys, default=''):
             if value is not None:
                 return value
     return default
+
+# 全局模型缓存
+_model_cache = {}
+
+def _get_model(model_size="base", model_dir=None):
+    """获取或加载模型（M2 优化版本）"""
+    cache_key = f"{model_size}_{model_dir}"
+    
+    if cache_key not in _model_cache:
+        logger.info(f"🤖 正在加载 Whisper 模型: {model_size}")
+        
+        # 加载模型并忽略警告
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+            warnings.filterwarnings("ignore", category=UserWarning)
+            
+            model = whisper.load_model(model_size, download_root=model_dir)
+            
+            # 移动到最佳设备
+            model = model.to("cpu")
+        
+        _model_cache[cache_key] = model
+        logger.info(f"✅ 模型加载完成")
+    
+    return _model_cache[cache_key]
+
+async def voice_to_text(voice_input: Union[str, BytesIO], language="zh"):
+    """
+    异步转换语音成文字 - M2 优化版本
+    """
+    
+    # 输入类型验证
+    if not isinstance(voice_input, (str, BytesIO)):
+        raise ValueError(f"❌ 不支持的输入类型: {type(voice_input)}")
+    
+    # 处理不同类型的输入
+    if isinstance(voice_input, str):
+        if not Path(voice_input).exists():
+            raise FileNotFoundError(f"❌ 语音文件不存在: {voice_input}")
+    elif isinstance(voice_input, BytesIO):
+        audio_data = voice_input.getvalue()
+        if len(audio_data) == 0:
+            raise ValueError("❌ BytesIO 对象为空")
+    
+    # 设置模型目录
+    model_dir = os.path.join(os.path.dirname(__file__), "..", "whisper_model")
+    model_dir = os.path.abspath(model_dir)
+    os.makedirs(model_dir, exist_ok=True)
+    
+    def _transcribe_sync():
+        """同步转换函数"""
+        temp_file = None
+        try:
+            # 处理输入
+            if isinstance(voice_input, str):
+                audio_path = voice_input
+            elif isinstance(voice_input, BytesIO):
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.ogg')
+                audio_data = voice_input.getvalue()
+                temp_file.write(audio_data)
+                temp_file.close()
+                audio_path = temp_file.name
+            
+            # 获取优化后的模型
+            model = _get_model("small", model_dir)
+            
+            # M2 优化的转录参数
+            result = model.transcribe(
+                audio_path,  # 使用文件路径
+                language=language,
+                # initial_prompt="这是微信语音消息，日常对话，请用简体中文转录，若包含英文单词，则英文单词保持原样：",
+                temperature=0.0,                                  # 确定性输出
+                best_of=1,                                       # 快速处理
+                beam_size=1,                                     # 贪婪搜索
+                condition_on_previous_text=False,                # 独立处理
+                task="transcribe",
+                no_speech_threshold=0.6,                         # 适应微信音质
+                logprob_threshold=-1.0,                          # 宽松置信度
+                compression_ratio_threshold=2.4,                  # 适应压缩格式
+                # M2 优化：使用更高效的参数
+                fp16=False,  # M2 上 FP16 可能不稳定，使用 FP32
+            )
+            
+            text = result["text"].strip()
+            
+            return text
+            
+        except Exception as e:
+            logger.error(f"❌ 转换错误: {str(e)}")
+            raise e
+            
+        finally:
+            # 清理临时文件
+            if temp_file and os.path.exists(temp_file.name):
+                try:
+                    os.unlink(temp_file.name)
+                except Exception as e:
+                    logger.warning(f"⚠️ 清理临时文件失败: {e}")
+    
+    # 异步执行
+    try:
+        text = await asyncio.to_thread(_transcribe_sync)
+        return text
+    except Exception as e:
+        logger.error(f"异步转换失败: {str(e)}")
+        raise e

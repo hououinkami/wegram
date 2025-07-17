@@ -20,6 +20,7 @@ from service.telethon_client import get_client, get_user_id
 from utils import tools
 from utils import message_formatter
 from utils.contact_manager import contact_manager
+from utils.file_processor import async_file_processor
 from utils.group_manager import group_manager
 from utils.message_mapper import msgid_mapping
 from utils.telegram_callbacks import create_callback_data
@@ -76,13 +77,12 @@ async def _forward_text(chat_id: int, msg_type: int, from_wxid: str, sender_name
 
 async def _forward_image(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, **kwargs) -> dict:
     """处理图片消息"""
-    # 异步下载图片
-    success, file, _ = await wechat_download.get_image(msg_id, from_wxid, content)
-    
-    if success:
-        return await telegram_sender.send_photo(chat_id, file, sender_name)
-    else:
-        raise Exception("图片下载失败")
+    return await async_file_processor.send_with_placeholder(
+        'photo', f"[{locale.type(msg_type)}]",
+        chat_id, sender_name,
+        wechat_download.get_image,
+        msg_id, from_wxid, content
+    )
 
 async def _forward_voice(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, message_info: dict, **kwargs) -> dict:
     """处理语音消息"""
@@ -96,7 +96,19 @@ async def _forward_voice(chat_id: int, msg_type: int, from_wxid: str, sender_nam
     if not ogg_path or not duration:
         raise Exception("语音转换失败")
     
-    return await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
+    # 先发送语音
+    voice_response = await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
+    if voice_response:
+        voice_msgid = voice_response.message_id
+        
+    # 转换成文字
+    voice_text = await tools.voice_to_text(ogg_path)
+    
+    sender_text = f"{sender_name}\n{voice_text}"
+    
+    await telegram_sender.edit_message_caption(chat_id, sender_text, voice_msgid)
+    
+    return voice_response
 
 async def _forward_friend_request(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
     """处理好友添加"""
@@ -171,20 +183,21 @@ async def _forward_contact(chat_id: int, msg_type: int, from_wxid: str, sender_n
 
 async def _forward_video(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, **kwargs) -> dict:
     """处理视频消息"""
-    success, file, _ = await wechat_download.get_video(msg_id, from_wxid, content)
-    if success:
-        return await telegram_sender.send_video(chat_id, file, sender_name)
-    else:
-        raise Exception("视频下载失败")
+    return await async_file_processor.send_with_placeholder(
+        'video', f"[{locale.type(msg_type)}]",
+        chat_id, sender_name,
+        wechat_download.get_video,
+        msg_id, from_wxid, content
+    )
 
 async def _forward_sticker(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
     """处理贴纸消息"""
-    success, file = await wechat_download.get_emoji(content)
-    
-    if success:
-        return await telegram_sender.send_animation(chat_id, file, sender_name, filename=f"[{locale.type(msg_type)}].gif")
-    else:
-        raise Exception("贴纸下载失败")
+    return await async_file_processor.send_with_placeholder(
+        'animation', f"[{locale.type(msg_type)}].gif",
+        chat_id, sender_name,
+        wechat_download.get_emoji,
+        content
+    )
 
 async def _forward_location(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
     """处理定位"""
@@ -229,12 +242,12 @@ async def _forward_link(chat_id: int, msg_type: int, from_wxid: str, sender_name
 
 async def _forward_file(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, **kwargs) -> dict:
     """处理文件消息"""
-    success, file, filename = await wechat_download.get_file(msg_id, from_wxid, content)
-    
-    if success:
-        return await telegram_sender.send_document(chat_id, file, sender_name, filename=filename)
-    else:
-        raise Exception("文件下载失败")
+    return await async_file_processor.send_with_placeholder(
+        'document', f"[{locale.type(msg_type)}]",
+        chat_id, sender_name,
+        wechat_download.get_file,
+        msg_id, from_wxid, content
+    )
 
 async def _forward_chat_history(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
     """处理聊天记录消息"""
@@ -445,7 +458,7 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
     return contact_name, avatar_url
 
 async def _get_sender_info(from_wxid: str, sender_wxid: str, contact_name: str = "") -> str:
-    if sender_wxid == from_wxid:    # 私聊
+    if sender_wxid == from_wxid or (not from_wxid.endswith('@chatroom')):    # 私聊
         sender_name = contact_name
     else:   # 群聊
         contact_saved = await contact_manager.get_contact(sender_wxid)
