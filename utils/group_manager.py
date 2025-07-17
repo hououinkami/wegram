@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from typing import Dict, List, Optional, Any, Callable
 
 import config
@@ -11,12 +12,13 @@ logger = logging.getLogger(__name__)
 class GroupMemberManager:
     """群成员管理器 - 支持多群组数据存储和查询"""
     
-    def __init__(self, json_file_path: str = None):
+    def __init__(self, json_file_path: str = None, cache_expire_hours: int = 2):
         """
         初始化群成员管理器
         
         Args:
             json_file_path: JSON文件路径，如果不指定则使用默认路径
+            cache_expire_hours: 缓存过期时间（小时）
         """
         if json_file_path is None:
             # 使用用户指定的默认路径: 项目根目录/group.json
@@ -27,13 +29,15 @@ class GroupMemberManager:
         else:
             self.json_file_path = json_file_path
         
+        self.cache_expire_seconds = cache_expire_hours * 3600
+        
         # 确保目录存在
         os.makedirs(os.path.dirname(self.json_file_path), exist_ok=True)
         
         # 加载现有数据
         self.data = self.load_from_json()
     
-    def load_from_json(self) -> Dict[str, List[Dict[str, str]]]:
+    def load_from_json(self) -> Dict[str, Dict[str, Any]]:
         """从JSON文件加载数据"""
         try:
             if os.path.exists(self.json_file_path):
@@ -44,7 +48,7 @@ class GroupMemberManager:
             logger.info(f"⚠️ 加载JSON文件失败: {e}")
             return {}
     
-    def save_to_json(self, new_data: Dict[str, List[Dict[str, str]]] = None):
+    def save_to_json(self, new_data: Dict[str, Dict[str, Any]] = None):
         """保存数据到JSON文件"""
         try:
             data_to_save = new_data if new_data is not None else self.data
@@ -56,17 +60,19 @@ class GroupMemberManager:
             
             with open(self.json_file_path, 'w', encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
-            logger.info(f"✅ 数据已保存到: {self.json_file_path}")
+            logger.debug(f"✅ 数据已保存到: {self.json_file_path}")
             return True
         except Exception as e:
             logger.info(f"❌ 保存JSON文件失败: {e}")
             return False
     
-    def extract_members(self, response: Dict[str, Any]) -> Dict[str, List[Dict[str, str]]]:
-        """提取API响应"""
+    def extract_members(self, response: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        """提取API响应，包含ServerVersion信息"""
         data = response["Data"]
         chatroom_name = data.get("ChatroomUserName", "")
-        members_data = data.get("NewChatroomData", {}).get("ChatRoomMember")
+        server_version = data.get("ServerVersion", 0)
+        member_count = data.get("NewChatroomData", {}).get("MemberCount", 0)
+        members_data = data.get("NewChatroomData", {}).get("ChatRoomMember", {})
         
         members = []
         for member in members_data:
@@ -77,15 +83,53 @@ class GroupMemberManager:
                     "displayname": member.get("DisplayName", "")
                 })
         
-        return {chatroom_name: members}
+        current_time = int(time.time())
+        
+        return {
+            chatroom_name: {
+                "serverVersion": server_version,
+                "memberCount": member_count,
+                "lastUpdate": current_time,
+                "cacheExpiry": current_time + self.cache_expire_seconds,
+                "members": members
+            }
+        }
     
-    async def update_group_member(self, chatroom_id: str) -> bool:
+    def is_cache_valid(self, chatroom_id: str) -> bool:
+        """检查缓存是否有效（未过期）"""
+        if chatroom_id not in self.data:
+            return False
+        
+        current_time = int(time.time())
+        cache_expiry = self.data[chatroom_id].get("cacheExpiry", 0)
+        
+        return current_time < cache_expiry
+    
+    def need_update(self, chatroom_id: str, new_server_version: int) -> bool:
+        """判断是否需要更新数据"""
+        # 如果缓存不存在，需要更新
+        if chatroom_id not in self.data:
+            return True
+        
+        # 如果缓存已过期，需要更新
+        if not self.is_cache_valid(chatroom_id):
+            return True
+        
+        # 如果ServerVersion发生变化，需要更新
+        cached_version = self.data[chatroom_id].get("serverVersion", 0)
+        if new_server_version != cached_version:
+            logger.info(f"🔄 检测到ServerVersion变化: {cached_version} -> {new_server_version}")
+            return True
+        
+        return False
+
+    async def update_group_member(self, chatroom_id: str, force_update: bool = False) -> bool:
         """
         使用微信API函数更新群组信息
         
         Args:
-            wechat_api_func: 你的wechat_api函数
             chatroom_id: 群组ID
+            force_update: 是否强制更新（忽略缓存）
             
         Returns:
             bool: 更新是否成功
@@ -96,7 +140,20 @@ class GroupMemberManager:
                 "QID": chatroom_id,
                 "Wxid": config.MY_WXID
             }
-            group_member_response = await wechat_api("GROUP_MEMBER", payload)
+            
+            # 如果不是强制更新，先检查是否需要更新
+            if not force_update:
+                # 先获取当前数据以检查ServerVersion
+                group_member_response = await wechat_api("GROUP_MEMBER", payload)
+                current_server_version = group_member_response["Data"].get("ServerVersion", 0)
+                
+                # 检查是否需要更新
+                if not self.need_update(chatroom_id, current_server_version):
+                    return True
+                
+            else:
+                # 强制更新时直接获取数据
+                group_member_response = await wechat_api("GROUP_MEMBER", payload)
             
             # 提取成员信息
             extracted_data = self.extract_members(group_member_response)
@@ -104,8 +161,10 @@ class GroupMemberManager:
             if extracted_data:
                 # 保存到JSON
                 self.save_to_json(extracted_data)
-                member_count = len(list(extracted_data.values())[0])
-                logger.info(f"✅ 成功更新群 {chatroom_id}，共 {member_count} 名成员")
+                chatroom_data = list(extracted_data.values())[0]
+                member_count = len(chatroom_data["members"])
+                server_version = chatroom_data["serverVersion"]
+                logger.debug(f"✅ 成功更新群 {chatroom_id}，共 {member_count} 名成员 (ServerVersion: {server_version})")
                 return True
             else:
                 logger.error(f"❌ 未能从响应中提取到成员信息")
@@ -132,7 +191,7 @@ class GroupMemberManager:
                 
                 # 保存到JSON文件
                 if self.save_to_json():
-                    logger.info(f"✅ 成功删除群组 {chatroom_id}")
+                    logger.debug(f"✅ 成功删除群组 {chatroom_id}")
                     return True
                 else:
                     logger.error(f"❌ 删除群组 {chatroom_id} 后保存文件失败")
@@ -147,18 +206,12 @@ class GroupMemberManager:
     
     async def get_display_name(self, chatroom_id: str, username: str) -> str:
         """获取用户在指定群中的显示名称"""
-        if chatroom_id not in self.data:
-            payload = {
-                "QID": chatroom_id,
-                "Wxid": config.MY_WXID
-            }
-            group_member_response = await wechat_api("GROUP_MEMBER", payload)
-
-            new_data = self.extract_members(group_member_response)
-            self.save_to_json(new_data)
+        # 检查缓存并更新（如果需要）
+        await self.update_group_member(chatroom_id)
         
         if chatroom_id in self.data:
-            for member in self.data[chatroom_id]:
+            members = self.data[chatroom_id].get("members", [])
+            for member in members:
                 if member["username"] == username:
                     return member["displayname"] if member["displayname"] else member["nickname"]
         
@@ -166,13 +219,16 @@ class GroupMemberManager:
     
     def get_all_members(self, chatroom_id: str) -> List[Dict[str, str]]:
         """获取指定群的所有成员"""
-        return self.data.get(chatroom_id, [])
+        if chatroom_id in self.data:
+            return self.data[chatroom_id].get("members", [])
+        return []
     
     def search_user_across_groups(self, username: str) -> Dict[str, str]:
         """跨群查询用户，返回用户在各个群中的显示名"""
         result = {}
         
-        for chatroom_id, members in self.data.items():
+        for chatroom_id, group_data in self.data.items():
+            members = group_data.get("members", [])
             for member in members:
                 if member["username"] == username:
                     display_name = member["displayname"] if member["displayname"] else member["nickname"]
@@ -192,25 +248,43 @@ class GroupMemberManager:
     def get_total_members(self) -> int:
         """获取所有群组的总成员数（可能有重复用户）"""
         total = 0
-        for members in self.data.values():
-            total += len(members)
+        for group_data in self.data.values():
+            total += len(group_data.get("members", []))
         return total
     
     def get_unique_users(self) -> set:
         """获取所有唯一用户的集合"""
         unique_users = set()
-        for members in self.data.values():
+        for group_data in self.data.values():
+            members = group_data.get("members", [])
             for member in members:
                 unique_users.add(member["username"])
         return unique_users
     
-    def batch_update_groups(self, wechat_api_func: Callable, chatroom_ids: List[str]) -> Dict[str, bool]:
+    def get_cache_info(self, chatroom_id: str) -> Dict[str, Any]:
+        """获取指定群组的缓存信息"""
+        if chatroom_id not in self.data:
+            return {}
+        
+        group_data = self.data[chatroom_id]
+        current_time = int(time.time())
+        
+        return {
+            "serverVersion": group_data.get("serverVersion", 0),
+            "memberCount": group_data.get("memberCount", 0),
+            "lastUpdate": group_data.get("lastUpdate", 0),
+            "cacheExpiry": group_data.get("cacheExpiry", 0),
+            "isValid": self.is_cache_valid(chatroom_id),
+            "remainingSeconds": max(0, group_data.get("cacheExpiry", 0) - current_time)
+        }
+    
+    async def batch_update_groups(self, chatroom_ids: List[str], force_update: bool = False) -> Dict[str, bool]:
         """
         批量更新多个群组
         
         Args:
-            wechat_api_func: 你的wechat_api函数
             chatroom_ids: 群组ID列表
+            force_update: 是否强制更新所有群组
             
         Returns:
             Dict[str, bool]: 每个群组的更新结果
@@ -221,7 +295,7 @@ class GroupMemberManager:
         
         for i, chatroom_id in enumerate(chatroom_ids, 1):
             logger.info(f"\n[{i}/{len(chatroom_ids)}] 处理群组: {chatroom_id}")
-            results[chatroom_id] = self.update_group_with_wechat_api(wechat_api_func, chatroom_id)
+            results[chatroom_id] = await self.update_group_member(chatroom_id, force_update)
         
         # 统计结果
         success_count = sum(1 for success in results.values() if success)
