@@ -25,7 +25,7 @@ class UserManager:
         self._initialized = True
         self._user_id: Optional[int] = None
         self._username: Optional[str] = None
-        self._file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "user.json")
+        self._file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "user.json")
         self._ensure_data_dir()
         
         # 启动时加载用户信息

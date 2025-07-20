@@ -56,7 +56,7 @@ class StickerManager:
         return sticker_map.get(file_unique_id)
 
 # 创建一个全局的StickerManager实例
-sticker_manager = StickerManager(os.path.join(os.path.dirname(os.path.dirname(__file__)), "sticker.json"))
+sticker_manager = StickerManager(os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "sticker.json"))
 
 def get_sticker_info(file_unique_id):
     """获取贴纸信息的便捷函数"""
