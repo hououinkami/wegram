@@ -1,390 +1,555 @@
-import json
+import asyncio
 import logging
 import os
+import sqlite3
 import threading
 from datetime import datetime, timedelta
+from typing import Optional, List, Any
+
+import aiosqlite
 
 logger = logging.getLogger(__name__)
+
+class MappingResult:
+    """映射结果对象，支持obj.attr访问方式"""
+    def __init__(self, data: dict):
+        self.tgmsgid = data.get('tgmsgid', 0)
+        self.fromwxid = data.get('fromwxid', '')
+        self.towxid = data.get('towxid', '')
+        self.msgid = data.get('msgid', 0)
+        self.clientmsgid = data.get('clientmsgid', 0)
+        self.createtime = data.get('createtime', 0)
+        self.content = data.get('content', '')
+        self.telethonmsgid = data.get('telethonmsgid', 0)
+    
+    def to_dict(self) -> dict:
+        """转换为字典格式"""
+        return {
+            'tgmsgid': self.tgmsgid,
+            'fromwxid': self.fromwxid,
+            'towxid': self.towxid,
+            'msgid': self.msgid,
+            'clientmsgid': self.clientmsgid,
+            'createtime': self.createtime,
+            'content': self.content,
+            'telethonmsgid': self.telethonmsgid
+        }
+    
+    def __repr__(self):
+        return f"MappingResult(tgmsgid={self.tgmsgid}, msgid={self.msgid})"
 
 class MappingManager:
     def __init__(self):
         """
-        初始化映射管理器 - 实时存储版本（数组格式）
+        初始化映射管理器 - SQLite版本
         """
         
-        # 初始化
-        print(f"✅ 初始化 MappingManager 实时存储版本 (ID: {id(self)})")
-        self.base_path = "./msgid"
-        # 内存缓存，用于快速查询最近的数据
+        # 数据库路径 - 使用相对于当前文件的路径
+        self.db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+            "database", 
+            "msgid.db"
+        )
+        self.database_dir = os.path.dirname(self.db_path)
+        
+        # 内存缓存，用于快速查询今日数据
         self.memory_cache = []
-        self.cache_lock = threading.RLock()  # 使用可重入锁
+        self.cache_lock = threading.RLock()
         
-        # 确保目录存在
-        if not os.path.exists(self.base_path):
-            os.makedirs(self.base_path)
-            
-        # 加载今天的数据到内存缓存
-        self._load_today_to_cache()
+        # 定期清理配置
+        self.cleanup_enabled = True
+        self.cleanup_days_to_keep = 7  # 默认保留7天
+        self.cleanup_hour = 2  # 凌晨2点执行清理
+        self.cleanup_task = None
+        
+        # 确保数据库目录存在
+        if not os.path.exists(self.database_dir):
+            os.makedirs(self.database_dir)
+        
+        # 初始化数据库
+        asyncio.create_task(self._init_database())
+        
+        # 加载今日数据到缓存
+        asyncio.create_task(self._load_today_to_cache())
+        
+        # 启动定期清理任务
+        asyncio.create_task(self._start_cleanup_scheduler())
 
-    def _load_today_to_cache(self):
-        """
-        将今天的数据加载到内存缓存中
-        """
+    async def _init_database(self):
+        """初始化数据库表结构"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS message_mappings (
+                        tgmsgid INTEGER PRIMARY KEY,
+                        fromwxid TEXT NOT NULL,
+                        towxid TEXT NOT NULL,
+                        msgid INTEGER NOT NULL,
+                        clientmsgid INTEGER DEFAULT 0,
+                        createtime INTEGER DEFAULT 0,
+                        content TEXT DEFAULT '',
+                        telethonmsgid INTEGER DEFAULT 0,
+                        date TEXT NOT NULL
+                    )
+                ''')
+                
+                # 创建索引
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_date ON message_mappings(date)')
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_msgid ON message_mappings(msgid)')
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_telethonmsgid ON message_mappings(telethonmsgid)')
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_fromwxid ON message_mappings(fromwxid)')
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_date_tgmsgid ON message_mappings(date, tgmsgid)')
+                
+                await db.commit()
+                logger.info("✅ 消息映射数据库初始化完成")
+        except Exception as e:
+            logger.error(f"❌ 数据库初始化失败: {e}")
+
+    async def _load_today_to_cache(self):
+        """将今日数据加载到内存缓存"""
         today = datetime.now().strftime("%Y-%m-%d")
-        file_path = self._get_file_path(today)
         
-        with self.cache_lock:
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, "r", encoding='utf-8') as f:
-                        data = json.load(f)
-                    self.memory_cache = data.copy() if isinstance(data, list) else []
-                    logger.info(f"加载了 {len(self.memory_cache)} 条今日映射到内存缓存")
-                except Exception as e:
-                    logger.error(f"加载今日数据到缓存失败: {e}")
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    'SELECT * FROM message_mappings WHERE date = ? ORDER BY tgmsgid DESC',
+                    (today,)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    
+                with self.cache_lock:
                     self.memory_cache = []
-            else:
+                    for row in rows:
+                        self.memory_cache.append(MappingResult({
+                            'tgmsgid': row[0],
+                            'fromwxid': row[1],
+                            'towxid': row[2],
+                            'msgid': row[3],
+                            'clientmsgid': row[4],
+                            'createtime': row[5],
+                            'content': row[6],
+                            'telethonmsgid': row[7]
+                        }))
+                    
+                logger.info(f"📅 加载了 {len(self.memory_cache)} 条今日映射到内存缓存")
+        except Exception as e:
+            logger.error(f"❌ 加载今日数据到缓存失败: {e}")
+            with self.cache_lock:
                 self.memory_cache = []
 
-    def _get_file_path(self, date):
+    async def add(self, tg_msg_id: int, from_wx_id: str, to_wx_id: str, 
+                  wx_msg_id: int, client_msg_id: int, create_time: int, 
+                  content: str, telethon_msg_id: int = 0):
         """
-        获取指定日期的文件路径
-        :param date: 日期字符串（格式：YYYY-MM-DD）
-        :return: 文件路径
-        """
-        return os.path.join(self.base_path, f"{date}.json")
-
-    def _ensure_file_exists(self, date):
-        """
-        确保指定日期的文件存在，不存在则新建
-        :param date: 日期字符串（格式：YYYY-MM-DD）
-        """
-        file_path = self._get_file_path(date)
-        if not os.path.exists(file_path):
-            with open(file_path, "w", encoding='utf-8') as f:
-                json.dump([], f, ensure_ascii=False)
-
-    def add(self, tg_msg_id, from_wx_id, to_wx_id, wx_msg_id, client_msg_id, create_time, content, telethon_msg_id: int = 0):
-        """
-        添加TG消息ID到微信消息的映射 - 实时存储
-        :param tg_msg_id: Telegram 消息ID（数字）
-        :param wx_msg_id: 微信消息ID（数字）
-        :param from_wx_id: 发送者微信ID（字符串）
-        :param content: 消息内容（字符串）
+        添加TG消息ID到微信消息的映射
         """
         today = datetime.now().strftime("%Y-%m-%d")
         
-        mapping_data = {
-            "tgmsgid": int(tg_msg_id),
-            "fromwxid": str(from_wx_id),
-            "towxid": str(to_wx_id),
-            "msgid": int(wx_msg_id),
-            "clientmsgid": int(client_msg_id) if str(client_msg_id).isdigit() else 0,
-            "createtime": int(create_time) if str(create_time).isdigit() else 0,
-            "content": str(content),
-            "telethonmsgid": int(telethon_msg_id)
-        }
+        mapping_data = MappingResult({
+            'tgmsgid': int(tg_msg_id),
+            'fromwxid': str(from_wx_id),
+            'towxid': str(to_wx_id),
+            'msgid': int(wx_msg_id),
+            'clientmsgid': int(client_msg_id) if str(client_msg_id).isdigit() else 0,
+            'createtime': int(create_time) if str(create_time).isdigit() else 0,
+            'content': str(content),
+            'telethonmsgid': int(telethon_msg_id)
+        })
         
         try:
             # 1. 先更新内存缓存
             with self.cache_lock:
-                # 检查是否已存在相同的tg_msg_id，如果存在则更新，否则添加
+                # 检查是否已存在相同的tg_msg_id，如果存在则更新
                 found = False
                 for i, item in enumerate(self.memory_cache):
-                    if item.get("tgmsgid") == int(tg_msg_id):
+                    if item.tgmsgid == int(tg_msg_id):
                         self.memory_cache[i] = mapping_data
                         found = True
                         break
                 if not found:
                     self.memory_cache.append(mapping_data)
+                    # 按tgmsgid降序排序
+                    self.memory_cache.sort(key=lambda x: x.tgmsgid, reverse=True)
             
-            # 2. 立即写入文件
-            self._save_to_file_immediately(today, mapping_data)
+            # 2. 保存到数据库
+            await self._save_to_database(today, mapping_data)
             
             logger.debug(f"成功添加映射: TG({tg_msg_id}) -> WX({wx_msg_id})")
             
         except Exception as e:
-            logger.error(f"添加映射失败: {e}")
-            # 如果文件写入失败，从缓存中移除
+            logger.error(f"❌ 添加映射失败: {e}")
+            # 如果数据库写入失败，从缓存中移除
             with self.cache_lock:
-                self.memory_cache = [item for item in self.memory_cache if item.get("tgmsgid") != int(tg_msg_id)]
+                self.memory_cache = [item for item in self.memory_cache 
+                                   if item.tgmsgid != int(tg_msg_id)]
 
-    def _save_to_file_immediately(self, date, mapping_data):
-        """
-        立即将单条映射数据保存到文件
-        :param date: 日期字符串
-        :param mapping_data: 映射数据字典
-        """
-        file_path = self._get_file_path(date)
-        self._ensure_file_exists(date)
-        
-        # 使用文件锁防止并发写入冲突
-        lock_file = file_path + ".lock"
-        
-        # 简单的文件锁机制
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                # 检查锁文件
-                if os.path.exists(lock_file):
-                    if attempt < max_retries - 1:
-                        threading.Event().wait(0.1)  # 等待100ms
-                        continue
-                    else:
-                        logger.warning(f"文件锁超时，强制写入: {file_path}")
-                
-                # 创建锁文件
-                with open(lock_file, 'w') as f:
-                    f.write(str(os.getpid()))
-                
-                # 读取现有数据
-                with open(file_path, "r", encoding='utf-8') as f:
-                    mappings_list = json.load(f)
-                
-                # 确保是列表格式
-                if not isinstance(mappings_list, list):
-                    mappings_list = []
-                
-                # 检查是否已存在相同的tgmsgid，如果存在则更新，否则添加
-                found = False
-                for i, item in enumerate(mappings_list):
-                    if item.get("tgmsgid") == mapping_data["tgmsgid"]:
-                        mappings_list[i] = mapping_data
-                        found = True
-                        break
-                if not found:
-                    mappings_list.append(mapping_data)
-                
-                # 写回文件
-                with open(file_path, "w", encoding='utf-8') as f:
-                    json.dump(mappings_list, f, indent=4, ensure_ascii=False)
-                
-                # 删除锁文件
-                if os.path.exists(lock_file):
-                    os.remove(lock_file)
-                
-                break  # 成功写入，退出重试循环
-                
-            except Exception as e:
-                # 清理锁文件
-                if os.path.exists(lock_file):
-                    try:
-                        os.remove(lock_file)
-                    except:
-                        pass
-                
-                if attempt == max_retries - 1:
-                    raise e
-                else:
-                    logger.warning(f"文件写入失败，重试 {attempt + 1}/{max_retries}: {e}")
-                    threading.Event().wait(0.1)
+    async def _save_to_database(self, date: str, mapping_data: MappingResult):
+        """保存数据到数据库"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # 使用 INSERT OR REPLACE 来处理重复数据
+                await db.execute('''
+                    INSERT OR REPLACE INTO message_mappings 
+                    (tgmsgid, fromwxid, towxid, msgid, clientmsgid, createtime, content, telethonmsgid, date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    mapping_data.tgmsgid,
+                    mapping_data.fromwxid,
+                    mapping_data.towxid,
+                    mapping_data.msgid,
+                    mapping_data.clientmsgid,
+                    mapping_data.createtime,
+                    mapping_data.content,
+                    mapping_data.telethonmsgid,
+                    date
+                ))
+                await db.commit()
+        except Exception as e:
+            logger.error(f"❌ 数据库保存失败: {e}")
+            raise
 
-    def tg_to_wx(self, tg_msg_id):
+    async def tg_to_wx(self, tg_msg_id: int) -> Optional[MappingResult]:
         """
         根据TG消息ID获取对应的微信消息信息
-        :param tg_msg_id: Telegram 消息ID（数字或字符串）
-        :return: 微信消息字典 {"msgid": int, "fromwxid": str, "content": str} 或 None
+        返回MappingResult对象，支持obj.attr访问
         """
         tg_id_int = int(tg_msg_id)
         
-        # 1. 首先检查内存缓存（最快）
+        # 1. 首先检查内存缓存（今日数据）
         with self.cache_lock:
             for item in self.memory_cache:
-                if item.get("tgmsgid") == tg_id_int:
+                if item.tgmsgid == tg_id_int:
                     return item
         
-        # 2. 检查最近几天的文件
-        today = datetime.now()
-        for i in range(3):  # 搜索范围为当前日期往前 3 天
-            date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
-            
-            # 跳过今天（已经在缓存中检查过了）
-            if i == 0:
-                continue
-                
-            file_path = self._get_file_path(date)
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, "r", encoding='utf-8') as f:
-                        mappings_list = json.load(f)
-                    
-                    if isinstance(mappings_list, list):
-                        for item in mappings_list:
-                            if item.get("tgmsgid") == tg_id_int:
-                                # 将历史数据也加入缓存（可选优化）
-                                with self.cache_lock:
-                                    self.memory_cache.append(item)
-                                return item
-                            
-                except Exception as e:
-                    logger.error(f"读取文件 {file_path} 失败: {e}")
-        
-        return None
+        # 2. 检查数据库（往前搜索指定天数）
+        return await self._search_in_database_by_days('tgmsgid', tg_id_int, days=3)
 
-    def wx_to_tg(self, wx_msg_id):
+    async def wx_to_tg(self, wx_msg_id: int) -> Optional[int]:
         """
         根据微信消息ID反向查找TG消息ID
-        :param wx_msg_id: 微信消息ID（数字或字符串）
-        :return: TG消息ID（字符串）或 None
+        返回tgmsgid整数
         """
         wx_id_int = int(wx_msg_id)
         
         # 1. 首先检查内存缓存
         with self.cache_lock:
             for item in self.memory_cache:
-                if item.get("msgid") == wx_id_int:
-                    return str(item.get("tgmsgid"))
+                if item.msgid == wx_id_int:
+                    return item.tgmsgid
         
-        # 2. 检查文件
-        today = datetime.now()
-        for i in range(3):  # 搜索范围为当前日期往前 3 天
-            date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
-            
-            # 跳过今天（已经在缓存中检查过了）
-            if i == 0:
-                continue
-                
-            file_path = self._get_file_path(date)
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, "r", encoding='utf-8') as f:
-                        mappings_list = json.load(f)
-                    
-                    if isinstance(mappings_list, list):
-                        for item in mappings_list:
-                            if item.get("msgid") == wx_id_int:
-                                return str(item.get("tgmsgid"))
-                            
-                except Exception as e:
-                    logger.error(f"读取文件 {file_path} 失败: {e}")
-        
-        return None
-    
-    def telethon_to_wx(self, telethon_msg_id):
+        # 2. 检查数据库
+        result = await self._search_in_database_by_days('msgid', wx_id_int, days=3)
+        return result.tgmsgid if result else None
+
+    async def telethon_to_wx(self, telethon_msg_id: int) -> Optional[MappingResult]:
         """
         根据Telethon消息ID反向查找微信消息对象
-        :param telethon_msg_id: Telethon消息ID
-        :return: 完整的微信消息字典或 None
+        返回MappingResult对象，支持obj.attr访问
         """
         telethon_msg_id_int = int(telethon_msg_id)
         
         # 1. 首先检查内存缓存
         with self.cache_lock:
             for item in self.memory_cache:
-                if item.get("telethonmsgid") == telethon_msg_id_int:
+                if item.telethonmsgid == telethon_msg_id_int:
                     return item
         
-        # 2. 检查文件
-        today = datetime.now()
-        for i in range(3):
-            date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
-            file_path = self._get_file_path(date)
+        # 2. 检查数据库
+        return await self._search_in_database_by_days('telethonmsgid', telethon_msg_id_int, days=3)
+
+    async def _search_in_database_by_days(self, field: str, value: int, days: int = 3) -> Optional[MappingResult]:
+        """
+        在数据库中按天数范围搜索数据
+        """
+        try:
+            # 生成日期范围
+            today = datetime.now()
+            date_list = []
+            for i in range(1, days + 1):  # 从昨天开始搜索
+                date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+                date_list.append(date)
             
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, "r", encoding='utf-8') as f:
-                        mappings_list = json.load(f)
+            async with aiosqlite.connect(self.db_path) as db:
+                # 构建查询条件
+                placeholders = ','.join(['?' for _ in date_list])
+                query = f'''
+                    SELECT * FROM message_mappings 
+                    WHERE date IN ({placeholders}) AND {field} = ?
+                    ORDER BY tgmsgid DESC
+                    LIMIT 1
+                '''
+                
+                async with db.execute(query, (*date_list, value)) as cursor:
+                    row = await cursor.fetchone()
                     
-                    if isinstance(mappings_list, list):
-                        for item in mappings_list:
-                            if isinstance(item, dict) and item.get("telethonmsgid") == telethon_msg_id_int:
-                                return item
-                                
-                except Exception as e:
-                    logger.error(f"读取文件失败: {e}")
+                    if row:
+                        result = MappingResult({
+                            'tgmsgid': row[0],
+                            'fromwxid': row[1],
+                            'towxid': row[2],
+                            'msgid': row[3],
+                            'clientmsgid': row[4],
+                            'createtime': row[5],
+                            'content': row[6],
+                            'telethonmsgid': row[7]
+                        })
+                        
+                        # 将历史数据也加入缓存（可选优化）
+                        with self.cache_lock:
+                            # 检查是否已存在，避免重复
+                            exists = any(item.tgmsgid == result.tgmsgid for item in self.memory_cache)
+                            if not exists:
+                                self.memory_cache.append(result)
+                                # 重新排序
+                                self.memory_cache.sort(key=lambda x: x.tgmsgid, reverse=True)
+                        
+                        return result
+        except Exception as e:
+            logger.error(f"❌ 数据库搜索失败: {e}")
         
         return None
 
-    def get_tg_id_by_wx_user(self, from_wx_id):
+    async def get_tg_id_by_wx_user(self, from_wx_id: str, days: int = 3) -> List[int]:
         """
         根据微信用户ID查找相关的TG消息ID列表
-        :param from_wx_id: 微信用户ID
-        :return: TG消息ID列表
+        返回tgmsgid整数列表，按tgmsgid降序排序
         """
         result = []
         
         # 1. 检查内存缓存
         with self.cache_lock:
             for item in self.memory_cache:
-                if item.get("fromwxid") == from_wx_id:
-                    tg_id = str(item.get("tgmsgid"))
-                    if tg_id not in result:
-                        result.append(tg_id)
+                if item.fromwxid == from_wx_id:
+                    if item.tgmsgid not in result:
+                        result.append(item.tgmsgid)
         
-        # 2. 检查文件
-        today = datetime.now()
-        for i in range(3):  # 搜索范围为当前日期往前 3 天
-            date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        # 2. 检查数据库
+        try:
+            today = datetime.now()
+            date_list = []
+            for i in range(1, days + 1):
+                date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+                date_list.append(date)
             
-            # 跳过今天（已经在缓存中检查过了）
-            if i == 0:
-                continue
+            async with aiosqlite.connect(self.db_path) as db:
+                placeholders = ','.join(['?' for _ in date_list])
+                query = f'''
+                    SELECT DISTINCT tgmsgid FROM message_mappings 
+                    WHERE date IN ({placeholders}) AND fromwxid = ?
+                    ORDER BY tgmsgid DESC
+                '''
                 
-            file_path = self._get_file_path(date)
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, "r", encoding='utf-8') as f:
-                        mappings_list = json.load(f)
+                async with db.execute(query, (*date_list, from_wx_id)) as cursor:
+                    rows = await cursor.fetchall()
                     
-                    if isinstance(mappings_list, list):
-                        for item in mappings_list:
-                            if item.get("fromwxid") == from_wx_id:
-                                tg_id = str(item.get("tgmsgid"))
-                                if tg_id not in result:
-                                    result.append(tg_id)
-                                
-                except Exception as e:
-                    logger.error(f"读取文件 {file_path} 失败: {e}")
+                    for row in rows:
+                        tg_id = row[0]
+                        if tg_id not in result:
+                            result.append(tg_id)
+        except Exception as e:
+            logger.error(f"❌ 查询用户TG消息失败: {e}")
         
+        # 确保结果按tgmsgid降序排序
+        result.sort(reverse=True)
         return result
+    
+    async def _start_cleanup_scheduler(self):
+        """启动定期清理调度器"""
+        if not self.cleanup_enabled:
+            return
+        
+        try:
+            # 等待数据库初始化完成
+            await asyncio.sleep(5)
+            
+            # 启动时执行一次清理（可选）
+            await self._perform_scheduled_cleanup(startup=True)
+            
+            # 启动定期清理任务
+            self.cleanup_task = asyncio.create_task(self._cleanup_scheduler_loop())
+            logger.info(f"⏰ 定期清理任务已启动，每天{self.cleanup_hour}:00执行，保留{self.cleanup_days_to_keep}天数据")
+            
+        except Exception as e:
+            logger.error(f"❌ 启动定期清理任务失败: {e}")
+    
+    async def _cleanup_scheduler_loop(self):
+        """定期清理循环任务"""
+        while self.cleanup_enabled:
+            try:
+                # 计算到下次清理时间的等待时间
+                now = datetime.now()
+                next_cleanup = now.replace(hour=self.cleanup_hour, minute=0, second=0, microsecond=0)
+                
+                # 如果今天的清理时间已过，设置为明天
+                if next_cleanup <= now:
+                    next_cleanup = next_cleanup + timedelta(days=1)
+                
+                wait_seconds = (next_cleanup - now).total_seconds()
+                logger.debug(f"⏰ 下次清理时间: {next_cleanup}, 等待 {wait_seconds/3600:.1f} 小时")
+                
+                # 等待到清理时间
+                await asyncio.sleep(wait_seconds)
+                
+                # 执行清理
+                if self.cleanup_enabled:
+                    await self._perform_scheduled_cleanup()
+                    
+            except asyncio.CancelledError:
+                logger.info("🔴 定期清理任务被取消")
+                break
+            except Exception as e:
+                logger.error(f"❌ 定期清理循环出错: {e}")
+                # 出错后等待1小时再重试
+                await asyncio.sleep(3600)
+    
+    async def _perform_scheduled_cleanup(self, startup: bool = False):
+        """执行定期清理"""
+        try:
+            action = "启动清理" if startup else "定期清理"
+            
+            # 获取清理前统计
+            stats_before = await self.get_stats()
+            start_time = datetime.now()
+            
+            # 执行清理
+            deleted_count = await self.cleanup_old_data(self.cleanup_days_to_keep)
+            
+            # 计算耗时
+            duration = (datetime.now() - start_time).total_seconds()
+            
+            # 获取清理后统计
+            stats_after = await self.get_stats()
+            
+            # 记录清理结果
+            logger.info(f"🗑️ {action}完成 - 删除: {deleted_count}条, 清理前: {stats_before['total_mappings']}条, "
+                       f"清理后: {stats_after['total_mappings']}条, 耗时: {duration:.2f}秒")
+            
+        except Exception as e:
+            logger.error(f"❌ 执行定期清理失败: {e}")
 
-    def get_stats(self):
+    def configure_cleanup(self, enabled: bool = True, days_to_keep: int = 7, cleanup_hour: int = 2):
+        """
+        配置定期清理参数
+        
+        Args:
+            enabled: 是否启用定期清理
+            days_to_keep: 保留数据的天数
+            cleanup_hour: 每天清理的小时数 (0-23)
+        """
+        self.cleanup_enabled = enabled
+        self.cleanup_days_to_keep = max(1, days_to_keep)  # 至少保留1天
+        self.cleanup_hour = max(0, min(23, cleanup_hour))  # 限制在0-23小时
+        
+        logger.info(f"🔄 清理配置已更新 - 启用: {enabled}, 保留天数: {self.cleanup_days_to_keep}, 清理时间: {self.cleanup_hour}:00")
+    
+    async def stop_cleanup_scheduler(self):
+        """停止定期清理任务"""
+        self.cleanup_enabled = False
+        if self.cleanup_task and not self.cleanup_task.done():
+            self.cleanup_task.cancel()
+            try:
+                await self.cleanup_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("🔴 定期清理任务已停止")
+    
+    async def trigger_manual_cleanup(self) -> dict:
+        """手动触发一次清理"""
+        try:
+            stats_before = await self.get_stats()
+            start_time = datetime.now()
+            
+            deleted_count = await self.cleanup_old_data(self.cleanup_days_to_keep)
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            stats_after = await self.get_stats()
+            
+            result = {
+                'success': True,
+                'deleted_count': deleted_count,
+                'before_total': stats_before['total_mappings'],
+                'after_total': stats_after['total_mappings'],
+                'duration': duration
+            }
+            
+            logger.info(f"🗑️ 手动清理完成 - {result}")
+            
+            # 重新加载今日缓存
+            await self._load_today_to_cache()
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ 手动清理失败: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def get_stats(self) -> dict:
         """
         获取映射统计信息
-        :return: 统计信息字典
         """
-        total_mappings = 0
         cache_count = 0
+        total_mappings = 0
         
         # 统计内存缓存
         with self.cache_lock:
             cache_count = len(self.memory_cache)
         
-        # 统计文件中的数据
-        today = datetime.now()
-        for i in range(7):  # 统计最近7天
-            date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
-            file_path = self._get_file_path(date)
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, "r", encoding='utf-8') as f:
-                        mappings_list = json.load(f)
-                    
-                    if isinstance(mappings_list, list):
-                        total_mappings += len(mappings_list)
-                        
-                except Exception as e:
-                    logger.error(f"读取统计文件 {file_path} 失败: {e}")
+        # 统计数据库中的数据
+        try:
+            today = datetime.now()
+            date_list = []
+            for i in range(7):  # 统计最近7天
+                date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+                date_list.append(date)
+            
+            async with aiosqlite.connect(self.db_path) as db:
+                placeholders = ','.join(['?' for _ in date_list])
+                query = f'SELECT COUNT(*) FROM message_mappings WHERE date IN ({placeholders})'
+                
+                async with db.execute(query, date_list) as cursor:
+                    row = await cursor.fetchone()
+                    total_mappings = row[0] if row else 0
+        except Exception as e:
+            logger.error(f"❌ 获取统计信息失败: {e}")
         
         return {
-            "total_mappings": total_mappings,
-            "cache_count": cache_count,
-            "cache_hit_rate": f"{cache_count}/{total_mappings}" if total_mappings > 0 else "0/0"
+            'total_mappings': total_mappings,
+            'cache_count': cache_count,
+            'cache_hit_rate': f"{cache_count}/{total_mappings}" if total_mappings > 0 else "0/0",
+            'cleanup_enabled': self.cleanup_enabled,
+            'cleanup_days_to_keep': self.cleanup_days_to_keep,
+            'cleanup_hour': self.cleanup_hour,
+            'cleanup_task_running': self.cleanup_task is not None and not self.cleanup_task.done()
         }
 
-    def clear_old_cache(self, days_to_keep=1):
+    async def clear_old_cache(self, days_to_keep: int = 1):
         """
-        清理旧的缓存数据（可选功能）
-        :param days_to_keep: 保留多少天的缓存
+        清理旧的缓存数据
         """
-        cutoff_date = datetime.now() - timedelta(days=days_to_keep)
-        cutoff_str = cutoff_date.strftime("%Y-%m-%d")
-        
-        with self.cache_lock:
-            # 这里可以根据需要实现更复杂的缓存清理逻辑
-            # 目前只是简单地重新加载今天的数据
-            if days_to_keep == 1:
-                self._load_today_to_cache()
+        if days_to_keep == 1:
+            await self._load_today_to_cache()
+
+    async def cleanup_old_data(self, days_to_keep: int = 30):
+        """
+        清理数据库中的旧数据（可选功能）
+        """
+        try:
+            cutoff_date = (datetime.now() - timedelta(days=days_to_keep)).strftime("%Y-%m-%d")
+            
+            async with aiosqlite.connect(self.db_path) as db:
+                result = await db.execute(
+                    'DELETE FROM message_mappings WHERE date < ?',
+                    (cutoff_date,)
+                )
+                await db.commit()
+                
+                deleted_count = result.rowcount
+                logger.info(f"🗑️ 清理了 {deleted_count} 条旧数据（{days_to_keep}天前）")
+                
+                return deleted_count
+        except Exception as e:
+            logger.error(f"❌ 清理旧数据失败: {e}")
+            return 0
 
 # 创建映射管理器实例
 msgid_mapping = MappingManager()

@@ -66,7 +66,7 @@ async def process_telegram_update(update: Update) -> None:
             telethon_client = get_client()
             telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), 'me', message.text, message_date)
 
-            add_send_msgid(wx_api_response, message_id, telethon_msg_id)
+            await add_send_msgid(wx_api_response, message_id, telethon_msg_id)
 
 # 转发函数
 async def forward_telegram_to_wx(chat_id: str, message) -> bool:
@@ -148,6 +148,17 @@ async def forward_telegram_to_wx(chat_id: str, message) -> bool:
             
     except Exception as e:
         logger.error(f"转发消息时出错: {e}")
+        
+        # 直接在这里发送失败通知
+        try:
+            await telegram_sender.send_text(
+                chat_id=chat_id,
+                text=f"❌ 消息发送失败: {str(e)}",
+                reply_to_message_id=message.message_id
+            )
+        except Exception as notification_error:
+            logger.error(f"发送失败通知失败: {notification_error}")
+            
         return False
 
 
@@ -446,13 +457,13 @@ async def _send_telegram_reply(to_wxid: str, message):
         send_text = message.text
         reply_to_message = message.reply_to_message
         reply_to_message_id = reply_to_message.message_id
-        reply_to_wx_msgid = msgid_mapping.tg_to_wx(reply_to_message_id)
+        reply_to_wx_msgid = await msgid_mapping.tg_to_wx(reply_to_message_id)
         if reply_to_wx_msgid is None:
             logger.warning(f"找不到TG消息ID {reply_to_message_id} 对应的微信消息映射")
             # 处理找不到映射的情况，可能需要跳过或使用默认值
-            await _send_telegram_text(to_wxid, send_text)
+            return await _send_telegram_text(to_wxid, send_text)
         reply_to_text = reply_to_message.text or ""
-        reply_xml = f"""<appmsg appid="" sdkver="0"><title>{send_text}</title><des /><action /><type>57</type><showtype>0</showtype><soundtype>0</soundtype><mediatagname /><messageext /><messageaction /><content /><contentattr>0</contentattr><url /><lowurl /><dataurl /><lowdataurl /><songalbumurl /><songlyric /><appattach><totallen>0</totallen><attachid /><emoticonmd5 /><fileext /><aeskey /></appattach><extinfo /><sourceusername /><sourcedisplayname /><thumburl /><md5 /><statextstr /><refermsg><content>{reply_to_text}</content><type>1</type><svrid>{int(reply_to_wx_msgid["msgid"])}</svrid><chatusr>{reply_to_wx_msgid["fromwxid"]}</chatusr><fromusr>${to_wxid}</fromusr></refermsg></appmsg>"""
+        reply_xml = f"""<appmsg appid="" sdkver="0"><title>{send_text}</title><des /><action /><type>57</type><showtype>0</showtype><soundtype>0</soundtype><mediatagname /><messageext /><messageaction /><content /><contentattr>0</contentattr><url /><lowurl /><dataurl /><lowdataurl /><songalbumurl /><songlyric /><appattach><totallen>0</totallen><attachid /><emoticonmd5 /><fileext /><aeskey /></appattach><extinfo /><sourceusername /><sourcedisplayname /><thumburl /><md5 /><statextstr /><refermsg><content>{reply_to_text}</content><type>1</type><svrid>{int(reply_to_wx_msgid.msgid)}</svrid><chatusr>{reply_to_wx_msgid.fromwxid}</chatusr><fromusr>${to_wxid}</fromusr></refermsg></appmsg>"""
         payload = {
             "ToWxid": to_wxid,
             "Type": 49,
@@ -463,6 +474,7 @@ async def _send_telegram_reply(to_wxid: str, message):
     except Exception as e:
         logger.error(f"处理回复消息时出错: {e}")
         return False
+
 
 async def _send_telegram_link(to_wxid: str, message):
     """处理链接信息"""
@@ -503,17 +515,17 @@ async def revoke_by_telegram_bot_command(chat_id, message):
     try:
         delete_message = message.reply_to_message
         delete_message_id = delete_message.message_id
-        delete_wx_msgid = msgid_mapping.tg_to_wx(delete_message_id)
+        delete_wx_msgid = await msgid_mapping.tg_to_wx(delete_message_id)
 
         # 撤回失败时发送提示
         if not delete_wx_msgid:
             return await telegram_sender.send_text(chat_id, locale.command("revoke_failed"), reply_to_message_id=delete_message_id)
         
         # 撤回
-        to_wxid = delete_wx_msgid["towxid"]
-        new_msg_id = delete_wx_msgid["msgid"]
-        client_msg_id = delete_wx_msgid["clientmsgid"]
-        create_time = delete_wx_msgid["createtime"]
+        to_wxid = delete_wx_msgid.towxid
+        new_msg_id = delete_wx_msgid.msgid
+        client_msg_id = delete_wx_msgid.clientmsgid
+        create_time = delete_wx_msgid.createtime
         
         payload = {
             "ClientMsgId": client_msg_id,
@@ -529,6 +541,7 @@ async def revoke_by_telegram_bot_command(chat_id, message):
         
     except Exception as e:
         logger.error(f"处理消息删除逻辑时出错: {e}")
+
 
 async def _download_telegram_voice(file_id: str, voice_dir: str) -> str:
     """
@@ -762,8 +775,16 @@ async def _download_telegram_sticker(sticker) -> str:
         return None
 
 # 添加msgid映射
-def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
+async def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
+    
+    if not wx_api_response:
+        return
+            
     data = wx_api_response.get("Data", {})
+    
+    if not data:
+        return
+        
     msg_list = data.get("List", [])
     if msg_list == []:
         # 查找第一个非空列表
@@ -781,7 +802,7 @@ def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
         client_msg_id = tools.multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
         create_time = tools.multi_get(response_data, 'Createtime', 'createtime', 'createTime', 'CreateTime')
         if new_msg_id:
-            msgid_mapping.add(
+            await msgid_mapping.add(
                 tg_msg_id=tg_msgid,
                 from_wx_id=config.MY_WXID,
                 to_wx_id=to_wx_id,
@@ -823,13 +844,13 @@ async def get_telethon_msg_id(client, chat_id, sender_id, text=None, send_time=N
 async def revoke_telethon(event):
     try:
         for deleted_id in event.deleted_ids:
-            wx_msg = msgid_mapping.telethon_to_wx(deleted_id)
+            wx_msg = await msgid_mapping.telethon_to_wx(deleted_id)  # ✅ 添加 await
             if not wx_msg:
                 return
-            to_wxid = wx_msg["towxid"]
-            new_msg_id = wx_msg["msgid"]
-            client_msg_id = wx_msg["clientmsgid"]
-            create_time = wx_msg["createtime"]
+            to_wxid = wx_msg.towxid
+            new_msg_id = wx_msg.msgid
+            client_msg_id = wx_msg.clientmsgid
+            create_time = wx_msg.createtime
             
             payload = {
                 "ClientMsgId": client_msg_id,
@@ -842,6 +863,7 @@ async def revoke_telethon(event):
         
     except Exception as e:
         logger.error(f"处理消息删除逻辑时出错: {e}")
+
 
 # 定义emoji列表
 EMOJI_LIST = ["微笑", "撇嘴", "色", "发呆", "得意", "流泪", "害羞", "闭嘴", "睡", "大哭", "尴尬", "发怒", "调皮", "呲牙", "惊讶", "难过", "囧", "抓狂", "吐", "偷笑", "愉快", "白眼", "傲慢", "困", "惊恐", "憨笑", "悠闲", "咒骂", "疑问", "嘘", "晕", "衰", "骷髅", "敲打", "再见", "擦汗", "抠鼻", "鼓掌", "坏笑", "右哼哼", "鄙视", "委屈", "快哭了", "阴险", "亲亲", "可怜", "笑脸", "生病", "脸红", "破涕为笑", "恐惧", "失望", "无语", "嘿哈", "捂脸", "奸笑", "机智", "皱眉", "耶", "吃瓜", "加油", "汗", "天啊", "Emm", "社会社会", "旺柴", "好的", "打脸", "哇", "翻白眼", "666", "让我看看", "叹气", "苦涩", "裂开", "嘴唇", "爱心", "心碎", "拥抱", "强", "弱", "握手", "胜利", "抱拳", "勾引", "拳头", "OK", "合十", "啤酒", "咖啡", "蛋糕", "玫瑰", "凋谢", "菜刀", "炸弹", "便便", "月亮", "太阳", "庆祝", "礼物", "红包", "发", "福", "烟花", "爆竹", "猪头", "跳跳", "发抖", "转圈", "Smile", "Grimace", "Drool", "Scowl", "Chill", "Sob", "Shy", "Shutup", "Sleep", "Cry", "Awkward", "Pout", "Wink", "Grin", "Surprised", "Frown", "Tension", "Scream", "Puke", "Chuckle", "Joyful", "Slight", "Smug", "Drowsy", "Panic", "Laugh", "Loafer", "Scold", "Doubt", "Shhh", "Dizzy", "BadLuck", "Skull", "Hammer", "Bye", "Relief", "DigNose", "Clap", "Trick", "Bah！R", "Lookdown", "Wronged", "Puling", "Sly", "Kiss", "Whimper", "Happy", "Sick", "Flushed", "Lol", "Terror", "Let Down", "Duh", "Hey", "Facepalm", "Smirk", "Smart", "Concerned", "Yeah!", "Onlooker", "GoForIt", "Sweats", "OMG", "Respect", "Doge", "NoProb", "MyBad", "Wow", "Boring", "Awesome", "LetMeSee", "Sigh", "Hurt", "Broken", "Lip", "Heart", "BrokenHeart", "Hug", "Strong", "Weak", "Shake", "Victory", "Salute", "Beckon", "Fist", "Worship", "Beer", "Coffee", "Cake", "Rose", "Wilt", "Cleaver", "Bomb", "Poop", "Moon", "Sun", "Party", "Gift", "Packet", "Rich", "Blessing", "Fireworks", "Firecracker", "Pig", "Waddle", "Tremble", "Twirl"]

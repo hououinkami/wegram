@@ -18,6 +18,8 @@ from logging.handlers import RotatingFileHandler
 from typing import List
 
 import config
+from utils.contact_manager import initialize_contact_manager
+from utils.group_manager import initialize_group_manager
 
 class DailyRotatingHandler(RotatingFileHandler):
     """按天切换的日志处理器"""
@@ -77,14 +79,14 @@ class ServiceManager:
     
     def __init__(self):
         self.logger = setup_logging()
-        self.logger.info("服务管理器初始化完成")
+        self.logger.info("✅ 服务管理器初始化完成")
         
         # 导入配置
         try:
             self.config = config
-            self.logger.info("配置加载成功")
+            self.logger.info("✅ 配置加载成功")
         except ImportError:
-            self.logger.error("无法导入配置文件 config.py")
+            self.logger.error("❌ 无法导入配置文件 config.py")
             sys.exit(1)
         
         self.service_threads = {}
@@ -119,10 +121,10 @@ class ServiceManager:
                         current_mtime = os.path.getmtime(config_path)
                         if current_mtime > last_mtime:
                             importlib.reload(self.config)
-                            self.logger.info("配置文件已重新加载")
+                            self.logger.info("🔄 配置文件已重新加载")
                             last_mtime = current_mtime
                 except Exception as e:
-                    self.logger.error(f"监控配置文件出错: {e}")
+                    self.logger.error(f"❌ 监控配置文件出错: {e}")
                 
                 time.sleep(2)  # 2秒检查一次
         
@@ -134,7 +136,7 @@ class ServiceManager:
         """获取可用服务列表"""
         service_dir = os.path.join(os.path.dirname(__file__), "service")
         if not os.path.exists(service_dir):
-            self.logger.error(f"服务目录不存在: {service_dir}")
+            self.logger.error(f"⚠️ 服务目录不存在: {service_dir}")
             return []
         
         services = []
@@ -152,14 +154,14 @@ class ServiceManager:
                 return sys.modules[module_name]
             return importlib.import_module(module_name)
         except Exception as e:
-            self.logger.error(f"导入服务 {service_name} 失败: {e}")
+            self.logger.error(f"❌ 导入服务 {service_name} 失败: {e}")
             return None
     
     def start_sync_service(self, service_module, service_name):
         """启动同步服务"""
         def run_service():
             try:
-                self.logger.info(f"启动同步服务: {service_name}")
+                self.logger.info(f"🟢 启动同步服务: {service_name}")
                 if asyncio.iscoroutinefunction(service_module.main):
                     # 异步函数在新事件循环中运行
                     loop = asyncio.new_event_loop()
@@ -168,7 +170,7 @@ class ServiceManager:
                 else:
                     service_module.main()
             except Exception as e:
-                self.logger.error(f"同步服务 {service_name} 出错: {e}")
+                self.logger.error(f"❌ 同步服务 {service_name} 出错: {e}")
         
         thread = threading.Thread(target=run_service, name=service_name, daemon=True)
         thread.start()
@@ -177,7 +179,7 @@ class ServiceManager:
     async def start_async_service(self, service_module, service_name):
         """启动异步服务"""
         try:
-            self.logger.info(f"启动异步服务: {service_name}")
+            self.logger.info(f"🟢 启动异步服务: {service_name}")
             if asyncio.iscoroutinefunction(service_module.main):
                 await service_module.main()
             else:
@@ -185,7 +187,7 @@ class ServiceManager:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, service_module.main)
         except asyncio.CancelledError:
-            self.logger.info(f"异步服务 {service_name} 被取消")
+            self.logger.info(f"⚠️ 异步服务 {service_name} 被取消")
             # 执行清理
             if hasattr(service_module, 'shutdown'):
                 try:
@@ -194,14 +196,14 @@ class ServiceManager:
                     else:
                         service_module.shutdown()
                 except Exception as e:
-                    self.logger.error(f"关闭服务 {service_name} 时出错: {e}")
+                    self.logger.error(f"❌ 关闭服务 {service_name} 时出错: {e}")
         except Exception as e:
-            self.logger.error(f"异步服务 {service_name} 出错: {e}")
+            self.logger.error(f"❌ 异步服务 {service_name} 出错: {e}")
     
     def setup_signal_handlers(self):
         """设置信号处理器"""
         def signal_handler():
-            self.logger.info("接收到终止信号，正在关闭服务...")
+            self.logger.info("🔴 接收到终止信号，正在关闭服务...")
             self.shutdown_event.set()
         
         loop = asyncio.get_event_loop()
@@ -213,16 +215,47 @@ class ServiceManager:
             signal.signal(signal.SIGINT, lambda s, f: signal_handler())
             signal.signal(signal.SIGTERM, lambda s, f: signal_handler())
     
+    async def initialize_modules(self):
+        """初始化核心模块（失败时继续运行）"""
+        modules_to_init = [
+            ("联系人管理器", initialize_contact_manager),
+            ("群组管理器", initialize_group_manager),
+        ]
+        
+        success_count = 0
+        total_count = len(modules_to_init)
+        
+        for module_name, init_func in modules_to_init:
+            try:
+                await init_func()
+                self.logger.info(f"✅ {module_name} 初始化完成")
+                success_count += 1
+            except Exception as e:
+                self.logger.warning(f"⚠️ {module_name} 初始化失败: {e}")
+        
+        if success_count == total_count:
+            self.logger.info("✅ 所有核心模块初始化完成")
+        elif success_count > 0:
+            self.logger.warning(f"⚠️ 部分模块初始化完成 ({success_count}/{total_count})")
+        else:
+            self.logger.warning("⚠️ 所有模块初始化失败，相关功能可能不可用")
+        
+        # 总是返回 True，允许服务继续启动
+        return True
+
+            
     async def run(self):
         """运行服务管理器"""
-        self.logger.info("正在启动服务管理器...")
+        
+        # 初始化模块
+        await self.initialize_modules()
         
         # 启动文件监控
         self.start_file_monitor()
         
         # 获取可用服务
         available_services = self.get_available_services()
-        self.logger.info(f"发现可用服务: {', '.join(available_services)}")
+        self.logger.info(f"🔄 发现可用服务: {', '.join(available_services)}")
         
         # 启动服务
         sync_services = [s for s in self.services_to_start if s not in self.async_services]
@@ -247,10 +280,10 @@ class ServiceManager:
                     self.async_tasks.append(task)
         
         if not self.service_threads and not self.async_tasks:
-            self.logger.error("没有成功启动任何服务")
+            self.logger.error("❌ 没有成功启动任何服务")
             return
         
-        # ✅ 等待所有服务启动完成（移到这里，在所有任务创建后）
+        # ✅ 等待所有服务启动完成
         await self.wait_for_services_startup()
         
         # ✅ 统计实际成功启动的服务数量
@@ -264,7 +297,7 @@ class ServiceManager:
         try:
             await self.monitor_services()
         except KeyboardInterrupt:
-            self.logger.info("接收到键盘中断")
+            self.logger.info("⚠️ 接收到键盘中断")
         finally:
             await self.shutdown()
     
@@ -275,27 +308,27 @@ class ServiceManager:
             for task in self.async_tasks[:]:
                 if task.done():
                     if task.exception():
-                        self.logger.error(f"异步服务 {task.get_name()} 异常退出: {task.exception()}")
+                        self.logger.error(f"⚠️ 异步服务 {task.get_name()} 异常退出: {task.exception()}")
                     else:
-                        self.logger.warning(f"异步服务 {task.get_name()} 正常退出")
+                        self.logger.warning(f"🔴 异步服务 {task.get_name()} 正常退出")
                     self.async_tasks.remove(task)
             
             # 检查同步服务
             for service_name, thread in list(self.service_threads.items()):
                 if not thread.is_alive():
-                    self.logger.warning(f"同步服务 {service_name} 已停止")
+                    self.logger.warning(f"🔴 同步服务 {service_name} 已停止")
                     del self.service_threads[service_name]
             
             # 如果所有服务都停止了，退出
             if not self.async_tasks and not self.service_threads:
-                self.logger.error("所有服务已停止")
+                self.logger.error("🔴 所有服务已停止")
                 break
             
             await asyncio.sleep(1)
     
     async def shutdown(self):
         """关闭所有服务"""
-        self.logger.info("正在关闭所有服务...")
+        self.logger.info("⚠️ 正在关闭所有服务...")
         
         # 取消异步任务
         for task in self.async_tasks:
@@ -306,10 +339,10 @@ class ServiceManager:
         
         # 等待同步服务
         for service_name, thread in self.service_threads.items():
-            self.logger.info(f"等待服务 {service_name} 结束...")
+            self.logger.info(f"⚠️ 等待服务 {service_name} 结束...")
             thread.join(timeout=5)
         
-        self.logger.info("服务管理器已停止")
+        self.logger.info("🔴 服务管理器已停止")
     
     async def wait_for_services_startup(self, timeout=15):
         """等待服务启动完成"""
@@ -331,7 +364,7 @@ class ServiceManager:
                 for task in self.async_tasks:
                     # 如果任务已完成且有异常，说明启动失败
                     if task.done() and task.exception():
-                        self.logger.error(f"异步服务 {task.get_name()} 启动失败: {task.exception()}")
+                        self.logger.error(f"❌ 异步服务 {task.get_name()} 启动失败: {task.exception()}")
                         async_ready = False
                         break
                     # 如果任务还没开始运行，继续等待
@@ -349,7 +382,7 @@ class ServiceManager:
         
         # 超时警告
         if time.time() - start_time >= timeout:
-            self.logger.warning(f"服务启动等待超时 ({timeout}秒)")
+            self.logger.warning(f"⚠️ 服务启动等待超时 ({timeout}秒)")
 
     async def count_successful_services(self):
         """统计成功启动的服务数量"""
@@ -368,6 +401,8 @@ class ServiceManager:
 
 async def main():
     """主函数"""
+    
+    # 启动服务
     manager = ServiceManager()
     await manager.run()
 
@@ -375,6 +410,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("程序被用户中断")
+        print("⚠️ 程序被用户中断")
     except Exception as e:
-        print(f"程序运行出错: {e}")
+        print(f"❌ 程序运行出错: {e}")
+        

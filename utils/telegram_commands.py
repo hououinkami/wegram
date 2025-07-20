@@ -13,7 +13,7 @@ from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api
 from service.telethon_client import get_user_id
 from utils import tools
-from utils.contact_manager import contact_manager
+from utils.contact_manager import contact_manager, Contact
 from utils.group_manager import group_manager
 from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import revoke_by_telegram_bot_command
@@ -129,7 +129,7 @@ class BotCommands:
             await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
             contact_now = await contact_manager.get_contact_by_chatid(chat_id)
             
-            if contact_now and contact_now.get("isReceive"):
+            if contact_now and contact_now.is_receive:
                 await telegram_sender.send_text(chat_id, locale.command("receive_on"))
             else:
                 await telegram_sender.send_text(chat_id, locale.command("receive_off"))
@@ -364,21 +364,19 @@ class BotCommands:
     async def list_contacts(chat_id: int, search_word: str = ""):
         """显示联系人列表 - 简化版本，直接跳转到分页处理器"""
         try:
-            from utils.contact_manager import contact_manager
-            
-            # 加载联系人数据
-            if not search_word:
-                await contact_manager.load_contacts()
-                contacts = contact_manager.contacts
-            else:   # 搜索联系人
-                contacts = await contact_manager.search_contacts_by_name(search_word)
+
+            # 搜索联系人
+            contacts = await contact_manager.search_contacts_by_name(search_word)
             
             if not contacts:
                 await telegram_sender.send_text(chat_id, locale.command('no_contacts'))
                 return
             
+            # 转换 Contact 对象为字典格式（为了兼容现有的显示逻辑）
+            contacts_dict = [contact.to_dict() for contact in contacts]
+            
             # 如果有联系人，直接显示第一页
-            await BotCommands._show_contacts_page(chat_id, contacts, 0, search_word)
+            await BotCommands._show_contacts_page(chat_id, contacts_dict, 0, search_word)
             
         except Exception as e:
             logger.error(f"显示联系人列表失败: {e}")
@@ -442,8 +440,9 @@ class BotCommands:
                 if len(contact1_name) > 8:
                     contact1_name = contact1_name[:8] + "..."
                 
-                contact1_type = contact_manager.get_contact_type_icon(contact1)
-                contact1_receive = contact_manager.get_contact_receive_icon(contact1)
+                contact1_obj = Contact.from_dict(contact1)
+                contact1_type = contact_manager.get_contact_type_icon(contact1_obj)
+                contact1_receive = contact_manager.get_contact_receive_icon(contact1_obj)
                 
                 contact1_data = {
                     "wxid": contact1.get('wxId', ''),
@@ -469,8 +468,9 @@ class BotCommands:
                     if len(contact2_name) > 8:
                         contact2_name = contact2_name[:8] + "..."
                     
-                    contact2_type = contact_manager.get_contact_type_icon(contact2)
-                    contact2_receive = contact_manager.get_contact_receive_icon(contact2)
+                    contact2_obj = Contact.from_dict(contact2)
+                    contact2_type = contact_manager.get_contact_type_icon(contact2_obj)
+                    contact2_receive = contact_manager.get_contact_receive_icon(contact2_obj)
                     
                     contact2_data = {
                         "wxid": contact2.get('wxId', ''),

@@ -303,18 +303,15 @@ async def handle_contact_page(update: Update, context: ContextTypes.DEFAULT_TYPE
     search_word = data.get("search_word", "")
     
     try:
-        if search_word and search_word.strip():
-            # 有搜索词，执行搜索
-            contacts = await contact_manager.search_contacts_by_name(search_word)
-        else:
-            # 无搜索词，获取所有联系人（可能已缓存）
-            await contact_manager.load_contacts()
-            contacts = contact_manager.contacts
+        contacts = await contact_manager.search_contacts_by_name(search_word)
+        
+        # 转换 Contact 对象为字典格式
+        contacts_dict = [contact.to_dict() for contact in contacts]
         
         # 直接调用 BotCommands 的方法来构建页面数据
         from utils.telegram_commands import BotCommands
         
-        message_text, reply_markup = await BotCommands.build_contacts_page_data(contacts, page, search_word)
+        message_text, reply_markup = await BotCommands.build_contacts_page_data(contacts_dict, page, search_word)
         
         if reply_markup is None:
             await query.edit_message_text(message_text, reply_markup=None)
@@ -342,8 +339,11 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         source_page = data.get('source_page', 0)
         search_word = data.get('search_word', "")
         
-        contact_dict = await contact_manager.get_contact(wxid)
-        contact_info = f"{contact_manager.get_contact_type_icon(contact_dict)} {name}"
+        contact = await contact_manager.get_contact(wxid)
+        if contact:
+            contact_info = f"{contact_manager.get_contact_type_icon(contact)} {name}"
+        else:
+            contact_info = f"❓ {name}"
         
         # 构建操作按钮
         keyboard = []
@@ -353,15 +353,15 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # 如果有有效的chatId，添加"解绑"按钮
         if chat_id and chat_id != -9999999999:
-            delete_data = {
+            unbind_data = {
                 "wxid": wxid,
                 "name": name,
                 "source_page": source_page,
                 "search_word": search_word
             }
             first_row.append(InlineKeyboardButton(
-                    f"{locale.command('delete_contact')}", 
-                    callback_data=create_callback_data("delete_contact", delete_data)
+                    f"{locale.command('group_unbind')}", 
+                    callback_data=create_callback_data("group_unbind", unbind_data)
                 ))
         else:
             bind_data = {
@@ -390,11 +390,17 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         if first_row:
             keyboard.append(first_row)
         
-        # 第二行：返回按钮
+        # 第二行：删除按钮
+        delete_data = {
+            "wxid": wxid,
+            "name": name,
+            "source_page": source_page,
+            "search_word": search_word
+        }
         keyboard.append([
             InlineKeyboardButton(
-                f"{locale.command('back')}",
-                callback_data=create_callback_data("contact_page", {"page": source_page, "search_word": search_word})
+                f"{locale.command('delete_contact')}",
+                callback_data=create_callback_data("delete_contact", delete_data)
             )
         ])
         
@@ -449,7 +455,7 @@ async def handle_group_binding(update: Update, context: ContextTypes.DEFAULT_TYP
                                 "search_word": search_word
                             }
                             new_button = InlineKeyboardButton(
-                                f"{locale.command('delete_contact')}", 
+                                f"{locale.command('group_unbind')}", 
                                 callback_data=create_callback_data("delete_contact", delete_data)
                             )
                             new_row.append(new_button)
@@ -466,6 +472,69 @@ async def handle_group_binding(update: Update, context: ContextTypes.DEFAULT_TYP
             
     except Exception as e:
         logger.error(f"群组绑定失败: {e}")
+        await query.answer(f"❌ 操作失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register_with_data("group_unbind")
+async def handle_group_unbind(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理群组绑定回调"""
+    query = update.callback_query
+    
+    try:
+        wxid = data.get('wxid')
+        name = data.get('name', f"微信_{wxid}")
+        avatar_url = data.get('avatar_url', '')
+        source_page = data.get('source_page', '')
+        search_word = data.get('search_word', '')
+        
+        if not wxid:
+            await query.answer("❌ 联系人ID无效", show_alert=True)
+            return
+        
+        await query.answer("🔄 正在解绑群组...")
+        
+        # 解绑群组
+        contact = await contact_manager.get_contact(wxid)
+        if not contact:
+            await query.answer("❌ 联系人不存在", show_alert=True)
+            return
+            
+        chat_id = contact.chat_id
+        result = await contact_manager.update_contact_by_chatid(chat_id, {"chatId": -9999999999})
+        
+        if result:
+            # 简单替换：直接查找包含特定文本的按钮并替换
+            current_markup = query.message.reply_markup
+            if current_markup:
+                new_keyboard = []
+                for row in current_markup.inline_keyboard:
+                    new_row = []
+                    for button in row:
+                        if button.text == locale.command('group_unbind'):
+                            # 找到目标按钮，替换它
+                            bind_data = {
+                                "wxid": wxid,
+                                "name": name,
+                                "source_page": source_page,
+                                "search_word": search_word
+                            }
+                            new_button = InlineKeyboardButton(
+                                f"{locale.command('group_binding')}", 
+                                callback_data=create_callback_data("group_binding", bind_data)
+                            )
+                            new_row.append(new_button)
+                        else:
+                            new_row.append(button)
+                    new_keyboard.append(new_row)
+                
+                new_reply_markup = InlineKeyboardMarkup(new_keyboard)
+                await query.edit_message_reply_markup(reply_markup=new_reply_markup)
+            
+            await query.answer("✅ 群组解绑成功！")
+        else:
+            await query.answer("❌ 群组解绑失败", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"群组解绑失败: {e}")
         await query.answer(f"❌ 操作失败: {str(e)}", show_alert=True)
 
 @CallbackRegistry.register_with_data("toggle_receive")
@@ -487,7 +556,7 @@ async def handle_toggle_receive(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("❌ 联系人不存在", show_alert=True)
             return
         
-        chat_id = contact.get('chatId')
+        chat_id = contact.chat_id
         if not chat_id:
             await query.answer("❌ 联系人未绑定Telegram聊天", show_alert=True)
             return
@@ -497,7 +566,7 @@ async def handle_toggle_receive(update: Update, context: ContextTypes.DEFAULT_TY
         
         # 获取更新后的状态
         updated_contact = await contact_manager.get_contact(wxid)
-        new_receive_status = updated_contact.get('isReceive', True)
+        new_receive_status = updated_contact.is_receive if updated_contact else True
         
         # 显示操作结果
         status_text = "✅ 已开启消息接收" if new_receive_status else "🔕 已关闭消息接收"
@@ -599,10 +668,7 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
             return
         
         # 执行删除操作
-        # success = await contact_manager.delete_contact(wxid)
-        # 执行解绑操作
-        chat_id = await contact_manager.get_contact(wxid).get("chatId")
-        success = await contact_manager.update_contact_by_chatid(chat_id, {"chatId": -9999999999})
+        success = await contact_manager.delete_contact(wxid)
         
         if success:
             await query.answer(f"✅ 削除成功: {name}")

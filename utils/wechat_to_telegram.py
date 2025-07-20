@@ -69,7 +69,7 @@ async def _forward_text(chat_id: int, msg_type: int, from_wxid: str, sender_name
 
         # 更新群信息
         if from_wxid.endswith("@chatroom"):
-            group_manager.update_group_member(from_wxid)
+            await group_manager.update_group_member(from_wxid)
 
     send_text = f"{sender_name}\n{content}"
     
@@ -106,7 +106,8 @@ async def _forward_voice(chat_id: int, msg_type: int, from_wxid: str, sender_nam
     
     sender_text = f"{sender_name}\n{voice_text}"
     
-    await telegram_sender.edit_message_caption(chat_id, sender_text, voice_msgid)
+    if sender_text != sender_name:
+        await telegram_sender.edit_message_caption(chat_id, sender_text, voice_msgid)
     
     return voice_response
 
@@ -298,7 +299,7 @@ async def _forward_quote(chat_id: int, msg_type: int, from_wxid: str, sender_nam
     quote = content["msg"]["appmsg"]["refermsg"]
     quote_newmsgid = quote["svrid"]
     
-    quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
+    quote_tgmsgid = await msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
     send_text = f"{sender_name}\n{text}"
     
     return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
@@ -359,7 +360,7 @@ async def _forward_revoke(chat_id: int, msg_type: int, from_wxid: str, sender_na
     revoke_text = revoke_msg["replacemsg"]
     quote_newmsgid = revoke_msg["newmsgid"]
 
-    quote_tgmsgid = msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
+    quote_tgmsgid = await msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
     send_text = f"{sender_name}\n<blockquote>{revoke_text}</blockquote>"
     
     return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
@@ -433,8 +434,8 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
     # 先读取已保存的联系人
     contact_saved = await contact_manager.get_contact(wxid)
     if contact_saved:
-        contact_name = contact_saved["name"]
-        avatar_url = contact_saved["avatarLink"]
+        contact_name = contact_saved.name
+        avatar_url = contact_saved.avatar_link
     else:
         # 异步获取联系人信息
         user_info = await wechat_contacts.get_user_info(wxid)
@@ -463,7 +464,7 @@ async def _get_sender_info(from_wxid: str, sender_wxid: str, contact_name: str =
     else:   # 群聊
         contact_saved = await contact_manager.get_contact(sender_wxid)
         if contact_saved:
-            sender_name = contact_saved["name"]
+            sender_name = contact_saved.name
         else:
             sender_name = await group_manager.get_display_name(from_wxid, sender_wxid)
             if not sender_name:
@@ -501,12 +502,12 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str,
     # 读取contact映射
     contact_dic = await contact_manager.get_contact(from_wxid)
     
-    if contact_dic and not contact_dic["isReceive"]:
+    if contact_dic and not contact_dic.is_receive:
         return None
 
     # 检查是否已有有效的chatId
-    if contact_dic and contact_dic["isReceive"] and contact_dic["chatId"] != -9999999999:
-        return contact_dic["chatId"]
+    if contact_dic and contact_dic.is_receive and contact_dic.chat_id != -9999999999:
+        return contact_dic.chat_id
     
     # 检查是否允许自动创建群组
     auto_create = getattr(config, 'AUTO_CREATE_GROUPS', True)
@@ -804,7 +805,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         contact_dic = await contact_manager.get_contact(from_wxid)
         
         # 设置发送者显示名称
-        if "chatroom" in from_wxid or contact_dic["isGroup"]:
+        if "chatroom" in from_wxid or contact_dic.is_group:
             sender_name = f"<blockquote expandable>{sender_name}: </blockquote>"
         else:
             sender_name = ""
@@ -847,7 +848,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                 except Exception as e:
                     logger.error(f"获取Telethon消息ID失败: {e}")
 
-            msgid_mapping.add(
+            await msgid_mapping.add(
                 tg_msg_id=tg_msgid,
                 from_wx_id=sender_wxid,
                 to_wx_id=to_wxid,
@@ -923,6 +924,8 @@ async def process_callback_message(message_data: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"消息处理失败: {e}", exc_info=True)
 
+import config
+
 class MessageProcessor:
     def __init__(self):
         self.queue = None
@@ -930,10 +933,22 @@ class MessageProcessor:
         self._shutdown = False
         self._task = None
         self._init_complete = asyncio.Event()
-        self._init_async_env()
+        self._initialized = False
+        
+        # 根据配置决定是否自动初始化
+        if getattr(config, 'WECHAT_MODE', '') == "callback":
+            self._init_async_env()
+    
+    def ensure_initialized(self):
+        """确保处理器已初始化"""
+        if not self._initialized and getattr(config, 'WECHAT_MODE', '') == "callback":
+            self._init_async_env()
     
     def _init_async_env(self):
-        """在后台线程中初始化异步环境"""       
+        """在后台线程中初始化异步环境"""
+        if self._initialized:  # 防止重复初始化
+            return
+            
         def run_async():
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
@@ -941,7 +956,7 @@ class MessageProcessor:
             
             # 启动队列处理器
             self._task = self.loop.create_task(self._process_queue())
-            logger.info("消息处理器已启动")
+            logger.info("消息处理器已启动 (callback模式)")
             
             # 标记初始化完成
             self.loop.call_soon_threadsafe(self._init_complete.set)
@@ -954,6 +969,7 @@ class MessageProcessor:
         
         thread = threading.Thread(target=run_async, daemon=True)
         thread.start()
+        self._initialized = True
     
     async def _process_queue(self):
         """处理队列中的消息"""
@@ -973,6 +989,13 @@ class MessageProcessor:
     
     def add_message(self, message_info: Dict[str, Any]):
         """添加消息到队列 - 同步版本（兼容性）"""
+        # 检查模式是否正确
+        if getattr(config, 'WECHAT_MODE', '') != "callback":
+            logger.warning("消息处理器仅在 callback 模式下可用")
+            return
+            
+        self.ensure_initialized()  # 确保初始化
+        
         if not self.loop or not self.queue:
             logger.error("处理器未就绪")
             return
@@ -987,6 +1010,13 @@ class MessageProcessor:
     
     async def add_message_async(self, message_info: Dict[str, Any]):
         """添加消息到队列"""
+        # 检查模式是否正确
+        if getattr(config, 'WECHAT_MODE', '') != "callback":
+            logger.warning("消息处理器仅在 callback 模式下可用")
+            return
+            
+        self.ensure_initialized()  # 确保初始化
+        
         # 等待初始化完成
         if not self._init_complete.is_set():
             await asyncio.wait_for(self._init_complete.wait(), timeout=5.0)
@@ -1010,6 +1040,9 @@ class MessageProcessor:
     
     async def shutdown(self):
         """优雅关闭处理器"""
+        if not self._initialized:
+            return
+            
         logger.info("正在关闭消息处理器...")
         self._shutdown = True
         
@@ -1037,25 +1070,15 @@ class MessageProcessor:
         if self.queue:
             return self.queue.qsize()
         return 0
+    
+    def is_enabled(self) -> bool:
+        """检查处理器是否启用"""
+        return getattr(config, 'WECHAT_MODE', '') == "callback"
 
 # 全局实例
 message_processor = MessageProcessor()
-
-# 为了向后兼容，保留原有的同步接口
-def add_message_sync(message_info: Dict[str, Any]):
-    """同步添加消息接口（向后兼容）"""
-    message_processor.add_message(message_info)
 
 # 优雅关闭函数
 async def shutdown_message_processor():
     """关闭消息处理器"""
     await message_processor.shutdown()
-
-# 获取处理器状态
-def get_processor_status() -> Dict[str, Any]:
-    """获取处理器状态"""
-    return {
-        "queue_size": message_processor.get_queue_size(),
-        "is_running": message_processor.loop is not None and message_processor.loop.is_running(),
-        "is_shutdown": message_processor._shutdown
-    }

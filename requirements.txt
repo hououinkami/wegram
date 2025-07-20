@@ -1,6 +1,7 @@
 aiofiles
 aiohttp
 requests
+aiosqlite
 python-telegram-bot
 telethon
 cryptg
