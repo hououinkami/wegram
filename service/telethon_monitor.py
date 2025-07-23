@@ -142,8 +142,22 @@ class TelethonMonitor:
         logger.info("✅ Telethon监控已启动")
         
         try:
-            # 保持客户端运行
-            await client.run_until_disconnected()
+            # 添加重连机制
+            while self.is_running:
+                try:
+                    await client.run_until_disconnected()
+                except Exception as e:
+                    if "Invalid HTTP response" in str(e) or "aiohttp" in str(e):
+                        logger.warning(f"⚠️ 网络连接异常，5秒后重连: {e}")
+                        await asyncio.sleep(5)
+                        # 重新连接
+                        if not client.is_connected():
+                            await client.connect()
+                        continue
+                    else:
+                        raise e
+        except KeyboardInterrupt:
+            logger.info("⚠️ 收到中断信号")
         except Exception as e:
             logger.error(f"❌ Telethon监控运行出错: {e}")
         finally:
