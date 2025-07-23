@@ -385,17 +385,17 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
                                 continue
                             else:
                                 logger.error("临时请求未能获取到totalLen，终止下载")
-                                return False, "临时请求未能获取到totalLen"
+                                return False, "临时请求未能获取到totalLen", ""
                         else:
                             if chunk_index == 1:
                                 logger.error("重试后仍无法获取buffer，终止下载")
-                                return False, "重试后仍无法获取buffer"
+                                return False, "重试后仍无法获取buffer", ""
                             else:
                                 logger.error(f"响应格式错误: 找不到Data.data.buffer字段")
-                                return False, f"响应格式错误: 找不到Data.data.buffer字段"
+                                return False, f"响应格式错误: 找不到Data.data.buffer字段", ""
                 except Exception as e:
                     logger.error(f"处理响应数据时出错: {str(e)}")
-                    return False, f"处理响应数据时出错: {str(e)}"
+                    return False, f"处理响应数据时出错: {str(e)}", ""
                 
                 # 检查是否已下载完所有分段
                 if chunk_index == total_chunks:
