@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 from telegram import Bot, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAnimation
 from telegram.constants import ParseMode
 from telegram.error import NetworkError, TelegramError, TimedOut
+from telegram.request import HTTPXRequest
 
 import config
 from config import LOCALE as locale
@@ -28,7 +29,9 @@ class TelegramSender:
     """
     
     def __init__(self, bot_token: str, default_chat_id: Optional[int] = None, 
-                 max_retries: int = 3, retry_delay: float = 1.0):
+        max_retries: int = 3, retry_delay: float = 1.0,
+        pool_timeout: float = 60.0,
+        connection_pool_size: int = 30):
         """
         初始化 TelegramSender
         
@@ -37,11 +40,15 @@ class TelegramSender:
             default_chat_id: 默认聊天ID（可选）
             max_retries: 最大重试次数
             retry_delay: 重试延迟（秒）
+            pool_timeout: 连接池超时时间
+            connection_pool_size: 连接池大小
         """
         self.bot_token = bot_token
         self.default_chat_id = default_chat_id
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.pool_timeout = pool_timeout
+        self.connection_pool_size = connection_pool_size
         self._local = threading.local()
         
         logger.info(f"TelegramSender 初始化完成，线程本地存储模式")
@@ -66,9 +73,18 @@ class TelegramSender:
         
         # 创建新的 Bot 实例
         try:
-            self._local.bot = Bot(token=self.bot_token)
+            # 配置连接池参数（针对微信转发场景优化）
+            request = HTTPXRequest(
+                connection_pool_size=30,     # 增加连接池大小，适应微信群消息转发
+                pool_timeout=60.0,           # 增加连接池超时时间
+                read_timeout=45.0,           # 读取超时
+                write_timeout=45.0,          # 写入超时
+                connect_timeout=15.0        # 连接超时
+            )
+            
+            self._local.bot = Bot(token=self.bot_token, request=request)
             thread_name = threading.current_thread().name
-            logger.debug(f"为线程 {thread_name} 创建新的 Bot 实例")
+            logger.debug(f"为线程 {thread_name} 创建新的 Bot 实例，连接池大小: 30")
             return self._local.bot
         except Exception as e:
             logger.error(f"创建 Bot 实例失败: {e}")
@@ -95,7 +111,7 @@ class TelegramSender:
 
     async def _retry_operation(self, operation, *args, **kwargs):
         """
-        带重试的操作执行器
+        带重试的操作执行器（针对微信转发优化）
         
         Args:
             operation: 要执行的异步操作
@@ -112,21 +128,39 @@ class TelegramSender:
             except (NetworkError, TimedOut) as e:
                 last_exception = e
                 if attempt < self.max_retries:
-                    wait_time = self.retry_delay * (2 ** attempt)  # 指数退避
-                    logger.warning(f"操作失败，{wait_time}秒后重试 (尝试 {attempt + 1}/{self.max_retries + 1}): {e}")
+                    # 针对连接池超时使用更长的等待时间
+                    if "Pool timeout" in str(e) or "connection pool" in str(e).lower():
+                        wait_time = self.retry_delay * (3 ** attempt)  # 更激进的退避策略
+                        logger.warning(f"连接池超时，{wait_time}秒后重试 (尝试 {attempt + 1}/{self.max_retries + 1}): {e}")
+                    else:
+                        wait_time = self.retry_delay * (2 ** attempt)  # 普通网络错误
+                        logger.warning(f"操作失败，{wait_time}秒后重试 (尝试 {attempt + 1}/{self.max_retries + 1}): {e}")
+                    
                     await asyncio.sleep(wait_time)
                     
-                    # 网络错误时重新创建 Bot 实例
-                    self.cleanup_current_bot()
+                    # 连接池问题时强制重新创建 Bot 实例
+                    if "Pool timeout" in str(e) or "connection pool" in str(e).lower():
+                        logger.info("检测到连接池问题，重新创建 Bot 实例")
+                        await self.cleanup_current_bot_async()
+                    else:
+                        self.cleanup_current_bot()
                 else:
                     logger.error(f"操作最终失败，已重试 {self.max_retries} 次: {e}")
                     break
             except TelegramError as e:
-                # 非网络错误，不重试
+                # 🆕 新增：对特定 Telegram 错误的处理
+                error_msg = str(e).lower()
+                if "flood control" in error_msg or "too many requests" in error_msg:
+                    # 触发限流，等待更长时间
+                    wait_time = 60  # 等待1分钟
+                    logger.warning(f"触发 Telegram 限流，等待 {wait_time} 秒后重试")
+                    await asyncio.sleep(wait_time)
+                    if attempt < self.max_retries:
+                        continue
+                
                 logger.error(f"Telegram API 错误: {e}")
                 raise
             except Exception as e:
-                # 其他未知错误
                 logger.error(f"未知错误: {e}")
                 raise
         
@@ -1041,4 +1075,10 @@ class TelegramSender:
         return self.__str__()
 
 # 创建全局实例
-telegram_sender = TelegramSender(config.BOT_TOKEN)
+telegram_sender = TelegramSender(
+    bot_token=config.BOT_TOKEN,
+    max_retries=4,              # 微信转发建议4次重试
+    retry_delay=1.5,            # 稍长的重试延迟
+    pool_timeout=60.0,          # 1分钟连接池超时
+    connection_pool_size=30     # 30个连接池大小
+)
