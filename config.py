@@ -42,3 +42,29 @@ if not RABBITMQ_URL:
 WX_CHECK_INTERVAL = int(os.getenv("WX_CHECK_INTERVAL", "300"))
 
 LOCALE = Locale(LANG)
+
+# 黑名单功能开关
+ENABLE_BLACKLIST = os.getenv('ENABLE_BLACKLIST', 'true').lower() == 'true'
+
+# 处理黑名单关键词
+def _parse_blacklist_keywords():
+    """解析黑名单关键词"""
+    # 从环境变量获取
+    blacklist_str = os.getenv('BLACKLIST', '')
+    
+    if blacklist_str:
+        # 按逗号分割，并去除每个关键词的前后空格
+        keywords = [keyword.strip() for keyword in blacklist_str.split(',')]
+        # 过滤掉空字符串
+        keywords = [keyword for keyword in keywords if keyword]
+        return keywords
+    
+    # 如果环境变量没有设置，使用默认值
+    return [
+        # 这里可以设置一些默认的黑名单关键词
+        # "默认关键词1",
+        # "默认关键词2",
+    ]
+
+# 黑名单关键词列表
+BLACKLIST_KEYWORDS = _parse_blacklist_keywords()

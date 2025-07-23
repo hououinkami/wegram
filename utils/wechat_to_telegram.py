@@ -31,6 +31,65 @@ logger = logging.getLogger(__name__)
 tg_user_id = get_user_id()
 black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74, 'paymsg']
 
+async def is_blacklisted(contact_name: str, sender_name: str, content: str, push_content: str = "") -> bool:
+    """
+    检查消息是否在黑名单中（智能检测正则表达式）
+    """
+    if not getattr(config, 'ENABLE_BLACKLIST', True):
+        return False
+    
+    blacklist_keywords = getattr(config, 'BLACKLIST_KEYWORDS', [])
+    if not blacklist_keywords:
+        return False
+    
+    check_texts = [
+        contact_name or "",
+        sender_name or "",
+        push_content or "",
+    ]
+    
+    if isinstance(content, str):
+        check_texts.append(content)
+    
+    for keyword in blacklist_keywords:
+        if not keyword or not keyword.strip():
+            continue
+            
+        keyword = keyword.strip()
+        
+        # 先尝试作为正则表达式
+        try:
+            pattern = re.compile(keyword, re.IGNORECASE)
+            
+            # 检查是否为"简单"正则（只是普通字符串）
+            # 如果正则和原字符串完全一样，说明没有特殊字符
+            is_simple_string = (keyword == re.escape(keyword))
+            
+            for text in check_texts:
+                if not text:
+                    continue
+                    
+                if is_simple_string:
+                    # 简单字符串，使用包含匹配
+                    if keyword.lower() in text.lower():
+                        logger.info(f"🚫 消息被黑名单过滤(字符串): 关键词='{keyword}', 发送者='{sender_name}'")
+                        return True
+                else:
+                    # 复杂正则，使用正则匹配
+                    if pattern.search(text):
+                        logger.info(f"🚫 消息被黑名单过滤(正则): 模式='{keyword}', 匹配文本='{text[:50]}...', 发送者='{sender_name}'")
+                        return True
+                        
+        except re.error:
+            # 正则编译失败，作为普通字符串处理
+            keyword_lower = keyword.lower()
+            for text in check_texts:
+                if text and keyword_lower in text.lower():
+                    logger.info(f"🚫 消息被黑名单过滤(字符串): 关键词='{keyword}', 发送者='{sender_name}'")
+                    return True
+    
+    return False
+
 def _get_message_handlers():
     """返回消息类型处理器映射"""
     return {
@@ -794,7 +853,11 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
 
         # 获取发送者信息
         sender_name = await _get_sender_info(from_wxid, sender_wxid, contact_name)
-
+        
+        # ========== 黑名单过滤 ==========
+        if await is_blacklisted(contact_name, sender_name, content, push_content):
+            return
+    
         # 获取或创建群组
         chat_id = await _get_or_create_chat(from_wxid, contact_name, avatar_url, message_info)
         if not chat_id:
