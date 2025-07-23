@@ -174,7 +174,7 @@ class BotCommands:
             
             if args and args[0].lower() == 'update':
                 # 执行更新功能
-                await contact_manager.update_contacts_and_sync_to_json(chat_id)
+                await contact_manager.update_contacts_and_sync_to_db(chat_id)
             elif args and args[0].lower() != 'update':
                 # 执行搜索
                 await BotCommands.list_contacts(chat_id, args[0])

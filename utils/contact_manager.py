@@ -567,7 +567,7 @@ class ContactManager:
             logger.error(f"❌ 创建群组失败: {e}")
             return {'success': False, 'error': str(e)}
 
-    async def update_contacts_and_sync_to_json(self, chat_id: int):
+    async def update_contacts_and_sync_to_db(self, chat_id: int):
         """获取联系人列表并同步到数据库"""
         try:
             # 发送开始处理的消息
@@ -631,6 +631,7 @@ class ContactManager:
                             new_contacts.append(new_contact)
                             new_contacts_count += 1
                             logger.info(f"➕ 添加新联系人: {user_info.name} ({wxid})")
+                        '''
                         else:
                             # 存在则检查是否需要更新name和avatar_link
                             need_update = False
@@ -652,6 +653,7 @@ class ContactManager:
                             if need_update:
                                 updated_contacts.append(existing_contact)
                                 updated_contacts_count += 1
+                        '''
                     
                     # 每处理几个批次休眠一下，避免请求过于频繁
                     if batch_index < total_batches - 1:
