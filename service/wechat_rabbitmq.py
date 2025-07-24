@@ -518,13 +518,16 @@ class HeartbeatMonitor:
         self.monitor_task: Optional[asyncio.Task] = None
         self.service_down = False
         
-    def update_heartbeat(self):
+    async def update_heartbeat(self):
         """更新心跳时间"""
         self.last_heartbeat = time.time()
         if self.service_down:
             # 服务恢复
             self.service_down = False
             logger.info("✅ 微信服务已恢复正常")
+
+            tg_user_id = get_user_id()            
+            await telegram_sender.send_text(tg_user_id, "🟢 サーバー稼働中")
     
     async def start_monitoring(self):
         """开始监控"""
@@ -622,7 +625,7 @@ async def handle_wechat_message(message: str, msg_obj: AbstractIncomingMessage) 
     try:
         # 更新心跳 - 无论什么消息都更新
         if _global_consumer:
-            _global_consumer.heartbeat_monitor.update_heartbeat()
+            await _global_consumer.heartbeat_monitor.update_heartbeat()
             
         # 尝试解析JSON
         try:
