@@ -132,7 +132,7 @@ class BotCommands:
             if contact_now and contact_now.is_receive:
                 await telegram_sender.send_text(chat_id, locale.command("receive_on"))
             else:
-                await telegram_sender.send_text(chat_id, locale.command("receive_off"))
+                await telegram_sender.send_text(chat_id, locale.command("no_binding"))
                 
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
@@ -450,7 +450,7 @@ class BotCommands:
                     "chat_id": contact1.get('chatId', ''),
                     "is_group": contact1.get('isGroup', False),
                     "is_receive": contact1.get('isReceive', True),
-                    "alias": contact1.get('alias', ''),
+                    "wx_name": contact1.get('wxName', ''),
                     "avatar_url": contact1.get('avatarLink', ''),
                     'source_page': page,
                     'search_word': search_word
@@ -478,7 +478,7 @@ class BotCommands:
                         "chat_id": contact2.get('chatId', ''),
                         "is_group": contact2.get('isGroup', False),
                         "is_receive": contact2.get('isReceive', True),
-                        "alias": contact2.get('alias', ''),
+                        "wx_name": contact2.get('wxName', ''),
                         "avatar_url": contact2.get('avatarLink', ''),
                         'source_page': page,
                         'search_word': search_word
@@ -498,7 +498,7 @@ class BotCommands:
                 if page > 0:
                     pagination_row.append(InlineKeyboardButton(
                         f"{locale.command('previous_page')}",
-                        callback_data=create_callback_data("contact_page", {"contacts": contacts, "page": page - 1, "search_word": search_word})
+                        callback_data=create_callback_data("contact_page", {"contacts": contacts, "source_page": page - 1, "search_word": search_word})
                     ))
                 
                 pagination_row.append(InlineKeyboardButton(
@@ -509,7 +509,7 @@ class BotCommands:
                 if page < total_pages - 1:
                     pagination_row.append(InlineKeyboardButton(
                         f"{locale.command('next_page')}",
-                        callback_data=create_callback_data("contact_page", {"contacts": contacts, "page": page + 1, "search_word": search_word})
+                        callback_data=create_callback_data("contact_page", {"contacts": contacts, "source_page": page + 1, "search_word": search_word})
                     ))
                 
                 keyboard.append(pagination_row)

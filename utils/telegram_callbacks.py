@@ -299,7 +299,7 @@ async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def handle_contact_page(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
     """处理联系人列表分页回调"""
     query = update.callback_query
-    page = data.get("page", 0)
+    page = data.get("source_page", 0)
     search_word = data.get("search_word", "")
     
     try:
@@ -332,7 +332,7 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         wxid = data.get('wxid', '')
         name = data.get('name', f"微信_{wxid}")
         chat_id = data.get('chat_id', '')
-        alias = data.get('alias', '')
+        wx_name = data.get('wx_name', '')
         is_group = data.get('is_group', False)
         is_receive = data.get('is_receive', True)
         avatar_url = data.get('avatar_url', '')
@@ -353,27 +353,14 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # 如果有有效的chatId，添加"解绑"按钮
         if chat_id and chat_id != -9999999999:
-            unbind_data = {
-                "wxid": wxid,
-                "name": name,
-                "source_page": source_page,
-                "search_word": search_word
-            }
             first_row.append(InlineKeyboardButton(
                     f"{locale.command('group_unbind')}", 
-                    callback_data=create_callback_data("group_unbind", unbind_data)
+                    callback_data=create_callback_data("group_unbind", data)
                 ))
         else:
-            bind_data = {
-                "wxid": wxid,
-                "name": name,
-                "avatar_url": avatar_url,
-                "source_page": source_page,
-                "search_word": search_word
-            }
             first_row.append(InlineKeyboardButton(
                 f"{locale.command('group_binding')}", 
-                callback_data=create_callback_data("group_binding", bind_data)
+                callback_data=create_callback_data("group_binding", data)
             ))
         
         # 切换接收状态按钮
@@ -391,16 +378,18 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
             keyboard.append(first_row)
         
         # 第二行：删除按钮
-        delete_data = {
-            "wxid": wxid,
-            "name": name,
-            "source_page": source_page,
-            "search_word": search_word
-        }
         keyboard.append([
             InlineKeyboardButton(
                 f"{locale.command('delete_contact')}",
-                callback_data=create_callback_data("delete_contact", delete_data)
+                callback_data=create_callback_data("delete_contact", data)
+            )
+        ])
+
+        # 第三行： 返回按钮
+        keyboard.append([
+            InlineKeyboardButton(
+                locale.command('back'),
+                callback_data=create_callback_data("contact_page", data)
             )
         ])
         
@@ -422,8 +411,6 @@ async def handle_group_binding(update: Update, context: ContextTypes.DEFAULT_TYP
         wxid = data.get('wxid')
         name = data.get('name', f"微信_{wxid}")
         avatar_url = data.get('avatar_url', '')
-        source_page = data.get('source_page', '')
-        search_word = data.get('search_word', '')
         
         if not wxid:
             await query.answer("❌ 联系人ID无效", show_alert=True)
@@ -448,15 +435,9 @@ async def handle_group_binding(update: Update, context: ContextTypes.DEFAULT_TYP
                     for button in row:
                         if button.text == locale.command('group_binding'):
                             # 找到目标按钮，替换它
-                            delete_data = {
-                                "wxid": wxid,
-                                "name": name,
-                                "source_page": source_page,
-                                "search_word": search_word
-                            }
                             new_button = InlineKeyboardButton(
                                 f"{locale.command('group_unbind')}", 
-                                callback_data=create_callback_data("delete_contact", delete_data)
+                                callback_data=create_callback_data("delete_contact", data)
                             )
                             new_row.append(new_button)
                         else:
@@ -482,7 +463,6 @@ async def handle_group_unbind(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         wxid = data.get('wxid')
         name = data.get('name', f"微信_{wxid}")
-        avatar_url = data.get('avatar_url', '')
         source_page = data.get('source_page', '')
         search_word = data.get('search_word', '')
         
@@ -511,15 +491,9 @@ async def handle_group_unbind(update: Update, context: ContextTypes.DEFAULT_TYPE
                     for button in row:
                         if button.text == locale.command('group_unbind'):
                             # 找到目标按钮，替换它
-                            bind_data = {
-                                "wxid": wxid,
-                                "name": name,
-                                "source_page": source_page,
-                                "search_word": search_word
-                            }
                             new_button = InlineKeyboardButton(
                                 f"{locale.command('group_binding')}", 
-                                callback_data=create_callback_data("group_binding", bind_data)
+                                callback_data=create_callback_data("group_binding", data)
                             )
                             new_row.append(new_button)
                         else:
@@ -557,7 +531,7 @@ async def handle_toggle_receive(update: Update, context: ContextTypes.DEFAULT_TY
             return
         
         chat_id = contact.chat_id
-        if not chat_id:
+        if not chat_id or chat_id == -9999999999:
             await query.answer("❌ 联系人未绑定Telegram聊天", show_alert=True)
             return
         
@@ -614,9 +588,6 @@ async def handle_delete_contact(update: Update, context: ContextTypes.DEFAULT_TY
     
     try:
         wxid = data.get('wxid')
-        name = data.get('name', f"微信_{wxid}")
-        source_page = data.get("source_page", 0)
-        search_word = data.get("search_word", "")
         
         if not wxid:
             await query.answer("❌ 联系人ID无效", show_alert=True)
@@ -630,7 +601,7 @@ async def handle_delete_contact(update: Update, context: ContextTypes.DEFAULT_TY
             [
                 InlineKeyboardButton(
                     locale.command('ok'),
-                    callback_data=create_callback_data("confirm_delete", {"wxid": wxid, "name": name, "source_page": source_page, "search_word": search_word})
+                    callback_data=create_callback_data("confirm_delete", data)
                 ),
                 InlineKeyboardButton(
                     locale.command('cancel'),
@@ -640,7 +611,7 @@ async def handle_delete_contact(update: Update, context: ContextTypes.DEFAULT_TY
             [
                 InlineKeyboardButton(
                     locale.command('back'),
-                    callback_data=create_callback_data("contact_page", {"page": source_page, "search_word": search_word})
+                    callback_data=create_callback_data("contact_page", data)
                 )
             ]
         ]
@@ -660,8 +631,6 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         wxid = data.get('wxid')
         name = data.get('name', f"微信_{wxid}")
-        source_page = data.get("source_page", 0)
-        search_word = data.get("search_word", "")
         
         if not wxid:
             await query.answer("❌ 联系人ID无效", show_alert=True)
@@ -681,7 +650,7 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
                 [
                     InlineKeyboardButton(
                         locale.command('back'),
-                        callback_data=create_callback_data("contact_page", {"page": source_page, "search_word": search_word})
+                        callback_data=create_callback_data("contact_page", data)
                     )
                 ]
             ]
