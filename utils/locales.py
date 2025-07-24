@@ -54,7 +54,7 @@ class LocaleConfig:
                 'receive_on': '✅ 転送オン',
                 'receive_off': '❌ 転送オフ',
                 'unbind': 'バインドを解除',
-                'unbind_successed': '✅ 連絡先から削除しました',
+                'unbind_successed': '✅ バインド解除成功',
                 'no_binding': '⚠️ まだ連絡先とバインドされません',
                 'friend': '友人リストを取得',
                 'no_contacts': '⚠️ 友人なし',
