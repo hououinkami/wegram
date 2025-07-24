@@ -100,6 +100,12 @@ class ContactManager:
             # if imported_count > 0:
             #     logger.info(f"自动导入了 {imported_count} 个联系人")
 
+            # 临时导出json
+            # exported_count = await contact_manager.export_to_json()
+            # if exported_count > 0:
+            #     logger.info(f"导出了 {exported_count} 个联系人")
+
+
         except Exception as e:
             logger.error(f"❌ 联系人管理器初始化失败: {e}")
             raise
@@ -523,6 +529,7 @@ class ContactManager:
             # 使用默认的contact_export.json路径
             json_file_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                "database",
                 "contact_export.json"
             )
         
@@ -732,6 +739,8 @@ class ContactManager:
         else:
             if contact.wxid.startswith('gh_'):
                 return "📢"  # 公众号
+            elif contact.wxid.endswith('@openim'):
+                return "🈺"  # 企业微信
             else:
                 return "👤"  # 个人好友
 
