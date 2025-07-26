@@ -105,7 +105,6 @@ class ContactManager:
             # if exported_count > 0:
             #     logger.info(f"导出了 {exported_count} 个联系人")
 
-
         except Exception as e:
             logger.error(f"❌ 联系人管理器初始化失败: {e}")
             raise
@@ -526,11 +525,11 @@ class ContactManager:
             await self.initialize()
         
         if json_file_path is None:
-            # 使用默认的contact_export.json路径
+            # 使用默认的contact.json路径
             json_file_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
                 "database",
-                "contact_export.json"
+                "contact.json"
             )
         
         try:
