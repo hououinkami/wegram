@@ -21,7 +21,7 @@ class Contact:
     chat_id: int = -9999999999
     is_group: bool = False
     is_receive: bool = True
-    avatar_link: str = ""
+    avatar_url: str = ""
     wx_name: str = ""
     
     def __post_init__(self):
@@ -37,7 +37,7 @@ class Contact:
             'chatId': 'chat_id',
             'isGroup': 'is_group',
             'isReceive': 'is_receive',
-            'avatarLink': 'avatar_link',
+            'avatarUrl': 'avatar_url',
             'wxName': 'wx_name'
         }
         
@@ -57,7 +57,7 @@ class Contact:
             'chatId': self.chat_id,
             'isGroup': self.is_group,
             'isReceive': self.is_receive,
-            'avatarLink': self.avatar_link,
+            'avatarUrl': self.avatar_url,
             'wxName': self.wx_name
         }
 
@@ -118,7 +118,7 @@ class ContactManager:
             chat_id INTEGER DEFAULT -9999999999,
             is_group INTEGER DEFAULT 0,
             is_receive INTEGER DEFAULT 1,
-            avatar_link TEXT DEFAULT '',
+            avatar_url TEXT DEFAULT '',
             wx_name TEXT DEFAULT ''
         );
         """
@@ -162,7 +162,7 @@ class ContactManager:
                         chat_id=row['chat_id'],
                         is_group=bool(row['is_group']),
                         is_receive=bool(row['is_receive']),
-                        avatar_link=row['avatar_link'],
+                        avatar_url=row['avatar_url'],
                         wx_name=row['wx_name']
                     )
                 return None
@@ -209,7 +209,7 @@ class ContactManager:
                         chat_id=row['chat_id'],
                         is_group=bool(row['is_group']),
                         is_receive=bool(row['is_receive']),
-                        avatar_link=row['avatar_link'],
+                        avatar_url=row['avatar_url'],
                         wx_name=row['wx_name']
                     )
                 return None
@@ -247,7 +247,7 @@ class ContactManager:
                         chat_id=row['chat_id'],
                         is_group=bool(row['is_group']),
                         is_receive=bool(row['is_receive']),
-                        avatar_link=row['avatar_link'],
+                        avatar_url=row['avatar_url'],
                         wx_name=row['wx_name']
                     ) for row in rows
                 ]
@@ -268,11 +268,11 @@ class ContactManager:
                 await db.execute("""
                     INSERT OR REPLACE INTO contacts (
                         wxid, name, chat_id, is_group, is_receive, 
-                        avatar_link, wx_name
+                        avatar_url, wx_name
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     contact.wxid, contact.name, contact.chat_id, int(contact.is_group),
-                    int(contact.is_receive), contact.avatar_link, 
+                    int(contact.is_receive), contact.avatar_url, 
                     contact.wx_name
                 ))
                 await db.commit()
@@ -347,7 +347,7 @@ class ContactManager:
                     'isReceive': 'is_receive',
                     'isGroup': 'is_group',
                     'chatId': 'chat_id',
-                    'avatarLink': 'avatar_link',
+                    'avatarUrl': 'avatar_url',
                     'wxName': 'wx_name'
                 }.get(key, key)
                 
@@ -405,7 +405,7 @@ class ContactManager:
                         chat_id=row['chat_id'],
                         is_group=bool(row['is_group']),
                         is_receive=bool(row['is_receive']),
-                        avatar_link=row['avatar_link'],
+                        avatar_url=row['avatar_url'],
                         wx_name=row['wx_name']
                     )
                 return None
@@ -432,8 +432,8 @@ class ContactManager:
                 chat_id=chat_id,
                 is_group=is_group,
                 is_receive=True,
-                avatar_link=avatar_url or "",
-                wx_name=name
+                avatar_url=avatar_url or "",
+                wx_name=""
             )
             
             await self.save_contact(contact)
@@ -456,11 +456,11 @@ class ContactManager:
                     await db.execute("""
                         INSERT OR REPLACE INTO contacts (
                             wxid, name, chat_id, is_group, is_receive, 
-                            avatar_link, wx_name
+                            avatar_url, wx_name
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (
                         contact.wxid, contact.name, contact.chat_id, int(contact.is_group),
-                        int(contact.is_receive), contact.avatar_link, 
+                        int(contact.is_receive), contact.avatar_url, 
                         contact.wx_name
                     ))
                     saved_count += 1
@@ -630,7 +630,7 @@ class ContactManager:
                                 chat_id=-9999999999,
                                 is_group=False,
                                 is_receive=True,
-                                avatar_link=user_info.avatar_url if user_info.avatar_url else "",
+                                avatar_url=user_info.avatar_url if user_info.avatar_url else "",
                                 wx_name=""
                             )
                             
@@ -639,7 +639,7 @@ class ContactManager:
                             logger.info(f"➕ 添加新联系人: {user_info.name} ({wxid})")
                         '''
                         else:
-                            # 存在则检查是否需要更新name和avatar_link
+                            # 存在则检查是否需要更新name和avatar_url
                             need_update = False
                             
                             # 检查name是否需要更新
@@ -648,10 +648,10 @@ class ContactManager:
                                 need_update = True
                                 logger.info(f"🔄 更新联系人姓名: {wxid} -> {user_info.name}")
                             
-                            # 检查avatar_link是否需要更新
+                            # 检查avatar_url是否需要更新
                             new_avatar_url = user_info.avatar_url if user_info.avatar_url else ""
-                            if existing_contact.avatar_link != new_avatar_url:
-                                existing_contact.avatar_link = new_avatar_url
+                            if existing_contact.avatar_url != new_avatar_url:
+                                existing_contact.avatar_url = new_avatar_url
                                 need_update = True
                                 logger.info(f"🔄 更新联系人头像: {wxid}")
                             

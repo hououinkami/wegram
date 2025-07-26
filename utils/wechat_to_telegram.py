@@ -494,7 +494,7 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
     contact_saved = await contact_manager.get_contact(wxid)
     if contact_saved:
         contact_name = contact_saved.name
-        avatar_url = contact_saved.avatar_link
+        avatar_url = contact_saved.avatar_url
     else:
         # 异步获取联系人信息
         user_info = await wechat_contacts.get_user_info(wxid)
