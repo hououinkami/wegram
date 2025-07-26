@@ -1,4 +1,5 @@
 import logging
+import os
 from enum import Enum
 from functools import wraps
 
@@ -104,16 +105,20 @@ class BotCommands:
                 await telegram_sender.send_text(chat_id, locale.command("no_binding"))
                 return
             
-            user_info = await wechat_contacts.get_user_info(to_wxid)
-            
+            if to_wxid.endswith("@openim"):
+                qw_contact = await contact_manager.get_contact(to_wxid)
+                user_info = wechat_contacts.UserInfo(name=qw_contact.name, avatar_url=qw_contact.avatar_url)
+            else:
+                user_info = await wechat_contacts.get_user_info(to_wxid)
+                
+                # 更新映射文件
+                await contact_manager.update_contact_by_chatid(chat_id, {
+                    "name": user_info.name,
+                    "avatarLink": user_info.avatar_url
+                })
+
             # 更新TG群组
             await wechat_contacts.update_info(chat_id, user_info.name, user_info.avatar_url)
-            
-            # 更新映射文件
-            await contact_manager.update_contact_by_chatid(chat_id, {
-                "name": user_info.name,
-                "avatarLink": user_info.avatar_url
-            })
             
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
@@ -129,10 +134,12 @@ class BotCommands:
             await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
             contact_now = await contact_manager.get_contact_by_chatid(chat_id)
             
-            if contact_now and contact_now.is_receive:
+            if not contact_now:
+                await telegram_sender.send_text(chat_id, locale.command("no_binding"))
+            elif contact_now and contact_now.is_receive:
                 await telegram_sender.send_text(chat_id, locale.command("receive_on"))
             else:
-                await telegram_sender.send_text(chat_id, locale.command("no_binding"))
+                await telegram_sender.send_text(chat_id, locale.command("receive_off"))
                 
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
@@ -149,10 +156,14 @@ class BotCommands:
             if not to_wxid:
                 await telegram_sender.send_text(chat_id, locale.command("no_binding"))
                 return
-            # 直接删除
-            # unbind_result = await contact_manager.delete_contact(to_wxid)
-            # 解绑但不删除
-            unbind_result = await contact_manager.update_contact_by_chatid(chat_id, {"chatId": -9999999999})
+            
+            # 获取命令参数
+            args = context.args if context.args else []
+
+            if args and args[0].lower() == "del":   # 直接删除
+                unbind_result = await contact_manager.delete_contact(to_wxid)
+            else:   # 解绑但不删除
+                unbind_result = await contact_manager.update_contact_by_chatid(chat_id, {"chatId": -9999999999})
 
             if unbind_result:
                 await telegram_sender.send_text(chat_id, locale.command("unbind_successed"))
@@ -172,7 +183,29 @@ class BotCommands:
             # 获取命令参数
             args = context.args if context.args else []
             
-            if args and args[0].lower() == 'update':
+            if args and args[0].lower() == 'import':
+                json_name = args[1] if len(args) > 1 else "contact"
+                json_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                    "database", 
+                    f"{json_name}.json"
+                )
+                # 导入json
+                imported_count = await contact_manager.import_from_json(json_path)
+                if imported_count > 0:
+                    await telegram_sender.send_text(get_user_id(), f"{imported_count}の連絡先をインポートしました")
+            elif args and args[0].lower() == 'export':
+                json_name = args[1] if len(args) > 1 else "contact"
+                json_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                    "database", 
+                    f"{json_name}.json"
+                )
+                # 导出json
+                exported_count = await contact_manager.export_to_json(json_path)
+                if exported_count > 0:
+                    await telegram_sender.send_text(get_user_id(), f"{exported_count}の連絡先をエクスポートしました")
+            elif args and args[0].lower() == 'update':
                 # 执行更新功能
                 await contact_manager.update_contacts_and_sync_to_db(chat_id)
             elif args and args[0].lower() != 'update':
@@ -275,21 +308,23 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, locale.command("no_binding"))
             return
     
-        remark_name = context.args[0]
+        # 将所有参数用空格连接，支持带空格的备注名
+        remark_name = " ".join(context.args)
 
         try:
-            payload = {
-                "Remarks": remark_name,
-                "ToWxid": to_wxid,
-                "Wxid": config.MY_WXID
-            }
-            
-            await wechat_api("USER_REMARK", payload)
-
-            # 更新联系人文件
-            await contact_manager.update_contact_by_chatid(chat_id, {
-                "name": remark_name
-            })
+            if not to_wxid.endswith("@openim"):
+                payload = {
+                    "Remarks": remark_name,
+                    "ToWxid": to_wxid,
+                    "Wxid": config.MY_WXID
+                }
+                
+                await wechat_api("USER_REMARK", payload)
+            else:
+                # 更新企业微信联系人文件
+                await contact_manager.update_contact_by_chatid(chat_id, {
+                    "name": remark_name
+                })
 
             # 设置完成后更新群组信息
             await BotCommands.update_command(update, context)
