@@ -126,15 +126,33 @@ class TelegramSender:
             try:
                 return await operation(*args, **kwargs)
             except (NetworkError, TimedOut) as e:
+                error_msg = str(e).lower()
+
+                # 检查是否为参数错误（不应该重试的错误）
+                non_retryable_errors = [
+                    "invalid file http url specified",
+                    "unsupported url protocol",
+                    "invalid url",
+                    "bad request",
+                    "invalid parameter",
+                    "file not found",
+                    "permission denied"
+                ]
+
+                # 如果是参数错误，直接抛出不重试
+                if any(error_pattern in error_msg for error_pattern in non_retryable_errors):
+                    logger.error(f"❌ 参数错误，不进行重试: {e}")
+                    raise
+
                 last_exception = e
                 if attempt < self.max_retries:
                     # 针对连接池超时使用更长的等待时间
                     if "Pool timeout" in str(e) or "connection pool" in str(e).lower():
                         wait_time = self.retry_delay * (3 ** attempt)  # 更激进的退避策略
-                        logger.warning(f"连接池超时，{wait_time}秒后重试 (尝试 {attempt + 1}/{self.max_retries + 1}): {e}")
+                        logger.warning(f"⚠️ 连接池超时，{wait_time}秒后重试 (尝试 {attempt + 1}/{self.max_retries}): {e}")
                     else:
                         wait_time = self.retry_delay * (2 ** attempt)  # 普通网络错误
-                        logger.warning(f"操作失败，{wait_time}秒后重试 (尝试 {attempt + 1}/{self.max_retries + 1}): {e}")
+                        logger.warning(f"⚠️ 网络错误，{wait_time}秒后重试 (尝试 {attempt + 1}/{self.max_retries}): {e}")
                     
                     await asyncio.sleep(wait_time)
                     
