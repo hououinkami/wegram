@@ -68,7 +68,12 @@ async def get_emoji(data_json) -> Tuple[bool, str, str]:
         # ✅ 异步文件检查
         try:
             await aiofiles.os.stat(filepath)
-            return True, filepath, filename
+            # 文件存在，读取到BytesIO
+            async with aiofiles.open(filepath, 'rb') as f:
+                data = await f.read()
+                file_buffer = BytesIO(data)
+                file_buffer.seek(0)
+                return True, file_buffer, filename  # 统一返回BytesIO
         except FileNotFoundError:
             pass
         
