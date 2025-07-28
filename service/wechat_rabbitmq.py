@@ -517,18 +517,24 @@ class HeartbeatMonitor:
         self.is_running = False
         self.monitor_task: Optional[asyncio.Task] = None
         self.service_down = False
+        self.service_down_time = None
         
     async def update_heartbeat(self):
         """更新心跳时间"""
-        self.last_heartbeat = time.time()
+        current_time = time.time()
+        self.last_heartbeat = current_time
+        
         if self.service_down:
-            # 服务恢复
+            # 服务恢复 - 计算异常持续时间
+            if self.service_down_time:
+                down_duration = current_time - self.service_down_time
+                await self._send_service_recovery_alert(down_duration)
+            
+            # 重置状态
             self.service_down = False
+            self.service_down_time = None
             logger.info("✅ 微信服务已恢复正常")
 
-            tg_user_id = get_user_id()            
-            await telegram_sender.send_text(tg_user_id, "🟢 サーバー稼働中")
-    
     async def start_monitoring(self):
         """开始监控"""
         if not self.is_running:
@@ -556,12 +562,14 @@ class HeartbeatMonitor:
                 
                 if time_since_last > self.timeout:
                     if not self.service_down:
-                        # 首次检测到服务异常
+                        # 首次检测到服务异常 - 记录异常开始时间
                         self.service_down = True
+                        self.service_down_time = self.last_heartbeat  # 使用最后一次正常心跳时间
+                        
                         logger.error(f"❌ 微信服务疑似DOWN - 已超过{self.timeout}秒未收到消息")
                         logger.error(f"⏰ 最后收到消息时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_heartbeat))}")
                         
-                        # 可以在这里添加告警通知
+                        # 发送异常告警
                         await self._send_service_down_alert(time_since_last)
                 
                 # 每30秒检查一次
@@ -579,7 +587,7 @@ class HeartbeatMonitor:
             
             alert_message = f"⚠️ **WeChatサーバーに異常発生！**\n\n" \
                           f"🔴 サーバー状態: ダウン\n" \
-                          f"⏰ 異常継続時間: {down_minutes}分\n" \
+                          f"⏱️ 異常継続時間: {down_minutes}分\n" \
                           f"📝 最終正常時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n\n" \
                           f"サーバーの稼働状況をご確認ください！"
             
@@ -588,12 +596,45 @@ class HeartbeatMonitor:
         except Exception as e:
             logger.error(f"❌ 发送服务异常告警失败: {e}")
     
+    async def _send_service_recovery_alert(self, total_down_time: float):
+        """发送服务恢复告警"""
+        try:
+            tg_user_id = get_user_id()
+            
+            # 计算异常持续时间
+            down_hours = int(total_down_time // 3600)
+            down_minutes = int((total_down_time % 3600) // 60)
+            down_seconds = int(total_down_time % 60)
+            
+            # 格式化持续时间
+            if down_hours > 0:
+                duration_str = f"{down_hours}時間{down_minutes}分{down_seconds}秒"
+            elif down_minutes > 0:
+                duration_str = f"{down_minutes}分{down_seconds}秒"
+            else:
+                duration_str = f"{down_seconds}秒"
+            
+            # 构建恢复消息
+            recovery_message = f"✅ **WeChatサーバー復旧完了！**\n\n" \
+                             f"🟢 サーバー状態: 正常稼働中\n" \
+                             f"⏱️ 異常継続時間: {duration_str}\n" \
+                             f"📝 異常開始時刻: {time.strftime('%H:%M:%S', time.localtime(self.service_down_time))}\n" \
+                             f"📝 復旧完了時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n\n" \
+                             f"サーバーが正常に復旧しました！"
+            
+            await telegram_sender.send_text(tg_user_id, recovery_message)
+            
+            logger.info(f"✅ 微信服务已恢复，总异常时间: {duration_str}")
+            
+        except Exception as e:
+            logger.error(f"❌ 发送服务恢复告警失败: {e}")
+    
     def get_status(self) -> dict:
         """获取监控状态"""
         current_time = time.time()
         time_since_last = current_time - self.last_heartbeat
         
-        return {
+        status = {
             "is_monitoring": self.is_running,
             "service_down": self.service_down,
             "last_heartbeat": self.last_heartbeat,
@@ -601,6 +642,17 @@ class HeartbeatMonitor:
             "time_since_last_minutes": round(time_since_last / 60, 1),
             "timeout_seconds": self.timeout
         }
+        
+        # 🆕 如果服务异常，添加异常开始时间和当前异常持续时间
+        if self.service_down and self.service_down_time:
+            current_down_time = current_time - self.service_down_time
+            status.update({
+                "service_down_start_time": self.service_down_time,
+                "current_down_duration_seconds": int(current_down_time),
+                "current_down_duration_minutes": round(current_down_time / 60, 1)
+            })
+        
+        return status
 
 # =============================================================================
 # 消息处理函数
