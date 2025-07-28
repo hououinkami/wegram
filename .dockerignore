@@ -6,3 +6,13 @@ contact.json
 sticker.json
 test.py
 main.sh
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+README.md
+.env
+.venv/
+venv/
