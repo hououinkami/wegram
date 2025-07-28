@@ -1,5 +1,4 @@
 import logging
-import json
 import uuid
 import time
 from functools import wraps
@@ -11,6 +10,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import LOCALE as locale
+from utils import tools
+from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api
 from utils.contact_manager import contact_manager
 
@@ -293,6 +294,32 @@ async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE,
       
     except Exception as e:
         logger.error(f"❌ 添加好友失败: {e}")
+        await query.answer("❌ 失敗")
+
+@CallbackRegistry.register_with_data("voice_to_text")
+async def handle_voice_to_text(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理语音转文字按钮"""
+    query = update.callback_query
+    chat_id = data['chat_id']
+    voice_msgid = data['voice_msgid']
+    voice_path = data['voice_path']
+    sender_name = data['sender_name']
+
+    if not voice_path:
+        return
+    
+    try:      
+        # 转换成文字
+        voice_text = await tools.voice_to_text(voice_path)
+        
+        sender_text = f"{sender_name}\n{voice_text}"
+        
+        if sender_text != sender_name:
+            await telegram_sender.edit_message_caption(chat_id, sender_text, voice_msgid)
+        await query.answer(f"✅ 成功")
+      
+    except Exception as e:
+        logger.error(f"❌ 语音转文字失败: {e}")
         await query.answer("❌ 失敗")
 
 @CallbackRegistry.register_with_data("contact_page")

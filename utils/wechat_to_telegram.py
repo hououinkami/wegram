@@ -157,16 +157,27 @@ async def _forward_voice(chat_id: int, msg_type: int, from_wxid: str, sender_nam
     
     # 先发送语音
     voice_response = await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
+
     if voice_response:
         voice_msgid = voice_response.message_id
-        
-    # 转换成文字
-    voice_text = await tools.voice_to_text(ogg_path)
-    
-    sender_text = f"{sender_name}\n{voice_text}"
-    
-    if sender_text != sender_name:
-        await telegram_sender.edit_message_caption(chat_id, sender_text, voice_msgid)
+
+    # 添加按钮
+    callback_data = {
+        'chat_id': chat_id,
+        'voice_msgid': voice_msgid,
+        'voice_path': ogg_path,
+        'sender_name': sender_name,
+        **kwargs
+    }
+    keyboard = [
+        [InlineKeyboardButton(
+            f"{locale.common('trans_to_text')}", 
+            callback_data=create_callback_data("voice_to_text", callback_data)
+        )]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await telegram_sender.edit_message_caption(chat_id, sender_name, voice_msgid, reply_markup=reply_markup)
     
     return voice_response
 
