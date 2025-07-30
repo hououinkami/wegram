@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timedelta
 from enum import Enum
 from functools import wraps
 
@@ -16,6 +17,7 @@ from service.telethon_client import get_user_id
 from utils import tools
 from utils.contact_manager import contact_manager, Contact
 from utils.group_manager import group_manager
+from utils.daily_scheduler import DailyRandomScheduler
 from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import revoke_by_telegram_bot_command
 
@@ -91,7 +93,7 @@ def delete_command_message(func):
 
 class BotCommands:
     """机器人命令处理类"""
-    
+
     @staticmethod
     @delete_command_message
     @command_scope(CommandScope.NOT_BOT)
@@ -396,6 +398,99 @@ class BotCommands:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
+    @command_scope(CommandScope.NOT_BOT)
+    async def timer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """定时发送信息"""
+        chat_id = update.effective_chat.id
+        
+        # 获取参数
+        args = context.args
+        if len(args) > 0:
+            send_time = args[0]
+            # 将第二个参数开始的所有参数用空格连接作为消息内容
+            send_message = " ".join(args[1:]) if len(args) > 1 else ""
+        else:
+            await telegram_sender.send_text(chat_id, locale.command("no_message"))
+            return
+        
+        try:
+            to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
+            if not to_wxid:
+                await telegram_sender.send_text(chat_id, locale.command("no_binding"))
+                return
+            
+            # 验证时间格式 (支持 0750 这种4位数字格式)
+            try:
+                # 检查是否为4位数字格式
+                if len(send_time) == 4 and send_time.isdigit():
+                    hours = int(send_time[:2])
+                    minutes = int(send_time[2:])
+                    seconds = 0
+                # 兼容原有的 HH:MM 和 HH:MM:SS 格式
+                elif send_time.count(':') == 1:
+                    hours, minutes = map(int, send_time.split(':'))
+                    seconds = 0
+                elif send_time.count(':') == 2:
+                    hours, minutes, seconds = map(int, send_time.split(':'))
+                else:
+                    raise ValueError("时间格式错误")
+                
+                if not (0 <= hours <= 23 and 0 <= minutes <= 59 and 0 <= seconds <= 59):
+                    raise ValueError("时间值超出范围")
+                    
+            except Exception:
+                await telegram_sender.send_text(chat_id, 
+                    f"{locale.common('failed')}: 时间格式错误，请使用 0750 或 HH:MM 格式")
+                return
+            
+            # 计算结束时间（开始时间+1分钟）
+            start_time_obj = datetime.now().replace(hour=hours, minute=minutes, second=seconds, microsecond=0)
+            end_time_obj = start_time_obj + timedelta(seconds=5)
+            
+            # 格式化为字符串，直接传给调度器
+            start_time_str = start_time_obj.strftime("%H:%M:%S")
+            end_time_str = end_time_obj.strftime("%H:%M:%S")
+            
+            # 创建定时发送任务
+            async def send_scheduled_message():
+                """定时发送消息的回调函数"""
+                try:
+                    # 直接发送到微信
+                    payload = {
+                        "At": "",
+                        "Content": send_message,
+                        "ToWxid": to_wxid,
+                        "Type": 1,
+                        "Wxid": config.MY_WXID
+                    }
+                    await wechat_api("SEND_TEXT", payload)
+
+                    # 发送Telegram通知
+                    await telegram_sender.send_text(chat_id, locale.command("timer_successed"))
+                    
+                    return True
+                    
+                except Exception as e:
+                    logger.error(f"❌ 定时发送消息失败: {e}")
+                    await telegram_sender.send_text(chat_id, locale.command("timer_failed"))
+                    return False
+            
+            # 创建一次性调度器
+            scheduler = DailyRandomScheduler(
+                start_time_str, 
+                end_time_str, 
+                send_scheduled_message, 
+                run_once=True
+            )
+            
+            # 启动调度器
+            await scheduler.start()
+            
+        except Exception as e:
+            logger.error(f"❌ 设置定时消息失败: {e}")
+            await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+    
+    @staticmethod
     async def list_contacts(chat_id: int, search_word: str = ""):
         """显示联系人列表 - 简化版本，直接跳转到分页处理器"""
         try:
@@ -583,7 +678,8 @@ class BotCommands:
             ["remark", locale.command("remark")],
             ["quit", locale.command("quit")],
             ["rm", locale.command("revoke")],
-            ["login", locale.command("login")]
+            ["login", locale.command("login")],
+            ["timer", locale.command("timer")]
         ]
     
     # 命令处理器映射
@@ -599,5 +695,6 @@ class BotCommands:
             "remark": cls.remark_command,
             "quit": cls.quit_command,
             "rm": cls.revoke_command,
-            "login": cls.login_command
+            "login": cls.login_command,
+            "timer": cls.timer_command
         }

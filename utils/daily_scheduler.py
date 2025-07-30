@@ -8,14 +8,17 @@ logger = logging.getLogger(__name__)
 class DailyRandomScheduler:
     """每日随机时间调度器"""
     
-    def __init__(self, start_time, end_time, callback):
+    def __init__(self, start_time, end_time, callback, run_once=False):
         self.original_start_time = self._parse_time(start_time)  # 保存原始开始时间
         self.original_end_time = self._parse_time(end_time)      # 保存原始结束时间
         self.start_time = self.original_start_time
         self.end_time = self.original_end_time
         self.callback = callback
+        self.run_once = run_once  # 是否只执行一次
         self.is_running = False
         self.scheduler_task = None
+        self.last_run_date = None
+        self.has_executed = False  # 是否已执行过
         self.last_run_date = None
         
         if self.start_time >= self.end_time:
@@ -89,9 +92,25 @@ class DailyRandomScheduler:
             else:
                 result = self.callback()
                 
-            # 如果任务返回False（未推送），则调整时间范围
+            # 如果是一次性任务且执行成功，标记为已执行并停止调度器
+            if self.run_once and result is not False:
+                self.has_executed = True
+                logger.info("✅ 一次性任务执行完成，调度器将停止")
+                self.is_running = False
+                return
+                
+            # 对于一次性任务，如果执行失败也不调整时间范围，而是等待明天
+            if self.run_once:
+                if result is False:
+                    logger.info("⚠️ 一次性任务执行失败，将在明天同一时间段重试")
+                    self.last_run_date = datetime.now().date()
+                else:
+                    self.last_run_date = datetime.now().date()
+                return
+                
+            # 普通循环任务的原有逻辑
             if result is False:
-                need_wait_tomorrow = self.adjust_time_range(1)  # 推迟1小时
+                need_wait_tomorrow = self.adjust_time_range(1)
                 if need_wait_tomorrow:
                     logger.info(f"⏰ 时间范围已超过今天，等待明天重试")
                     self.last_run_date = datetime.now().date()
@@ -104,7 +123,10 @@ class DailyRandomScheduler:
             
         except Exception as e:
             logger.error(f"❌ 执行任务时发生错误: {e}")
-    
+            if self.run_once:
+                # 一次性任务出错也等待明天重试
+                self.last_run_date = datetime.now().date()
+
     async def _wait_with_cancellation(self, total_seconds):
         """可取消的等待函数"""
         while total_seconds > 0 and self.is_running:
@@ -116,6 +138,11 @@ class DailyRandomScheduler:
         """调度器主循环"""
         while self.is_running:
             try:
+                # 如果是一次性任务且已执行过，停止循环
+                if self.run_once and self.has_executed:
+                    logger.info("🎯 一次性任务已完成，调度器停止")
+                    break
+                    
                 current_time = datetime.now()
                 current_date = current_time.date()
                 
@@ -128,12 +155,15 @@ class DailyRandomScheduler:
                     target_time = self.get_random_time_today()
                     
                     if current_time >= target_time:
-                        logger.info(f"⏰ 今天的执行时间 {target_time.strftime('%H:%M:%S')} 已过，等待明天")
+                        # 无论是一次性还是循环任务，错过时间都等待明天
+                        task_type = "一次性任务" if self.run_once else "任务"
+                        logger.info(f"⏰ {task_type}的执行时间 {target_time.strftime('%H:%M:%S')} 已过，等待明天在相同时间段执行")
                         self.last_run_date = current_date
                     else:
                         # 等待到目标时间
                         wait_seconds = (target_time - current_time).total_seconds()
-                        logger.info(f"⏰ 等待 {wait_seconds:.0f} 秒后执行任务 (目标时间: {target_time.strftime('%H:%M:%S')})")
+                        task_type = "一次性任务" if self.run_once else "任务"
+                        logger.info(f"⏰ 等待 {wait_seconds:.0f} 秒后执行{task_type} (目标时间: {target_time.strftime('%H:%M:%S')})")
                         
                         # 分段等待
                         await self._wait_with_cancellation(wait_seconds)
