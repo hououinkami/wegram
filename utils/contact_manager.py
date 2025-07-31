@@ -325,6 +325,70 @@ class ContactManager:
             logger.error(f"❌ 通过ChatID删除联系人失败: {chat_id}, 错误: {e}")
             return False
     
+    async def update_contact(self, wxid: str, updates: dict) -> bool:
+        """通过wxid更新联系人的指定字段"""
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            # 首先获取当前联系人信息
+            contact = await self.get_contact(wxid)
+            if not contact:
+                logger.warning(f"⚠️ 未找到wxid对应的联系人: {wxid}")
+                return False
+            
+            # 处理更新字段
+            update_fields = []
+            update_values = []
+            
+            for key, value in updates.items():
+                # 处理字段名映射
+                db_field = {
+                    'isReceive': 'is_receive',
+                    'isGroup': 'is_group',
+                    'chatId': 'chat_id',
+                    'avatarUrl': 'avatar_url',
+                    'wxName': 'wx_name'
+                }.get(key, key)
+                
+                # 特殊处理切换布尔值
+                if value == "toggle" and db_field in ["is_receive", "is_group"]:
+                    current_value = getattr(contact, db_field)
+                    value = not current_value
+                elif db_field in ["is_receive", "is_group"] and isinstance(value, str):
+                    value = value.lower() in ['true', '1', 'yes', 'on']
+                
+                # SQLite 布尔值转整数
+                if db_field in ["is_receive", "is_group"]:
+                    value = int(value)
+                
+                update_fields.append(f"{db_field} = ?")
+                update_values.append(value)
+            
+            if not update_fields:
+                return True
+            
+            # 添加WHERE条件的参数
+            update_values.append(wxid)
+            
+            # 构建并执行SQL
+            sql = f"UPDATE contacts SET {', '.join(update_fields)} WHERE wxid = ?"
+            
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute(sql, update_values)
+                await db.commit()
+                
+                if cursor.rowcount > 0:
+                    logger.info(f"✅ 成功更新联系人: {wxid}, 更新字段: {list(updates.keys())}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ 未更新任何记录: {wxid}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"❌ 更新联系人字段失败 - wxid: {wxid}, 更新: {updates}, 错误: {e}")
+            return False
+
     async def update_contact_by_chatid(self, chat_id: int, updates: dict) -> bool:
         """通过ChatID更新联系人的指定字段"""
         if not self._initialized:
