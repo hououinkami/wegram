@@ -518,23 +518,27 @@ class HeartbeatMonitor:
         self.monitor_task: Optional[asyncio.Task] = None
         self.service_down = False
         self.service_down_time = None
+        self.recovery_notified = False
         
     async def update_heartbeat(self):
         """更新心跳时间"""
         current_time = time.time()
         self.last_heartbeat = current_time
         
-        if self.service_down:
+        if self.service_down and not self.recovery_notified:
             # 服务恢复 - 计算异常持续时间
             if self.service_down_time:
                 down_duration = current_time - self.service_down_time
                 await self._send_service_recovery_alert(down_duration)
-            
-            # 重置状态
+                self.recovery_notified = True
+                
+            logger.info("✅ 微信服务已恢复正常")
+    
+        # 🔧 在这里重置状态，但保持recovery_notified直到下次异常
+        if self.service_down:
             self.service_down = False
             self.service_down_time = None
-            logger.info("✅ 微信服务已恢复正常")
-
+            
     async def start_monitoring(self):
         """开始监控"""
         if not self.is_running:
@@ -565,6 +569,7 @@ class HeartbeatMonitor:
                         # 首次检测到服务异常 - 记录异常开始时间
                         self.service_down = True
                         self.service_down_time = self.last_heartbeat  # 使用最后一次正常心跳时间
+                        self.recovery_notified = False
                         
                         logger.error(f"❌ 微信服务疑似DOWN - 已超过{self.timeout}秒未收到消息")
                         logger.error(f"⏰ 最后收到消息时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_heartbeat))}")
