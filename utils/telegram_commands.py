@@ -133,12 +133,15 @@ class BotCommands:
         chat_id = update.effective_chat.id
         
         try:
+            contact = await contact_manager.get_contact_by_chatid(chat_id)
+            if not contact.chat_id:
+                await telegram_sender.send_text(chat_id, locale.command("no_binding"))
+                return
+            
             await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
             contact_now = await contact_manager.get_contact_by_chatid(chat_id)
             
-            if not contact_now:
-                await telegram_sender.send_text(chat_id, locale.command("no_binding"))
-            elif contact_now and contact_now.is_receive:
+            if contact_now and contact_now.is_receive:
                 await telegram_sender.send_text(chat_id, locale.command("receive_on"))
             else:
                 await telegram_sender.send_text(chat_id, locale.command("receive_off"))

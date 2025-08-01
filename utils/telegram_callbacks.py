@@ -557,13 +557,8 @@ async def handle_toggle_receive(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("❌ 联系人不存在", show_alert=True)
             return
         
-        chat_id = contact.chat_id
-        if not chat_id or chat_id == -9999999999:
-            await query.answer("❌ 联系人未绑定Telegram聊天", show_alert=True)
-            return
-        
         # 切换接收状态
-        await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
+        await contact_manager.update_contact(wxid, {"isReceive": "toggle"})
         
         # 获取更新后的状态
         updated_contact = await contact_manager.get_contact(wxid)
