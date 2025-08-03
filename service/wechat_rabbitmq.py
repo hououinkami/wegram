@@ -519,25 +519,44 @@ class HeartbeatMonitor:
         self.service_down = False
         self.service_down_time = None
         self.recovery_notified = False
+        self._status_lock = asyncio.Lock()  # 状态锁
         
     async def update_heartbeat(self):
         """更新心跳时间"""
         current_time = time.time()
-        self.last_heartbeat = current_time
         
-        if self.service_down and not self.recovery_notified:
-            # 服务恢复 - 计算异常持续时间
-            if self.service_down_time:
-                down_duration = current_time - self.service_down_time
-                await self._send_service_recovery_alert(down_duration)
+        # 初始化变量
+        should_send_recovery = False
+        down_duration = 0
+        service_down_start_time = 0
+        
+        # 使用锁保护状态检查和变更
+        async with self._status_lock:
+            self.last_heartbeat = current_time
+            
+            # 检查是否需要发送恢复通知
+            should_send_recovery = (
+                self.service_down and 
+                not self.recovery_notified and 
+                self.service_down_time is not None
+            )
+            
+            if should_send_recovery:
+                # 立即标记已通知，防止其他协程重复发送
                 self.recovery_notified = True
+                self.service_down = False
+                down_duration = current_time - self.service_down_time
+                service_down_start_time = self.service_down_time  # 保存开始时间
+                self.service_down_time = None
                 
-            logger.info("✅ 微信服务已恢复正常")
-    
-        # 🔧 在这里重置状态，但保持recovery_notified直到下次异常
-        if self.service_down:
-            self.service_down = False
-            self.service_down_time = None
+                logger.info("✅ 微信服务已恢复正常")
+        
+        # 在锁外发送通知，避免阻塞
+        if should_send_recovery:
+            try:
+                await self._send_service_recovery_alert(down_duration, service_down_start_time)
+            except Exception as e:
+                logger.error(f"❌ 发送服务恢复通知失败: {e}")
             
     async def start_monitoring(self):
         """开始监控"""
@@ -562,21 +581,24 @@ class HeartbeatMonitor:
         while self.is_running:
             try:
                 current_time = time.time()
-                time_since_last = current_time - self.last_heartbeat
                 
-                if time_since_last > self.timeout:
-                    if not self.service_down:
-                        # 首次检测到服务异常 - 记录异常开始时间
+                async with self._status_lock:
+                    time_since_last = current_time - self.last_heartbeat
+                    
+                    if time_since_last > self.timeout and not self.service_down:
+                        # 首次检测到服务异常
                         self.service_down = True
-                        self.service_down_time = self.last_heartbeat  # 使用最后一次正常心跳时间
+                        self.service_down_time = self.last_heartbeat
                         self.recovery_notified = False
                         
                         logger.error(f"❌ 微信服务疑似DOWN - 已超过{self.timeout}秒未收到消息")
                         logger.error(f"⏰ 最后收到消息时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_heartbeat))}")
                         
-                        # 发送异常告警
-                        await self._send_service_down_alert(time_since_last)
-                
+                        # 在锁外发送异常告警
+                        try:
+                            await self._send_service_down_alert(time_since_last)
+                        except Exception as e:
+                            logger.error(f"❌ 发送服务异常告警失败: {e}")
                 # 每30秒检查一次
                 await asyncio.sleep(30)
                 
@@ -601,7 +623,7 @@ class HeartbeatMonitor:
         except Exception as e:
             logger.error(f"❌ 发送服务异常告警失败: {e}")
     
-    async def _send_service_recovery_alert(self, total_down_time: float):
+    async def _send_service_recovery_alert(self, total_down_time: float, service_down_start_time: float):  # 🆕 添加参数
         """发送服务恢复告警"""
         try:
             tg_user_id = get_user_id()
@@ -621,11 +643,11 @@ class HeartbeatMonitor:
             
             # 构建恢复消息
             recovery_message = f"✅ **WeChatサーバー復旧完了！**\n\n" \
-                             f"🟢 サーバー状態: 正常稼働中\n" \
-                             f"⏱️ 異常継続時間: {duration_str}\n" \
-                             f"📝 異常開始時刻: {time.strftime('%H:%M:%S', time.localtime(self.service_down_time))}\n" \
-                             f"📝 復旧完了時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n\n" \
-                             f"サーバーが正常に復旧しました！"
+                            f"🟢 サーバー状態: 正常稼働中\n" \
+                            f"⏱️ 異常継続時間: {duration_str}\n" \
+                            f"📝 異常開始時刻: {time.strftime('%H:%M:%S', time.localtime(service_down_start_time))}\n" \
+                            f"📝 復旧完了時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n\n" \
+                            f"サーバーが正常に復旧しました！"
             
             await telegram_sender.send_text(tg_user_id, recovery_message)
             
@@ -633,7 +655,7 @@ class HeartbeatMonitor:
             
         except Exception as e:
             logger.error(f"❌ 发送服务恢复告警失败: {e}")
-    
+
     def get_status(self) -> dict:
         """获取监控状态"""
         current_time = time.time()
