@@ -385,7 +385,7 @@ class BotCommands:
     @staticmethod
     @delete_command_message
     @command_scope(CommandScope.BOT_ONLY)
-    async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def relogin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """执行二次登录"""
         chat_id = update.effective_chat.id
         
@@ -681,7 +681,7 @@ class BotCommands:
             ["remark", locale.command("remark")],
             ["quit", locale.command("quit")],
             ["rm", locale.command("revoke")],
-            ["login", locale.command("login")],
+            ["relogin", locale.command("relogin")],
             ["timer", locale.command("timer")]
         ]
     
@@ -698,6 +698,6 @@ class BotCommands:
             "remark": cls.remark_command,
             "quit": cls.quit_command,
             "rm": cls.revoke_command,
-            "login": cls.login_command,
+            "relogin": cls.relogin_command,
             "timer": cls.timer_command
         }
