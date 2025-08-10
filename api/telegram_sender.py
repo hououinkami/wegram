@@ -488,6 +488,64 @@ class TelegramSender:
             reply_markup=reply_markup
         )
 
+    async def send_media_group(self, chat_id: Optional[int] = None,
+                              media: List[Union[Dict[str, Any], Any]] = None, 
+                              parse_mode: str = ParseMode.HTML,
+                              reply_to_message_id: Optional[int] = None):
+        """
+        发送媒体组（相册）
+        
+        Args:
+            media: 媒体列表
+            chat_id: 聊天ID，为空时使用默认值
+            parse_mode: 解析模式，会应用到所有媒体的caption中
+            reply_to_message_id: 回复的消息ID
+            
+        Returns:
+            List[Message]: 发送的消息列表
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None:
+            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
+        
+        if not media:
+            raise ValueError("媒体列表不能为空")
+        
+        # 处理媒体列表，为每个媒体项设置parse_mode
+        processed_media = []
+        for item in media:
+            if hasattr(item, 'caption') and item.caption:
+                # 如果媒体项有caption，格式化它并设置parse_mode
+                formatted_caption = self.text_formatter(item.caption, parse_mode)
+                
+                # 创建新的媒体对象，保持原有属性但更新caption和parse_mode
+                if hasattr(item, '__class__'):
+                    # 获取原对象的所有属性
+                    kwargs = {}
+                    for attr in ['media', 'caption', 'parse_mode', 'width', 'height', 
+                            'duration', 'performer', 'title', 'thumbnail']:
+                        if hasattr(item, attr):
+                            kwargs[attr] = getattr(item, attr)
+                    
+                    # 更新caption和parse_mode
+                    kwargs['caption'] = formatted_caption
+                    kwargs['parse_mode'] = parse_mode
+                    
+                    # 创建同类型的新对象
+                    new_item = item.__class__(**kwargs)
+                    processed_media.append(new_item)
+                else:
+                    processed_media.append(item)
+            else:
+                processed_media.append(item)
+        
+        return await self._retry_operation(
+            self.bot.send_media_group,
+            chat_id=target_chat_id,
+            media=processed_media,
+            reply_to_message_id=reply_to_message_id
+        )
+    
     async def send_animation(self, chat_id: Optional[int] = None, animation: Union[str, Path, BytesIO, bytes] = None, caption: str = "",  
                            parse_mode: str = ParseMode.HTML,
                            duration: Optional[int] = None,
@@ -902,34 +960,6 @@ class TelegramSender:
         return await self._retry_operation(
             self.bot.get_file,
             file_id=file_id
-        )
-
-    async def send_media_group(self, media: List[Union[Dict[str, Any], Any]], 
-                              chat_id: Optional[int] = None,
-                              reply_to_message_id: Optional[int] = None):
-        """
-        发送媒体组（相册）
-        
-        Args:
-            media: 媒体列表
-            chat_id: 聊天ID，为空时使用默认值
-            reply_to_message_id: 回复的消息ID
-            
-        Returns:
-            List[Message]: 发送的消息列表
-        """
-        target_chat_id = chat_id or self.default_chat_id
-        if target_chat_id is None:
-            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
-        
-        if not media:
-            raise ValueError("媒体列表不能为空")
-        
-        return await self._retry_operation(
-            self.bot.send_media_group,
-            chat_id=target_chat_id,
-            media=media,
-            reply_to_message_id=reply_to_message_id
         )
 
     async def set_chat_title(self, chat_id: Optional[int] = None, 
