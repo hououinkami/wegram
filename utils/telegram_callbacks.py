@@ -66,7 +66,7 @@ class CallbackDataCache:
             del self._cache[key]
 
 # 全局缓存实例
-callback_data_cache = CallbackDataCache()
+callback_data_cache = CallbackDataCache(default_ttl=86400)
 
 class CallbackRegistry:
     """回调注册器 - 扩展版本"""
