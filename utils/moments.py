@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -5,7 +6,7 @@ from datetime import datetime
 from io import BytesIO
 from typing import List, Dict, Optional, Any
 
-from telegram import InputMediaPhoto
+from telegram import InputMediaPhoto, InputMediaVideo
 
 import config
 from config import LOCALE as locale
@@ -75,32 +76,38 @@ class WeChatMomentsExtractor:
             return "无记录"
         return self._timestamp_to_datetime(self.last_create_time)
     
-    def extract_incremental_data(self, api_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def extract_incremental_data(self, api_response: Dict[str, Any], cached_last_time: int = None) -> tuple:
         """
-        增量提取朋友圈数据
+        增量提取朋友圈数据（优化版本）
         
         Args:
             api_response: API返回的完整响应数据
+            cached_last_time: 缓存的最后时间戳，如果提供则使用此值而不读取文件
             
         Returns:
-            提取的新朋友圈数据列表
+            tuple: (new_data_list, max_create_time)
         """
         if not api_response.get("Success", False):
             raise ValueError("API响应不成功")
         
         object_list = api_response.get("Data", {}).get("ObjectList", [])
         if not object_list:
-            return []
+            # 没有数据时也要返回元组
+            last_create_time = cached_last_time if cached_last_time is not None else self.last_create_time
+            return [], last_create_time
+        
+        # 使用缓存时间戳或从文件读取
+        last_create_time = cached_last_time if cached_last_time is not None else self.last_create_time
         
         # 提取新数据
         new_data = []
-        max_create_time = self.last_create_time
+        max_create_time = last_create_time
         
         for item in object_list:
             create_time = item.get("CreateTime", 0)
             
             # 只提取比当前存储的最新时间更新的数据
-            if create_time > self.last_create_time:
+            if create_time > last_create_time:
                 extracted_item = {
                     "Id": item.get("Id"),
                     "Username": item.get("Username"),
@@ -116,173 +123,255 @@ class WeChatMomentsExtractor:
                 if create_time > max_create_time:
                     max_create_time = create_time
         
-        # 如果有新数据，更新存储的最新时间
-        if new_data:
+        # 如果有新数据且没有使用缓存参数，更新存储的最新时间
+        if new_data and cached_last_time is None:
             self._save_last_create_time(max_create_time)
             self.last_create_time = max_create_time
         
-        return new_data
+        return new_data, max_create_time
+    
+    def update_last_create_time(self, create_time: int):
+        """更新最新的CreateTime"""
+        self._save_last_create_time(create_time)
+        self.last_create_time = create_time
 
-async def process_moment_data(data: list):
-    user_wxid = data["Username"]
-    content_json = message_formatter.xml_to_json(data["buffer"])
-    
-    # 获取用户名
-    contact = await contact_manager.get_contact(user_wxid)
-    user_name = contact.name
-    
-    # 提取基本信息
-    timeline_obj = content_json.get("TimelineObject", {})
-    content_desc = timeline_obj.get("contentDesc", "")
-    
-    # 处理contentDesc为空字典的情况
-    if isinstance(content_desc, dict) and not content_desc:
-        content_desc = ""
-    
-    content_obj = timeline_obj.get("ContentObject", {})
-    content_style = content_obj.get("contentStyle", 1)
-    media_list_data = content_obj.get("mediaList", {})
-    
-    # 提取定位信息
-    location_data = timeline_obj.get("location", {})
-    location_info = None
-    
-    if location_data and not (isinstance(location_data, dict) and not location_data):
-        # 安全获取值的函数
-        def safe_get_value(data, key):
-            value = data.get(key, "")
+async def process_moment_data(data):
+    """
+    处理朋友圈数据，增强错误处理
+    """
+    try:
+        # 1. 统一处理输入数据格式
+        if isinstance(data, list):
+            if not data:
+                raise ValueError("传入的数据列表为空")
+            actual_data = data[0]
+        elif isinstance(data, dict):
+            actual_data = data
+        else:
+            raise TypeError(f"不支持的数据类型: {type(data)}")
+        
+        # 2. 安全获取基本数据
+        user_wxid = actual_data.get("Username", "")
+        buffer_data = actual_data.get("buffer", "")
+        
+        if not user_wxid or not buffer_data:
+            logger.error(f"缺少必要数据: Username={user_wxid}, buffer存在={bool(buffer_data)}")
+            return False
+        
+        # 3. 安全解析JSON
+        try:
+            content_json = message_formatter.xml_to_json(buffer_data)
+            if not isinstance(content_json, dict):
+                logger.error(f"XML解析结果不是字典: {type(content_json)}")
+                return False
+        except Exception as e:
+            logger.error(f"XML解析失败: {e}")
+            return False
+        
+        # 获取用户名
+        contact = await contact_manager.get_contact(user_wxid)
+        user_name = contact.name if contact else "未知用户"
+        
+        # 4. 安全获取值的函数（增强版）
+        def safe_get_value(data, key, default=""):
+            if not isinstance(data, dict):
+                return default
+            value = data.get(key, default)
             if isinstance(value, dict) and not value:
-                return ""
+                return default
             return value
         
-        city = safe_get_value(location_data, "city")
-        poi_name = safe_get_value(location_data, "poiName")
-        poi_address = safe_get_value(location_data, "poiAddress")
-        latitude = safe_get_value(location_data, "latitude")
-        longitude = safe_get_value(location_data, "longitude")
+        def safe_get_dict(data, key, default=None):
+            if default is None:
+                default = {}
+            if not isinstance(data, dict):
+                return default
+            value = data.get(key, default)
+            return value if isinstance(value, dict) else default
         
-        # 检查是否有有效的定位信息
-        if any([city, poi_name, poi_address, latitude, longitude]):
-            location_info = {
-                "city": city,
-                "poi_name": poi_name,
-                "poi_address": poi_address,
-                "latitude": latitude,
-                "longitude": longitude,
-                "country": safe_get_value(location_data, "country"),
-                "poi_address_name": safe_get_value(location_data, "poiAddressName"),
-                "poi_classify_id": safe_get_value(location_data, "poiClassifyId"),
-                "poi_classify_type": safe_get_value(location_data, "poiClassifyType")
-            }
-    
-    # 处理媒体数据
-    media_list = []
-    # 先准备caption内容
-    caption_parts = []
-
-    # 发送者信息
-    if user_name:
-        sender_name = f"<blockquote>{user_name}</blockquote>"
-        caption_parts.append(sender_name)
-    
-    # 添加文本内容
-    if content_desc:
-        caption_parts.append(content_desc)
-
-    # 添加定位信息
-    if location_info:
-        location_text = format_location_text(location_info)
-        if location_text:
-            caption_parts.append(f"<blockquote>{location_text}</blockquote>")
-    
-    # 检查媒体数据结构
-    if int(content_style) == 1 and "media" in media_list_data:
-        media_data = media_list_data["media"]
+        # 5. 提取基本信息
+        timeline_obj = safe_get_dict(content_json, "TimelineObject")
+        if not timeline_obj:
+            logger.error("TimelineObject 不存在或为空")
+            return False
+            
+        content_desc = safe_get_value(timeline_obj, "contentDesc")
         
-        # 如果是单张图片，media是字典
-        if isinstance(media_data, dict):
-            media_items = [media_data]
-        # 如果是多张图片，media是列表
-        elif isinstance(media_data, list):
-            media_items = media_data
-        else:
+        content_obj = safe_get_dict(timeline_obj, "ContentObject")
+        content_style_str = safe_get_value(content_obj, "contentStyle", "1")
+        
+        # 安全转换为整数
+        try:
+            content_style = int(content_style_str) if content_style_str else 1
+        except (ValueError, TypeError):
+            content_style = 1
+            logger.warning(f"无法解析 contentStyle: {content_style_str}")
+        
+        media_list_data = safe_get_dict(content_obj, "mediaList")
+        
+        # 6. 提取定位信息
+        location_data = safe_get_dict(timeline_obj, "location")
+        location_info = None
+        
+        if location_data:
+            city = safe_get_value(location_data, "city")
+            poi_name = safe_get_value(location_data, "poiName")
+            poi_address = safe_get_value(location_data, "poiAddress")
+            latitude = safe_get_value(location_data, "latitude")
+            longitude = safe_get_value(location_data, "longitude")
+            
+            if any([city, poi_name, poi_address, latitude, longitude]):
+                location_info = {
+                    "city": city,
+                    "poi_name": poi_name,
+                    "poi_address": poi_address,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "country": safe_get_value(location_data, "country"),
+                    "poi_address_name": safe_get_value(location_data, "poiAddressName"),
+                    "poi_classify_id": safe_get_value(location_data, "poiClassifyId"),
+                    "poi_classify_type": safe_get_value(location_data, "poiClassifyType")
+                }
+        
+        # 7. 处理媒体数据
+        media_list = []
+        caption_parts = []
+
+        # 发送者信息
+        if user_name:
+            caption_parts.append(f"<blockquote>{user_name}</blockquote>")
+        
+        # 添加文本内容
+        if content_desc:
+            caption_parts.append(content_desc)
+
+        # 添加定位信息
+        if location_info:
+            location_text = format_location_text(location_info)
+            if location_text:
+                caption_parts.append(f"<blockquote>{location_text}</blockquote>")
+        
+        # 8. 根据content_style处理不同类型的内容
+        if content_style in [1, 15] and media_list_data and "media" in media_list_data:
+            # 图片类型
+            media_data = media_list_data["media"]
+            
+            # 安全处理媒体数据
             media_items = []
-        
-        # 合并caption
-        full_caption = "\n".join(caption_parts) if caption_parts else ""
-        
-        # 处理每张图片
-        for i, media_item in enumerate(media_items):
-            if media_item.get("type") == "2":  # type=2表示图片
-                # 获取最高分辨率的图片链接 - 合并到主函数中
-                img_url = (
-                    media_item.get("uhd", {}).get("_text") or
-                    media_item.get("hd", {}).get("_text") or
-                    media_item.get("url", {}).get("_text") or
-                    media_item.get("thumb", {}).get("_text")
-                )
-                
-                if img_url:
-                    try:
-                        # 使用tools.get_image_from_url转换为BytesIO数据
-                        bytes_io_data = await tools.get_image_from_url(img_url)
-                        
-                        # 只有第一张图片设置caption
-                        caption = full_caption if i == 0 else ""
+            if isinstance(media_data, dict):
+                media_items = [media_data]
+            elif isinstance(media_data, list):
+                media_items = [item for item in media_data if isinstance(item, dict)]
+            else:
+                logger.warning(f"未知的媒体数据类型: {type(media_data)}")
+            
+            # 处理每张图片
+            for i, media_item in enumerate(media_items):
+                if not isinstance(media_item, dict):
+                    continue
+                    
+                item_type = safe_get_value(media_item, "type")
+                if item_type == "2":  # type=2表示图片
+                    # 安全获取图片URL
+                    img_url = None
+                    for url_key in ["uhd", "hd", "url", "thumb"]:
+                        url_obj = safe_get_dict(media_item, url_key)
+                        if url_obj:
+                            img_url = safe_get_value(url_obj, "_text")
+                            if img_url:
+                                break
+                    
+                    if img_url:
+                        try:
+                            bytes_io_data = await tools.get_image_from_url(img_url)
+                            caption = "\n".join(caption_parts) if i == 0 and caption_parts else ""
+                            input_media = InputMediaPhoto(media=bytes_io_data, caption=caption)
+                            media_list.append(input_media)
+                        except Exception as e:
+                            logger.error(f"处理图片失败: {img_url}, 错误: {e}")
+                            continue
+                elif item_type == "6":  # type=6表示微信小视频
+                    video_url = None
+                    url_obj = safe_get_dict(media_item, "url")
+                    if url_obj:
+                        video_url = safe_get_value(url_obj, "_text")
+                    
+                    if video_url:
+                        try:
+                            url_base64 = base64.b64encode(video_url.encode()).decode('utf-8')
 
-                        # 创建InputMediaPhoto对象
-                        input_media = InputMediaPhoto(media=bytes_io_data, caption=caption)
-                        media_list.append(input_media)
-                        
-                    except Exception as e:
-                        print(f"处理图片失败: {img_url}, 错误: {e}")
-                        continue
-    elif int(content_style) == 15:
-        logger.warning(content_json)
-        caption_parts.append(f'<blockquote>WeChatビデオ</blockquote>')
-    else:
-        # 转发公众号或App消息
-        share_title = content_obj.get("title", "")
-        share_url = content_obj.get("contentUrl", "")
-        share_name = content_obj.get("sourceNickName") or timeline_obj.get("appInfo", {}).get("appName") or ""
-        
-        if not "当前微信版本不支持展示该内容" in share_title:
-            caption_parts.append(f'<a href="{share_url}">{share_title}</a>\n<blockquote>{share_name}</blockquote>')
+                            payload = {
+                                "Url": url_base64,
+                                "Key": "0",
+                                "Wxid": config.MY_WXID
+                            }
+                            video_data = await wechat_api("GET_MOMENT_VIDEO", payload)
+                            
+                            if not video_data.get("Success", True):
+                                return
+                            
+                            video_base64 = video_data.get("Message", "")
+                            # 解码为bytes
+                            video_bytes = base64.b64decode(video_base64)
+
+                            # 转换为BytesIO
+                            video_io = BytesIO(video_bytes)
+                            caption = "\n".join(caption_parts) if i == 0 and caption_parts else ""
+                            input_media = InputMediaVideo(media=video_io, caption=caption)
+                            media_list.append(input_media)
+                        except Exception as e:
+                            logger.error(f"处理小视频失败: {video_url}, 错误: {e}")
+                            continue
+            
         else:
-            logger.warning(content_json)
+            # 其他分享内容类型
+            share_title = safe_get_value(content_obj, "title")
+            share_url = safe_get_value(content_obj, "contentUrl")
+            
+            app_info = safe_get_dict(timeline_obj, "appInfo")
+            share_name = (safe_get_value(content_obj, "sourceNickName") or 
+                         safe_get_value(app_info, "appName"))
+            
+            if share_title and "当前微信版本不支持展示该内容" not in share_title:
+                if share_url:
+                    caption_parts.append(f'<a href="{share_url}">{share_title}</a>')
+                if share_name:
+                    caption_parts.append(f'<blockquote>{share_name}</blockquote>')
+            else:
+                logger.warning("不支持的分享内容")
+                logger.debug(content_json)
 
-        # 转发视频号信息
-        finder_feed = content_obj.get("finderFeed", {})
-        if finder_feed:
-            finder_nickname = finder_feed.get("nickname", "")
-            finder_desc = finder_feed.get("desc", "")
-            if finder_nickname:
-                caption_parts.append(f"<blockquote>[{locale.type(51)}: {finder_nickname}]</blockquote>\n{finder_desc}")
+            # 转发视频号信息
+            finder_feed = safe_get_dict(content_obj, "finderFeed")
+            if finder_feed:
+                finder_nickname = safe_get_value(finder_feed, "nickname")
+                finder_desc = safe_get_value(finder_feed, "desc")
+                if finder_nickname:
+                    caption_parts.append(f"<blockquote>[{locale.type(51)}: {finder_nickname}]</blockquote>")
+                if finder_desc:
+                    caption_parts.append(finder_desc)
         
-    # 合并caption
-    full_caption = "\n".join(caption_parts) if caption_parts else ""
+        # 9. 统一合并caption
+        full_caption = "\n".join(caption_parts) if caption_parts else ""
 
-    # 构建返回集合
-    moments_content =  {
-        "user_name": user_name,
-        "content_desc": content_desc,
-        "media_list": media_list,
-        "location_info": location_info,
-        "timeline_id": timeline_obj.get("id", ""),
-        "username": timeline_obj.get("username", ""),
-        "create_time": timeline_obj.get("createTime", "")
-    }
+        # 10. 发送消息
+        chat_id = await _get_or_create_chat("wechat_moments", "モーメンツ", "")
+        if not chat_id:
+            return False
+            
+        if media_list:
+            await telegram_sender.send_media_group(chat_id, media_list)
+        elif full_caption:
+            await telegram_sender.send_text(chat_id, full_caption)
+        else:
+            await telegram_sender.send_text(chat_id, "📱 朋友圈动态")
 
-    # 发送
-    chat_id = await _get_or_create_chat("wechat_moments", "モーメンツ", "")
-    if not chat_id:
-        return
-    if media_list:
-        await telegram_sender.send_media_group(chat_id, media_list)
-    else:
-        await telegram_sender.send_text(chat_id, full_caption)
-
-    return True
+        return True
+        
+    except Exception as e:
+        logger.error(f"处理朋友圈数据时发生错误: {e}")
+        logger.error(f"错误数据: {data}")
+        return False
 
 def format_location_text(location_info):
     """

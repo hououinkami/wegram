@@ -37,6 +37,7 @@ class WeChatAPIPaths:
     USER_REMARK = "/Friend/SetRemarks"
     USER_MOMENT = "/FriendCircle/GetDetail"
     MY_MOMENT = "/FriendCircle/GetList"
+    GET_MOMENT_VIDEO = "/FriendCircle/DownFriendCircleMedia"
     WECOM_ADD = "/QWContact/QWAddContact"
     WECOM_APPLY = "/QWContact/QWApplyAddContact"
     WECOM_SEARCH = "/QWContact/SearchQWContact"

@@ -42,8 +42,7 @@ class WeChatMomentsMonitorService:
         self.is_running = False
         self.task: Optional[asyncio.Task] = None
         # 缓存最后处理时间戳
-        self._cached_last_create_time: Optional[int] = None
-        self._cache_dirty = True  # 标记缓存是否需要更新
+        self._cached_last_create_time = None
         
         # 关闭事件
         self.shutdown_event = asyncio.Event()
@@ -52,17 +51,16 @@ class WeChatMomentsMonitorService:
             os.makedirs(os.path.dirname(self.storage_file), exist_ok=True)
         except Exception as e:
             logger.warning(f"创建存储目录失败: {e}")
-        
-    def _load_cache(self):
-        """从文件加载缓存"""
-        self._cached_last_create_time = self.extractor.get_last_create_time()
-        self._cache_dirty = False
-       
-    def _update_cache(self, new_create_time: int):
-        """更新缓存"""
-        if new_create_time != self._cached_last_create_time:
-            self._cached_last_create_time = new_create_time
-            self._cache_dirty = True
+    
+    def _get_cached_last_create_time(self) -> int:
+        """从缓存获取最后的CreateTime"""
+        if self._cached_last_create_time is None:
+            self._cached_last_create_time = self.extractor.get_last_create_time()
+        return self._cached_last_create_time
+
+    def _update_cache(self, create_time: int):
+        """更新缓存的CreateTime"""
+        self._cached_last_create_time = create_time
 
     async def _fetch_moments_data(self) -> Optional[dict]:
         """
@@ -108,7 +106,7 @@ class WeChatMomentsMonitorService:
         if not new_data:
             return
         
-        # 记录详细信息
+        # 这里处理增量数据
         for item in new_data:
             await process_moment_data(item)
             logger.debug(
@@ -117,9 +115,6 @@ class WeChatMomentsMonitorService:
                 f"时间: {item['CreateTime']}, "
                 f"点赞数: {item['LikeCount']}"
             )
-        
-        # 这里处理增量数据
-        await process_moment_data(new_data)
     
     async def _check_updates(self):
         """单次检查更新"""
@@ -136,7 +131,13 @@ class WeChatMomentsMonitorService:
                 return
             
             # 增量提取新数据
-            new_data = self.extractor.extract_incremental_data(moment_list)
+            cached_last_time = self._get_cached_last_create_time()
+            new_data, max_create_time = self.extractor.extract_incremental_data(moment_list, cached_last_time)
+
+            # 如果有新数据，更新缓存和文件
+            if new_data:
+                self._update_cache(max_create_time)
+                self.extractor.update_last_create_time(max_create_time)
             
             if new_data:
                 await self._process_new_data(new_data)
