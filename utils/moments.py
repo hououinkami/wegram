@@ -329,7 +329,7 @@ async def process_moment_data(data):
             share_url = safe_get_value(content_obj, "contentUrl")
             
             app_info = safe_get_dict(timeline_obj, "appInfo")
-            share_name = (safe_get_value(content_obj, "sourceNickName") or 
+            share_name = (safe_get_value(timeline_obj, "sourceNickName") or 
                          safe_get_value(app_info, "appName"))
             
             if share_title and "当前微信版本不支持展示该内容" not in share_title:
