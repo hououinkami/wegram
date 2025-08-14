@@ -320,6 +320,7 @@ async def process_moment_data(data):
                             input_media = InputMediaVideo(media=video_io, caption=caption)
                             media_list.append(input_media)
                         except Exception as e:
+                            caption_parts.append(f"<blockquote>[{locale.type(43)}: {finder_nickname}]</blockquote>")
                             logger.error(f"处理小视频失败: {video_url}, 错误: {e}")
                             continue
             
@@ -355,7 +356,7 @@ async def process_moment_data(data):
         full_caption = "\n".join(caption_parts) if caption_parts else ""
 
         # 10. 发送消息
-        chat_id = await _get_or_create_chat("wechat_moments", "モーメンツ", "")
+        chat_id = await _get_or_create_chat("wechat_moments", locale.common("moments"), "")
         if not chat_id:
             return False
             
@@ -364,7 +365,7 @@ async def process_moment_data(data):
         elif full_caption:
             await telegram_sender.send_text(chat_id, full_caption)
         else:
-            await telegram_sender.send_text(chat_id, "📱 朋友圈动态")
+            await telegram_sender.send_text(chat_id, f"<blockquote>{locale.common("moments")}</blockquote>")
 
         return True
         

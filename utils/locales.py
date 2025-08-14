@@ -32,6 +32,7 @@ class LocaleConfig:
                 'unknown': '不明'
             },
             'common': {
+                'moments': 'モーメンツ',
                 'online': '🟢 WeChatがオンラインしました',
                 'offline': '🔴 WeChatがオフラインしました',
                 'twice_login_success': '✅ 二次ログイン成功',
@@ -125,6 +126,7 @@ class LocaleConfig:
                 'unknown': '未知'
             },
             'common': {
+                'moments': '朋友圈',
                 'online': '🟢 WeChat已上线',
                 'offline': '🔴 WeChat已离线',
                 'twice_login_success': '✅ 二次登录成功',
