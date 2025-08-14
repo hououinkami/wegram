@@ -612,23 +612,11 @@ class HeartbeatMonitor:
         try:
             tg_user_id = get_user_id()
             down_minutes = int(down_time // 60)
-
-            try:
-                relogin = await wechat_login.twice_login(config.MY_WXID)
-                
-                if relogin.get('Message') == "登录成功":
-                    relogin_result = locale.common("twice_login_success")
-                else:
-                    relogin_result = locale.common("twice_login_fail")
-                    
-            except Exception as e:
-                relogin_result = locale.common('twice_login_fail')
             
             alert_message = f"⚠️ **WeChatサーバーに異常発生！**\n\n" \
                           f"🔴 サーバー状態: ダウン\n" \
                           f"⏱️ 異常継続時間: {down_minutes}分\n" \
-                          f"📝 最終正常時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n" \
-                          f"🔄 二次ログイン: {relogin_result}\n\n" \
+                          f"📝 最終正常時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n\n" \
                           f"サーバーの稼働状況をご確認ください！"
             
             await telegram_sender.send_text(tg_user_id, alert_message)
