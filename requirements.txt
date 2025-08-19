@@ -21,5 +21,9 @@ pilk==0.2.4
 # 消息队列
 aio-pika==9.5.5
 
+# JWT认证
+PyJWT
+cryptography
+
 # 语音转文字
 openai-whisper

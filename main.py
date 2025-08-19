@@ -106,8 +106,8 @@ class ServiceManager:
         elif config.WECHAT_MODE == "rabbitmq":
             wechat_services = ["wechat_rabbitmq"]
 
-        self.services_to_start = tele_services + wechat_services + ["wechat_moments", "wechat_status", "scheduled_pusher"]
-        self.async_services = tele_services + wechat_services + ["wechat_moments", "wechat_status", "scheduled_pusher"]
+        self.services_to_start = tele_services + wechat_services + ["wechat_moments", "wechat_status", "scheduled_pusher", "weather_pusher"]
+        self.async_services = tele_services + wechat_services + ["wechat_moments", "wechat_status", "scheduled_pusher", "weather_pusher"]
     
     def start_file_monitor(self):
         """启动文件监控"""

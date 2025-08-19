@@ -68,3 +68,9 @@ def _parse_blacklist_keywords():
 
 # 黑名单关键词列表
 BLACKLIST_KEYWORDS = _parse_blacklist_keywords()
+
+# 和风天气API
+QWEATHER_HOST = os.getenv("QWEATHER_HOST")
+QWEATHER_PRIVATE_KEY = os.getenv("QWEATHER_PRIVATE_KEY")
+QWEATHER_PROJECT_ID = os.getenv("QWEATHER_PROJECT_ID")
+QWEATHER_KEY_ID = os.getenv("QWEATHER_KEY_ID")
