@@ -106,21 +106,24 @@ class BotCommands:
             if not to_wxid:
                 await telegram_sender.send_text(chat_id, locale.command("no_binding"))
                 return
-            
+            contact_saved = await contact_manager.get_contact(to_wxid)
             if to_wxid.endswith("@openim"):
-                qw_contact = await contact_manager.get_contact(to_wxid)
-                user_info = wechat_contacts.UserInfo(name=qw_contact.name, avatar_url=qw_contact.avatar_url)
+                qw_contact = contact_saved
+                user_info = wechat_contacts.UserInfo(name=qw_contact.name, avatar_url="")
             else:
                 user_info = await wechat_contacts.get_user_info(to_wxid)
                 
                 # 更新映射文件
                 await contact_manager.update_contact_by_chatid(chat_id, {
                     "name": user_info.name,
-                    "avatarLink": user_info.avatar_url
+                    "avatarUrl": user_info.avatar_url
                 })
 
             # 更新TG群组
-            await wechat_contacts.update_info(chat_id, user_info.name, user_info.avatar_url)
+            name_to_use = user_info.name if contact_saved.name != user_info.name else None
+            avatar_to_use = user_info.avatar_url if contact_saved.avatar_url != user_info.avatar_url else None
+            
+            await wechat_contacts.update_info(chat_id, name_to_use, avatar_to_use)
             
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
@@ -584,7 +587,7 @@ class BotCommands:
                     "is_group": contact1.get('isGroup', False),
                     "is_receive": contact1.get('isReceive', True),
                     "wx_name": contact1.get('wxName', ''),
-                    "avatar_url": contact1.get('avatarLink', ''),
+                    "avatar_url": contact1.get('avatarUrl', ''),
                     'source_page': page,
                     'search_word': search_word
                 }

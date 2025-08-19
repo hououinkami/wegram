@@ -7,8 +7,10 @@ from dataclasses import dataclass, field
 
 import aiosqlite
 
+import config
 from api import wechat_contacts, telegram_sender
 from config import LOCALE as locale
+from api.wechat_api import wechat_api
 from utils.group_binding import create_group
 
 logger = logging.getLogger(__name__)
@@ -292,6 +294,13 @@ class ContactManager:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute("DELETE FROM contacts WHERE wxid = ?", (wxid,))
                 await db.commit()
+                
+                # 删除wx好友
+                payload = {
+                    "ToWxid": wxid,
+                    "Wxid": config.MY_WXID
+                }
+                await wechat_api("USER_DELETE", payload)
                 
                 if cursor.rowcount > 0:
                     logger.info(f"🗑️ 成功删除联系人: {wxid}")

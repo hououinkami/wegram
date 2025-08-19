@@ -35,6 +35,7 @@ class WeChatAPIPaths:
     USER_SEARCH = "/Friend/Search"
     USER_ADD = "/Friend/SendRequest"
     USER_REMARK = "/Friend/SetRemarks"
+    USER_DELETE = "/Friend/Delete"
     USER_MOMENT = "/FriendCircle/GetDetail"
     MY_MOMENT = "/FriendCircle/GetList"
     GET_MOMENT_VIDEO = "/FriendCircle/DownFriendCircleMedia"
