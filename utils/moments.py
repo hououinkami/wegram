@@ -365,7 +365,7 @@ async def process_moment_data(data):
         elif full_caption:
             await telegram_sender.send_text(chat_id, full_caption)
         else:
-            await telegram_sender.send_text(chat_id, f"<blockquote>{locale.common("moments")}</blockquote>")
+            await telegram_sender.send_text(chat_id, f'<blockquote>{locale.common("moments")}</blockquote>')
 
         return True
         
