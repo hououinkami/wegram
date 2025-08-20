@@ -21,7 +21,7 @@ class WeatherWarningService:
         """执行一次天气检查"""
         try:            
             # 调用预警函数
-            await weather.get_and_send_alert()
+            await weather.get_and_send_alert("101280601")
             
         except Exception as e:
             logger.error(f"执行天气检查时发生错误: {e}")
@@ -114,8 +114,7 @@ class WeatherWarningService:
         if not self.is_running:
             logger.warning("服务未在运行")
             return
-            
-        logger.info("正在停止天气预警服务...")
+
         self.is_running = False
         
         if self.task and not self.task.done():
@@ -125,7 +124,7 @@ class WeatherWarningService:
             except asyncio.CancelledError:
                 pass
         
-        logger.info("天气预警服务已停止")
+        logger.info("🔴 天气预警服务已停止")
 
 class WeatherServiceManager:
     """服务管理器，处理信号和优雅关闭"""

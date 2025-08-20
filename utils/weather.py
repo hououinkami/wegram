@@ -5,6 +5,7 @@ import random
 import sqlite3
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Dict, Optional, Any, Union
@@ -41,7 +42,6 @@ class ExponentialBackoff:
     
     def should_retry(self, status_code: int) -> bool:
         """判断是否应该重试"""
-        # 429 (Too Many Requests) 和 500 (Server Error) 可以重试
         return status_code in [429, 500] and self.attempt < self.max_retries
     
     def get_delay(self) -> float:
@@ -49,7 +49,6 @@ class ExponentialBackoff:
         if self.attempt == 0:
             delay = 0
         else:
-            # 指数退避: base_delay * (2 ^ attempt) + 随机抖动
             delay = min(
                 self.base_delay * (2 ** (self.attempt - 1)) + random.uniform(0, 1),
                 self.max_delay
@@ -83,7 +82,6 @@ async def generate_jwt():
 def parse_qweather_error(status_code: int, response_data: Union[Dict, str]) -> QWeatherError:
     """解析和风天气API错误响应"""
     if isinstance(response_data, str):
-        # 404等情况可能没有JSON响应体
         return QWeatherError(
             status_code=status_code,
             error_type="UNKNOWN",
@@ -101,7 +99,6 @@ def parse_qweather_error(status_code: int, response_data: Union[Dict, str]) -> Q
             invalid_params=error_info.get("invalidParams")
         )
     
-    # 兜底处理
     return QWeatherError(
         status_code=status_code,
         error_type="UNKNOWN",
@@ -116,51 +113,26 @@ async def qweather_api_request(
     method: str = "GET",
     timeout: int = 30,
     enable_retry: bool = True
-) -> Dict[str, Any]:
-    """
-    异步请求和风天气API，支持指数退避重试
+    ) -> Dict[str, Any]:
+    """异步请求和风天气API，支持指数退避重试"""
     
-    Args:
-        path: API路径，如 "/v7/weather/now"
-        path_params: 路径参数，用于替换路径中的占位符
-        query_params: 查询参数
-        method: HTTP方法，默认GET
-        timeout: 请求超时时间（秒）
-        enable_retry: 是否启用重试机制
-    
-    Returns:
-        API响应的JSON数据
-    
-    Raises:
-        QWeatherError: 和风天气API错误
-        asyncio.TimeoutError: 请求超时
-        aiohttp.ClientError: 网络请求错误
-    """
-    
-    # 处理路径参数
     if path_params:
         for key, value in path_params.items():
             path = path.replace(f"{{{key}}}", str(value))
     
-    # 构建完整URL
     url = f"{config.QWEATHER_HOST.rstrip('/')}{path}"
-    
-    # 初始化退避算法
     backoff = ExponentialBackoff() if enable_retry else None
     
     while True:
         try:
-            # 生成JWT token
             jwt_token = await generate_jwt()
             
-            # 设置请求头
             headers = {
                 'Authorization': f'Bearer {jwt_token}',
                 'Content-Type': 'application/json',
                 'User-Agent': 'QWeather-API-Client/1.0'
             }
             
-            # 设置超时
             timeout_config = aiohttp.ClientTimeout(total=timeout)
             
             async with aiohttp.ClientSession(timeout=timeout_config) as session:
@@ -171,13 +143,11 @@ async def qweather_api_request(
                     params=query_params
                 ) as response:
                     
-                    # 成功响应
                     if response.status == 200:
                         if backoff:
                             backoff.reset()
                         return await response.json()
                     
-                    # 解析错误响应
                     try:
                         if response.content_type == 'application/problem+json':
                             error_data = await response.json()
@@ -188,31 +158,25 @@ async def qweather_api_request(
                     
                     qweather_error = parse_qweather_error(response.status, error_data)
                     
-                    # 处理不同类型的错误
                     if response.status == 400:
-                        # 客户端错误，不重试
                         logger.error(f"客户端错误: {qweather_error}")
                         if qweather_error.invalid_params:
                             logger.error(f"无效参数: {qweather_error.invalid_params}")
                         raise qweather_error
                     
                     elif response.status == 401:
-                        # 认证失败，不重试
                         logger.error(f"认证失败: {qweather_error}")
                         raise qweather_error
                     
                     elif response.status == 403:
-                        # 权限相关错误，大部分不重试
                         logger.error(f"权限错误: {qweather_error}")
                         raise qweather_error
                     
                     elif response.status == 404:
-                        # 资源不存在，不重试
                         logger.error(f"资源不存在: {qweather_error}")
                         raise qweather_error
                     
                     elif response.status == 429:
-                        # 请求过多，可以重试
                         logger.warning(f"请求过多: {qweather_error}")
                         if backoff and backoff.should_retry(response.status):
                             delay = backoff.get_delay()
@@ -223,7 +187,6 @@ async def qweather_api_request(
                             raise qweather_error
                     
                     elif response.status >= 500:
-                        # 服务器错误，可以重试
                         logger.warning(f"服务器错误: {qweather_error}")
                         if backoff and backoff.should_retry(response.status):
                             delay = backoff.get_delay()
@@ -234,14 +197,13 @@ async def qweather_api_request(
                             raise qweather_error
                     
                     else:
-                        # 其他错误
                         logger.error(f"未知错误: {qweather_error}")
                         raise qweather_error
                         
         except asyncio.TimeoutError:
             error_msg = f"请求超时: {url}"
             logger.error(error_msg)
-            if backoff and backoff.should_retry(408):  # 408 Request Timeout
+            if backoff and backoff.should_retry(408):
                 delay = backoff.get_delay()
                 logger.info(f"超时重试，将在 {delay:.2f} 秒后重试 (第 {backoff.attempt} 次)")
                 await asyncio.sleep(delay)
@@ -252,7 +214,7 @@ async def qweather_api_request(
         except aiohttp.ClientError as e:
             error_msg = f"网络请求错误: {str(e)}"
             logger.error(error_msg)
-            if backoff and backoff.should_retry(500):  # 当作服务器错误处理
+            if backoff and backoff.should_retry(500):
                 delay = backoff.get_delay()
                 logger.info(f"网络错误重试，将在 {delay:.2f} 秒后重试 (第 {backoff.attempt} 次)")
                 await asyncio.sleep(delay)
@@ -282,29 +244,8 @@ async def get_air_quality(location: str, lang: str = "zh") -> Dict[str, Any]:
         query_params={"location": location, "lang": lang}
     )
 
-async def get_air_quality(location: str, lang: str = "zh") -> Dict[str, Any]:
-    """获取预警"""
-    return await qweather_api_request(
-        path="/v7/air/now",
-        query_params={"location": location, "lang": lang}
-    )
-
 async def get_hourly_forecast(location: str, hours: int = 24, lang: str = "zh") -> Dict[str, Any]:
-    """
-    获取逐小时天气预报
-    
-    Args:
-        location: 地点，支持LocationID、经纬度、城市名等
-        hours: 预报小时数，支持 24, 72, 168 小时
-        lang: 语言，默认中文
-    
-    Returns:
-        逐小时天气预报数据
-    
-    Raises:
-        QWeatherError: 当hours参数不在支持范围内时
-    """
-    # 验证小时数参数
+    """获取逐小时天气预报"""
     valid_hours = [24, 72, 168]
     if hours not in valid_hours:
         raise QWeatherError(
@@ -321,42 +262,19 @@ async def get_hourly_forecast(location: str, hours: int = 24, lang: str = "zh") 
     )
 
 async def get_weather_warning(location: str = "101280601", lang: str = "zh") -> Dict[str, Any]:
-    """
-    获取天气预警
-    
-    Args:
-        location: 地点，支持LocationID、经纬度、城市名等
-        lang: 语言，默认中文
-    
-    Returns:
-        天气预警数据
-    """
+    """获取天气预警"""
     return await qweather_api_request(
         path="/v7/warning/now",
         query_params={"location": location, "lang": lang}
     )
 
 async def get_weather_warning_list(range_type: str = "cn", lang: str = "zh") -> Dict[str, Any]:
-    """
-    获取天气预警列表
-    
-    Args:
-        range_type: 查询范围
-            - "cn": 中国
-            - "hk": 香港
-            - "mo": 澳门
-            - "tw": 台湾
-        lang: 语言，默认中文
-    
-    Returns:
-        天气预警列表数据
-    """
+    """获取天气预警列表"""
     return await qweather_api_request(
         path="/v7/warning/list",
         query_params={"range": range_type, "lang": lang}
     )
 
-# 组合查询函数
 async def get_complete_weather_info(
     location: str, 
     include_hourly: bool = True,
@@ -364,21 +282,8 @@ async def get_complete_weather_info(
     forecast_days: int = 3,
     hourly_hours: int = 24,
     lang: str = "zh"
-) -> Dict[str, Any]:
-    """
-    获取完整的天气信息（实时+预报+逐小时+预警）
-    
-    Args:
-        location: 地点
-        include_hourly: 是否包含逐小时预报
-        include_warning: 是否包含天气预警
-        forecast_days: 预报天数
-        hourly_hours: 逐小时预报小时数
-        lang: 语言
-    
-    Returns:
-        包含所有天气信息的字典
-    """
+    ) -> Dict[str, Any]:
+    """获取完整的天气信息"""
     tasks = []
     task_names = []
     
@@ -414,11 +319,115 @@ async def get_complete_weather_info(
     
     return weather_info
 
-# 预警监控
-async def get_shenzhen_alert():
-    """深圳天气预警获取和处理函数"""
+# ==================== 预警监控系统 ====================
+
+@dataclass
+class WeatherWarning:
+    """天气预警数据类"""
+    id: str
+    sender: str
+    pub_time: str
+    title: str
+    start_time: str
+    end_time: str
+    status: str
+    level: str
+    severity: str
+    severity_color: str
+    type: str
+    type_name: str
+    urgency: str
+    certainty: str
+    text: str
+    related: str = ""
+
+class WeatherWarningDB:
+    """天气预警数据库管理类"""
     
-    # 预警颜色等级映射
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.init_database()
+    
+    @contextmanager
+    def get_connection(self):
+        """数据库连接上下文管理器"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+    
+    def init_database(self):
+        """初始化数据库表"""
+        # 确保数据库目录存在
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            logger.info(f"创建数据库目录: {db_dir}")
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS weather_warnings (
+                    id TEXT PRIMARY KEY,
+                    sender TEXT,
+                    pub_time TEXT,
+                    title TEXT,
+                    start_time TEXT,
+                    end_time TEXT,
+                    status TEXT,
+                    level TEXT,
+                    severity TEXT,
+                    severity_color TEXT,
+                    type TEXT,
+                    type_name TEXT,
+                    urgency TEXT,
+                    certainty TEXT,
+                    text TEXT,
+                    related TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.commit()
+    
+    def get_warning(self, warning_id: str) -> Optional[WeatherWarning]:
+        """获取已存在的预警信息"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM weather_warnings WHERE id = ?', (warning_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                return WeatherWarning(
+                    id=row[0], sender=row[1], pub_time=row[2], title=row[3],
+                    start_time=row[4], end_time=row[5], status=row[6], level=row[7],
+                    severity=row[8], severity_color=row[9], type=row[10], 
+                    type_name=row[11], urgency=row[12], certainty=row[13],
+                    text=row[14], related=row[15] or ""
+                )
+        return None
+    
+    def save_warning(self, warning: WeatherWarning):
+        """保存或更新预警信息"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO weather_warnings 
+                (id, sender, pub_time, title, start_time, end_time, status, level, 
+                severity, severity_color, type, type_name, urgency, certainty, text, related, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ''', (
+                warning.id, warning.sender, warning.pub_time, warning.title,
+                warning.start_time, warning.end_time, warning.status, warning.level,
+                warning.severity, warning.severity_color, warning.type, warning.type_name,
+                warning.urgency, warning.certainty, warning.text, warning.related
+            ))
+            conn.commit()
+
+class WeatherAlertFormatter:
+    """预警消息格式化器"""
+    
     COLOR_MAP = {
         'White': '白色',
         'Blue': '蓝色', 
@@ -427,227 +436,161 @@ async def get_shenzhen_alert():
         'Black': '黑色'
     }
     
-    # 预警状态映射
     STATUS_MAP = {
         'Active': '激活',
         'Update': '更新', 
         'Cancel': '取消'
     }
     
-    # 数据库路径
-    weather_db_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-        "database", 
-        "weather.db"
-    )
-    def init_database():
-        """初始化数据库表"""
-        conn = sqlite3.connect(weather_db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS weather_warnings (
-                id TEXT PRIMARY KEY,
-                sender TEXT,
-                pub_time TEXT,
-                title TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                status TEXT,
-                level TEXT,
-                severity TEXT,
-                severity_color TEXT,
-                type TEXT,
-                type_name TEXT,
-                urgency TEXT,
-                certainty TEXT,
-                text TEXT,
-                related TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-    
-    def get_existing_warning(warning_id: str) -> Optional[Dict]:
-        """获取已存在的预警信息"""
-        conn = sqlite3.connect(weather_db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM weather_warnings WHERE id = ?', (warning_id,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            columns = [description[0] for description in cursor.description]
-            return dict(zip(columns, row))
-        return None
-    
-    def save_warning(warning: Dict):
-        """保存或更新预警信息到数据库"""
-        conn = sqlite3.connect(weather_db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO weather_warnings 
-            (id, sender, pub_time, title, start_time, end_time, status, level, 
-            severity, severity_color, type, type_name, urgency, certainty, text, related, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (
-            warning.get('id'),
-            warning.get('sender'),
-            warning.get('pubTime'),
-            warning.get('title'),
-            warning.get('startTime'),
-            warning.get('endTime'),
-            warning.get('status'),
-            warning.get('level'),
-            warning.get('severity'),
-            warning.get('severityColor'),
-            warning.get('type'),
-            warning.get('typeName'),
-            warning.get('urgency'),
-            warning.get('certainty'),
-            warning.get('text'),
-            warning.get('related')
-        ))
-        
-        conn.commit()
-        conn.close()
-    
-    def format_warning_message(warning: Dict) -> str:
+    @classmethod
+    def format_message(cls, warning: WeatherWarning) -> str:
         """格式化预警消息"""
-        # 转换颜色等级
-        color_cn = COLOR_MAP.get(warning.get('severityColor', ''), warning.get('severityColor', ''))
+        color_cn = cls.COLOR_MAP.get(warning.severity_color, warning.severity_color)
+        emoji = cls._get_emoji(warning.status, color_cn)
+        formatted_time = cls._format_time(warning.pub_time)
         
-        # 根据状态选择合适的emoji
-        status = warning.get('status', '')
-        if status == 'Cancel':
-            emoji = '🟢'  # 绿色表示取消
-        elif color_cn == '黑色':
-            emoji = '⚫️'
-        elif color_cn == '红色':
-            emoji = '🔴'  # 红色表示高级别预警
-        elif color_cn == '黄色':
-            emoji = '🟡'  # 黄色表示中级别预警
-        elif color_cn == '蓝色':
-            emoji = '🔵'  # 蓝色表示低级别预警
-        elif color_cn == '白色':
-            emoji = '⚪️'  # 蓝色表示低级别预警
-        else:
-            emoji = '⚠️'   # 默认警告符号
-        
-        # 格式化发布时间
-        pub_time = warning.get('pubTime', '')
-        if pub_time:
-            try:
-                # 解析ISO格式时间并转换为可读格式
-                dt = datetime.fromisoformat(pub_time.replace('+08:00', ''))
-                formatted_time = dt.strftime('%Y年%m月%d日 %H:%M')
-            except:
-                formatted_time = pub_time
-        else:
-            formatted_time = ''
-        
-        # 构建消息
-        type_name = warning.get('typeName', '气象')
-        text = warning.get('text', '')
-        
-        # 如果是取消状态，添加特殊标识
-        if status == 'Cancel':
+        if warning.status == 'Cancel':
             message = f"""
-{emoji} {type_name}{color_cn}预警 [已取消]
-发布时间: {formatted_time}
-{text}
-"""
+    {emoji} {warning.type_name}{color_cn}预警 [已取消]
+    发布时间: {formatted_time}
+    {warning.text}
+    """
         else:
             message = f"""
-{emoji} {type_name}{color_cn}预警
-发布时间: {formatted_time}
-{text}
-"""
-        
+    {emoji} {warning.type_name}{color_cn}预警
+    发布时间: {formatted_time}
+    {warning.text}
+    """
         return message.strip()
     
-    def should_notify(warning: Dict, existing: Optional[Dict]) -> bool:
+    @staticmethod
+    def _get_emoji(status: str, color: str) -> str:
+        """根据状态和颜色获取emoji"""
+        if status == 'Cancel':
+            return '🟢'
+        
+        emoji_map = {
+            '黑色': '⚫️',
+            '红色': '🔴',
+            '黄色': '🟡',
+            '蓝色': '🔵',
+            '白色': '⚪️'
+        }
+        return emoji_map.get(color, '⚠️')
+    
+    @staticmethod
+    def _format_time(pub_time: str) -> str:
+        """格式化时间"""
+        if not pub_time:
+            return ''
+        
+        try:
+            dt = datetime.fromisoformat(pub_time.replace('+08:00', ''))
+            return dt.strftime('%Y年%m月%d日 %H:%M')
+        except:
+            return pub_time
+
+class WeatherAlertMonitor:
+    """天气预警监控器"""
+    
+    def __init__(self, location_id: str = "101280601", db_path: str = None):
+        self.location_id = location_id
+        
+        if db_path is None:
+            db_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                "database", 
+                "weather.db"
+            )
+        
+        self.db = WeatherWarningDB(db_path)
+        self.formatter = WeatherAlertFormatter()
+    
+    def _should_notify(self, warning: WeatherWarning, existing: Optional[WeatherWarning]) -> bool:
         """判断是否需要通知"""
-        # 新预警
         if not existing:
             return True
         
-        # 状态有变化（更新或取消）
-        current_status = warning.get('status', '')
-        existing_status = existing.get('status', '')
-        
-        if current_status != existing_status:
+        if warning.status != existing.status:
             return True
         
-        # 如果是Update状态，检查内容是否有变化
-        if current_status == 'Update':
-            # 检查关键字段是否有变化
+        if warning.status == 'Update':
             key_fields = ['title', 'text', 'severity_color', 'level']
             for field in key_fields:
-                if warning.get(field) != existing.get(field):
+                if getattr(warning, field) != getattr(existing, field):
                     return True
         
         return False
     
-    try:
-        # 初始化数据库
-        init_database()
-        
-        # 获取预警数据
-        warning_bj = await get_weather_warning("101280601")
-        warnings = warning_bj.get('warning', [])
-        
-        notification_messages = []
-        
-        if warnings:
-            logger.info(f"获取到 {len(warnings)} 条预警信息")
+    def _parse_warning_data(self, warning_data: Dict) -> WeatherWarning:
+        """解析API返回的预警数据"""
+        return WeatherWarning(
+            id=warning_data.get('id', ''),
+            sender=warning_data.get('sender', ''),
+            pub_time=warning_data.get('pubTime', ''),
+            title=warning_data.get('title', ''),
+            start_time=warning_data.get('startTime', ''),
+            end_time=warning_data.get('endTime', ''),
+            status=warning_data.get('status', ''),
+            level=warning_data.get('level', ''),
+            severity=warning_data.get('severity', ''),
+            severity_color=warning_data.get('severityColor', ''),
+            type=warning_data.get('type', ''),
+            type_name=warning_data.get('typeName', ''),
+            urgency=warning_data.get('urgency', ''),
+            certainty=warning_data.get('certainty', ''),
+            text=warning_data.get('text', ''),
+            related=warning_data.get('related', '')
+        )
+    
+    async def check_alerts(self) -> List[str]:
+        """检查预警并返回需要通知的消息列表"""
+        try:
+            warning_data = await get_weather_warning(self.location_id)
+            warnings = warning_data.get('warning', [])
             
-            for warning in warnings:
-                warning_id = warning.get('id')
-                if not warning_id:
-                    continue
+            notification_messages = []
+            
+            if warnings:
+                logger.info(f"获取到 {len(warnings)} 条预警信息")
                 
-                # 获取已存在的预警信息
-                existing_warning = get_existing_warning(warning_id)
-                
-                # 判断是否需要通知
-                if should_notify(warning, existing_warning):
-                    # 生成通知消息
-                    message = format_warning_message(warning)
-                    notification_messages.append(message)
+                for warning_dict in warnings:
+                    warning = self._parse_warning_data(warning_dict)
                     
-                    # 打印日志
-                    if existing_warning:
-                        logger.info(f"预警更新: {warning.get('title', 'Unknown')}")
-                    else:
-                        logger.info(f"新预警: {warning.get('title', 'Unknown')}")
-                
-                # 保存到数据库
-                save_warning(warning)
-        
-        else:
-            logger.info("当前没有预警信息")
-        
-        return notification_messages
-        
-    except QWeatherError as e:
-        logger.error(f"和风天气API错误: {e}")
-        if hasattr(e, 'invalid_params') and e.invalid_params:
-            logger.error(f"无效参数: {e.invalid_params}")
-        return []
-    except Exception as e:
-        logger.error(f"其他错误: {e}")
-        traceback.print_exc()
-        return []
+                    if not warning.id:
+                        continue
+                    
+                    existing_warning = self.db.get_warning(warning.id)
+                    
+                    if self._should_notify(warning, existing_warning):
+                        message = self.formatter.format_message(warning)
+                        notification_messages.append(message)
+                        
+                        if existing_warning:
+                            logger.info(f"预警更新: {warning.title}")
+                        else:
+                            logger.info(f"新预警: {warning.title}")
+                    
+                    self.db.save_warning(warning)
+            
+            else:
+                logger.info("当前没有预警信息")
+            
+            return notification_messages
+            
+        except QWeatherError as e:
+            logger.error(f"和风天气API错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"其他错误: {e}")
+            traceback.print_exc()
+            return []
 
-async def get_and_send_alert():
-    """发送预警信息"""
-    messages = await get_shenzhen_alert()
+# ==================== 外部调用函数 ====================
+async def get_and_send_alert(location: str = "101280601"):
+    """获取并发送预警信息"""
+    monitor = WeatherAlertMonitor(location)
+    messages = await monitor.check_alerts()
     
     if messages:
         for message in messages:
