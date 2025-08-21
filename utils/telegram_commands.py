@@ -1,8 +1,10 @@
+import base64
 import logging
 import os
 from datetime import datetime, timedelta
 from enum import Enum
 from functools import wraps
+from io import BytesIO
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
@@ -366,6 +368,33 @@ class BotCommands:
             
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+    
+    @staticmethod
+    @delete_command_message
+    @command_scope(CommandScope.BOT_ONLY)
+    async def qrcode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """个人二维码"""
+        chat_id = update.effective_chat.id
+
+        try:
+            payload = {
+                "Style": 0,
+                "Wxid": config.MY_WXID
+            }
+            
+            qr_data = await wechat_api("USER_QRCODE", payload)
+            qr_buffer = qr_data.get("Data", {}).get("qrcode", {}).get("buffer")
+
+            # 解码base64
+            image_data = base64.b64decode(qr_buffer)
+            
+            # 转换为BytesIO对象
+            qr_io = BytesIO(image_data)
+
+            await telegram_sender.send_photo(chat_id, qr_io)
+
+        except Exception as e:
+            await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
 
     @staticmethod
     @delete_command_message
@@ -683,6 +712,7 @@ class BotCommands:
             ["add", locale.command("add")],
             ["remark", locale.command("remark")],
             ["quit", locale.command("quit")],
+            ["qrcode", locale.command("qrcode")],
             ["rm", locale.command("revoke")],
             ["relogin", locale.command("relogin")],
             ["timer", locale.command("timer")]
@@ -700,6 +730,7 @@ class BotCommands:
             "add": cls.add_command,
             "remark": cls.remark_command,
             "quit": cls.quit_command,
+            "qrcode": cls.qrcode_command,
             "rm": cls.revoke_command,
             "relogin": cls.relogin_command,
             "timer": cls.timer_command
