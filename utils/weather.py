@@ -15,6 +15,7 @@ import jwt
 
 import config
 from api.telegram_sender import telegram_sender
+from api.wechat_api import wechat_api
 from service.telethon_client import get_user_id
 
 logger = logging.getLogger(__name__)
@@ -424,6 +425,44 @@ class WeatherWarningDB:
                 warning.urgency, warning.certainty, warning.text, warning.related
             ))
             conn.commit()
+    
+    def get_cancelled_warnings(self, current_warning_ids: set) -> List[WeatherWarning]:
+        """获取已取消的预警（在数据库中但不在当前预警列表中）"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            if current_warning_ids:
+                # 构建占位符字符串
+                placeholders = ','.join(['?' for _ in current_warning_ids])
+                cursor.execute(
+                    f'SELECT * FROM weather_warnings WHERE id NOT IN ({placeholders})',
+                    list(current_warning_ids)
+                )
+            else:
+                # 如果当前没有预警，返回所有数据库中的预警
+                cursor.execute('SELECT * FROM weather_warnings')
+            
+            rows = cursor.fetchall()
+            cancelled_warnings = []
+            
+            for row in rows:
+                cancelled_warnings.append(WeatherWarning(
+                    id=row[0], sender=row[1], pub_time=row[2], title=row[3],
+                    start_time=row[4], end_time=row[5], status=row[6], level=row[7],
+                    severity=row[8], severity_color=row[9], type=row[10], 
+                    type_name=row[11], urgency=row[12], certainty=row[13],
+                    text=row[14], related=row[15] or ""
+                ))
+            
+            return cancelled_warnings
+
+    def delete_warning(self, warning_id: str):
+        """删除指定ID的预警记录"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM weather_warnings WHERE id = ?', (warning_id,))
+            conn.commit()
+            logger.info(f"已删除预警记录: {warning_id}")
 
 class WeatherAlertFormatter:
     """预警消息格式化器"""
@@ -448,20 +487,32 @@ class WeatherAlertFormatter:
         color_cn = cls.COLOR_MAP.get(warning.severity_color, warning.severity_color)
         emoji = cls._get_emoji(warning.status, color_cn)
         formatted_time = cls._format_time(warning.pub_time)
+        current_time = datetime.now().strftime('%Y年%m月%d日 %H:%M')
         
         if warning.status == 'Cancel':
             message = f"""
-    {emoji} {warning.type_name}{color_cn}预警 [已取消]
-    发布时间: {formatted_time}
-    {warning.text}
-    """
+{emoji} {warning.type_name}{color_cn}预警 [已取消]
+取消时间: {current_time}
+"""
+            message_html = f"""
+<blockquote>{emoji} {warning.type_name}{color_cn}预警 [已取消]</blockquote>
+<blockquote>取消时间: {current_time}</blockquote>
+"""
         else:
             message = f"""
-    {emoji} {warning.type_name}{color_cn}预警
-    发布时间: {formatted_time}
-    {warning.text}
-    """
-        return message.strip()
+{emoji} {warning.type_name}{color_cn}预警
+发布时间: {formatted_time}
+{warning.text}
+"""
+            message_html = f"""
+<blockquote>{emoji} {warning.type_name}{color_cn}预警</blockquote>
+<blockquote>发布时间: {formatted_time}</blockquote>
+{warning.text}
+"""
+        return {
+            "text": message.strip(),
+            "html": message_html.strip()
+        }
     
     @staticmethod
     def _get_emoji(status: str, color: str) -> str:
@@ -551,6 +602,9 @@ class WeatherAlertMonitor:
             
             notification_messages = []
             
+            # 获取当前API返回的所有预警ID
+            current_warning_ids = set()
+            
             if warnings:
                 logger.info(f"获取到 {len(warnings)} 条预警信息")
                 
@@ -560,6 +614,7 @@ class WeatherAlertMonitor:
                     if not warning.id:
                         continue
                     
+                    current_warning_ids.add(warning.id)
                     existing_warning = self.db.get_warning(warning.id)
                     
                     if self._should_notify(warning, existing_warning):
@@ -575,6 +630,20 @@ class WeatherAlertMonitor:
             
             else:
                 logger.info("当前没有预警信息")
+            
+            # 检查数据库中已取消的预警（在数据库中但不在当前API返回中）
+            cancelled_warnings = self.db.get_cancelled_warnings(current_warning_ids)
+            
+            for cancelled_warning in cancelled_warnings:
+                # 生成取消消息
+                cancelled_warning.status = 'Cancel'  # 修改状态为取消
+                cancel_message = self.formatter.format_message(cancelled_warning)
+                notification_messages.append(cancel_message)
+                
+                logger.info(f"预警已取消: {cancelled_warning.title}")
+                
+                # 从数据库中删除已取消的预警
+                self.db.delete_warning(cancelled_warning.id)
             
             return notification_messages
             
@@ -594,4 +663,12 @@ async def get_and_send_alert(location: str = "101280601"):
     
     if messages:
         for message in messages:
-            await telegram_sender.send_text(get_user_id(), message)
+            await telegram_sender.send_text(get_user_id(), message["html"])
+            payload = {
+                "At": "",
+                "Content": message["text"],
+                "ToWxid": "ocean446",
+                "Type": 1,
+                "Wxid": config.MY_WXID
+            }
+            await wechat_api("SEND_TEXT", payload)
