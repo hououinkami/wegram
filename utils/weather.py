@@ -606,7 +606,7 @@ class WeatherAlertMonitor:
             current_warning_ids = set()
             
             if warnings:
-                logger.info(f"获取到 {len(warnings)} 条预警信息")
+                logger.debug(f"获取到 {len(warnings)} 条预警信息")
                 
                 for warning_dict in warnings:
                     warning = self._parse_warning_data(warning_dict)
