@@ -33,34 +33,18 @@ class Contact:
     @classmethod
     def from_dict(cls, data: dict) -> 'Contact':
         """从字典创建Contact对象"""
-        # 处理字段名映射
-        field_mapping = {
-            'wxId': 'wxid',
-            'chatId': 'chat_id',
-            'isGroup': 'is_group',
-            'isReceive': 'is_receive',
-            'avatarUrl': 'avatar_url',
-            'wxName': 'wx_name'
-        }
-        
-        # 转换字段名
-        converted_data = {}
-        for key, value in data.items():
-            new_key = field_mapping.get(key, key)
-            converted_data[new_key] = value
-        
-        return cls(**converted_data)
+        return cls(**data)
     
     def to_dict(self) -> dict:
-        """转换为字典格式（用于兼容性）"""
+        """转换为字典格式"""
         return {
-            'wxId': self.wxid,
+            'wxid': self.wxid,
             'name': self.name,
-            'chatId': self.chat_id,
-            'isGroup': self.is_group,
-            'isReceive': self.is_receive,
-            'avatarUrl': self.avatar_url,
-            'wxName': self.wx_name
+            'chat_id': self.chat_id,
+            'is_group': self.is_group,
+            'is_receive': self.is_receive,
+            'avatar_url': self.avatar_url,
+            'wx_name': self.wx_name
         }
 
 class ContactManager:
@@ -351,27 +335,23 @@ class ContactManager:
             update_values = []
             
             for key, value in updates.items():
-                # 处理字段名映射
-                db_field = {
-                    'isReceive': 'is_receive',
-                    'isGroup': 'is_group',
-                    'chatId': 'chat_id',
-                    'avatarUrl': 'avatar_url',
-                    'wxName': 'wx_name'
-                }.get(key, key)
+                # 验证字段是否存在
+                if not hasattr(contact, key):
+                    logger.warning(f"⚠️ 无效字段: {key}")
+                    continue
                 
                 # 特殊处理切换布尔值
-                if value == "toggle" and db_field in ["is_receive", "is_group"]:
-                    current_value = getattr(contact, db_field)
+                if value == "toggle" and key in ["is_receive", "is_group"]:
+                    current_value = getattr(contact, key)
                     value = not current_value
-                elif db_field in ["is_receive", "is_group"] and isinstance(value, str):
+                elif key in ["is_receive", "is_group"] and isinstance(value, str):
                     value = value.lower() in ['true', '1', 'yes', 'on']
                 
                 # SQLite 布尔值转整数
-                if db_field in ["is_receive", "is_group"]:
+                if key in ["is_receive", "is_group"]:
                     value = int(value)
                 
-                update_fields.append(f"{db_field} = ?")
+                update_fields.append(f"{key} = ?")
                 update_values.append(value)
             
             if not update_fields:
@@ -415,27 +395,23 @@ class ContactManager:
             update_values = []
             
             for key, value in updates.items():
-                # 处理字段名映射
-                db_field = {
-                    'isReceive': 'is_receive',
-                    'isGroup': 'is_group',
-                    'chatId': 'chat_id',
-                    'avatarUrl': 'avatar_url',
-                    'wxName': 'wx_name'
-                }.get(key, key)
+                # 验证字段是否存在
+                if not hasattr(contact, key):
+                    logger.warning(f"⚠️ 无效字段: {key}")
+                    continue
                 
                 # 特殊处理切换布尔值
-                if value == "toggle" and db_field in ["is_receive", "is_group"]:
-                    current_value = getattr(contact, db_field)
+                if value == "toggle" and key in ["is_receive", "is_group"]:
+                    current_value = getattr(contact, key)
                     value = not current_value
-                elif db_field in ["is_receive", "is_group"] and isinstance(value, str):
+                elif key in ["is_receive", "is_group"] and isinstance(value, str):
                     value = value.lower() in ['true', '1', 'yes', 'on']
                 
                 # SQLite 布尔值转整数
-                if db_field in ["is_receive", "is_group"]:
+                if key in ["is_receive", "is_group"]:
                     value = int(value)
                 
-                update_fields.append(f"{db_field} = ?")
+                update_fields.append(f"{key} = ?")
                 update_values.append(value)
             
             if not update_fields:

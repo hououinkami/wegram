@@ -68,7 +68,7 @@ async def process_telethon_update(event: NewMessage.Event) -> None:
                 # 更新映射文件
                 await contact_manager.update_contact_by_chatid(chat_id, {
                     "name": user_info.name,
-                    "avatarLink": user_info.avatar_url
+                    "avatar_url": user_info.avatar_url
                 })
                 return
             
@@ -88,7 +88,7 @@ async def process_telethon_update(event: NewMessage.Event) -> None:
             
             # 是否接受信息
             if message_text.startswith("/message"):
-                await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
+                await contact_manager.update_contact_by_chatid(chat_id, {"is_receive": "toggle"})
                 contact_now = await contact_manager.get_contact_by_chatid(chat_id)
                 if contact_now["isReceive"]:
                     await telegram_sender.send_text(chat_id, locale.command("receive_on"))

@@ -111,20 +111,23 @@ class BotCommands:
             contact_saved = await contact_manager.get_contact(to_wxid)
             if to_wxid.endswith("@openim"):
                 qw_contact = contact_saved
-                user_info = wechat_contacts.UserInfo(name=qw_contact.name, avatar_url="")
+                user_info = wechat_contacts.UserInfo(name=qw_contact.name, avatar_url=None)
+
+                name_to_use = user_info.name
+                avatar_to_use = user_info.avatar_url
             else:
                 user_info = await wechat_contacts.get_user_info(to_wxid)
                 
                 # 更新映射文件
                 await contact_manager.update_contact_by_chatid(chat_id, {
                     "name": user_info.name,
-                    "avatarUrl": user_info.avatar_url
+                    "avatar_url": user_info.avatar_url
                 })
 
+                name_to_use = user_info.name if contact_saved.name != user_info.name else None
+                avatar_to_use = user_info.avatar_url if contact_saved.avatar_url != user_info.avatar_url else None
+                
             # 更新TG群组
-            name_to_use = user_info.name if contact_saved.name != user_info.name else None
-            avatar_to_use = user_info.avatar_url if contact_saved.avatar_url != user_info.avatar_url else None
-            
             await wechat_contacts.update_info(chat_id, name_to_use, avatar_to_use)
             
         except Exception as e:
@@ -143,7 +146,7 @@ class BotCommands:
                 await telegram_sender.send_text(chat_id, locale.command("no_binding"))
                 return
             
-            await contact_manager.update_contact_by_chatid(chat_id, {"isReceive": "toggle"})
+            await contact_manager.update_contact_by_chatid(chat_id, {"is_receive": "toggle"})
             contact_now = await contact_manager.get_contact_by_chatid(chat_id)
             
             if contact_now and contact_now.is_receive:
@@ -173,7 +176,7 @@ class BotCommands:
             if args and args[0].lower() == "del":   # 直接删除
                 unbind_result = await contact_manager.delete_contact(to_wxid)
             else:   # 解绑但不删除
-                unbind_result = await contact_manager.update_contact_by_chatid(chat_id, {"chatId": -9999999999})
+                unbind_result = await contact_manager.update_contact_by_chatid(chat_id, {"chat_id": -9999999999})
 
             if unbind_result:
                 await telegram_sender.send_text(chat_id, locale.command("unbind_successed"))
@@ -610,13 +613,13 @@ class BotCommands:
                 contact1_receive = contact_manager.get_contact_receive_icon(contact1_obj)
                 
                 contact1_data = {
-                    "wxid": contact1.get('wxId', ''),
+                    "wxid": contact1.get('wxid', ''),
                     "name": contact1.get('name', ''),
-                    "chat_id": contact1.get('chatId', ''),
-                    "is_group": contact1.get('isGroup', False),
-                    "is_receive": contact1.get('isReceive', True),
-                    "wx_name": contact1.get('wxName', ''),
-                    "avatar_url": contact1.get('avatarUrl', ''),
+                    "chat_id": contact1.get('chat_id', ''),
+                    "is_group": contact1.get('is_group', False),
+                    "is_receive": contact1.get('is_receive', True),
+                    "wx_name": contact1.get('wx_name', ''),
+                    "avatar_url": contact1.get('avatar_url', ''),
                     'source_page': page,
                     'search_word': search_word
                 }
@@ -638,13 +641,13 @@ class BotCommands:
                     contact2_receive = contact_manager.get_contact_receive_icon(contact2_obj)
                     
                     contact2_data = {
-                        "wxid": contact2.get('wxId', ''),
+                        "wxid": contact2.get('wxid', ''),
                         "name": contact2.get('name', ''),
-                        "chat_id": contact2.get('chatId', ''),
-                        "is_group": contact2.get('isGroup', False),
-                        "is_receive": contact2.get('isReceive', True),
-                        "wx_name": contact2.get('wxName', ''),
-                        "avatar_url": contact2.get('avatarLink', ''),
+                        "chat_id": contact2.get('chat_id', ''),
+                        "is_group": contact2.get('is_group', False),
+                        "is_receive": contact2.get('is_receive', True),
+                        "wx_name": contact2.get('wx_name', ''),
+                        "avatar_url": contact2.get('avatar_url', ''),
                         'source_page': page,
                         'search_word': search_word
                     }
@@ -680,10 +683,10 @@ class BotCommands:
                 keyboard.append(pagination_row)
             
             # 构建消息文本
-            offical_count = len([c for c in contacts if c.get('wxId', '').startswith('gh_')])
-            friends_count = len([c for c in contacts if not c.get('isGroup', False)])
-            groups_count = len([c for c in contacts if c.get('isGroup', False)])
-            active_count = len([c for c in contacts if c.get('isReceive', True)])
+            offical_count = len([c for c in contacts if c.get('wxid', '').startswith('gh_')])
+            friends_count = len([c for c in contacts if not c.get('is_group', False)])
+            groups_count = len([c for c in contacts if c.get('is_group', False)])
+            active_count = len([c for c in contacts if c.get('is_receive', True)])
             
             message_text = f"""📋 **{locale.command('contact_list')}** (第 {page + 1}/{total_pages} {locale.command('page')})
 

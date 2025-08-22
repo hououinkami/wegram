@@ -506,7 +506,7 @@ async def handle_group_unbind(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
             
         chat_id = contact.chat_id
-        result = await contact_manager.update_contact_by_chatid(chat_id, {"chatId": -9999999999})
+        result = await contact_manager.update_contact_by_chatid(chat_id, {"chat_id": -9999999999})
         
         if result:
             # 简单替换：直接查找包含特定文本的按钮并替换
@@ -558,7 +558,7 @@ async def handle_toggle_receive(update: Update, context: ContextTypes.DEFAULT_TY
             return
         
         # 切换接收状态
-        await contact_manager.update_contact(wxid, {"isReceive": "toggle"})
+        await contact_manager.update_contact(wxid, {"is_receive": "toggle"})
         
         # 获取更新后的状态
         updated_contact = await contact_manager.get_contact(wxid)
