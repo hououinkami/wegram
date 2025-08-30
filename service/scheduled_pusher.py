@@ -46,7 +46,7 @@ async def main():
             avatar_url = user_info.avatar_url
             xml_text = f"""<appmsg><title></title><des></des><type>19</type><url></url><appattach><cdnthumbaeskey /><aeskey /></appattach><recorditem><![CDATA[<recordinfo><info></info><datalist count="1"><dataitem datatype="1" dataid=""><srcMsgLocalid></srcMsgLocalid><sourcetime>{time_now}</sourcetime><fromnewmsgid></fromnewmsgid><srcMsgCreateTime></srcMsgCreateTime><datadesc>{news['text']}</datadesc><dataitemsource><hashusername></hashusername></dataitemsource><sourcename>{contact_name}</sourcename><sourceheadurl>{avatar_url}</sourceheadurl></dataitem></datalist><desc>{news['text']}</desc><fromscene>2</fromscene></recordinfo>]]></recorditem></appmsg>"""
             payload = {
-                "ToWxid": "ocean446",
+                "ToWxid": "49925190240@chatroom",
                 "Type": 49,
                 "Wxid": config.MY_WXID,
                 "Xml": xml_text

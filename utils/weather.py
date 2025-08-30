@@ -469,6 +469,7 @@ class WeatherAlertFormatter:
     
     COLOR_MAP = {
         'White': '白色',
+        'Gray': '白色',
         'Blue': '蓝色', 
         'Yellow': '黄色',
         'Red': '红色',
@@ -629,7 +630,7 @@ class WeatherAlertMonitor:
                     self.db.save_warning(warning)
             
             else:
-                logger.info("当前没有预警信息")
+                logger.debug("当前没有预警信息")
             
             # 检查数据库中已取消的预警（在数据库中但不在当前API返回中）
             cancelled_warnings = self.db.get_cancelled_warnings(current_warning_ids)
@@ -667,7 +668,7 @@ async def get_and_send_alert(location: str = "101280601"):
             payload = {
                 "At": "",
                 "Content": message["text"],
-                "ToWxid": "ocean446",
+                "ToWxid": "49925190240@chatroom",
                 "Type": 1,
                 "Wxid": config.MY_WXID
             }
