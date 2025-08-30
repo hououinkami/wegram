@@ -48,7 +48,8 @@ class LocaleConfig:
                 'transfer_in': 'を受信',
                 'chat_account': 'チャット',
                 'group_account': 'グループ',
-                'offical_account': '公式アカ'
+                'offical_account': '公式アカ',
+                'group_announcememt': 'グループ通知'
             },
             'command': {
                 'update': '連絡先を更新',
@@ -69,6 +70,7 @@ class LocaleConfig:
                 'receive_no': '非受信',
                 'group_binding': '🔗 バインド',
                 'group_unbind': '🔗 バインド解除',
+                'edit_remark': '📝 名前を編集',
                 'delete_contact': '🗑️ 連絡先を削除',
                 'back': '🔙 戻る',
                 'ok': '✅ 確認',
@@ -143,7 +145,8 @@ class LocaleConfig:
                 'transfer_in': '',
                 'chat_account': '私聊',
                 'group_account': '群聊',
-                'offical_account': '公众号'
+                'offical_account': '公众号',
+                'group_announcememt': '群通知'
             },
             'command': {
                 'update': '更新联系人',
@@ -164,6 +167,7 @@ class LocaleConfig:
                 'receive_no': '不接收',
                 'group_binding': '🔗 绑定',
                 'group_unbind': '🔗 解绑',
+                'edit_remark': '📝 编辑名称',
                 'delete_contact': '🗑️ 删除联系人',
                 'back': '🔙 返回',
                 'ok': '✅ 确认',

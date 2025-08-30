@@ -29,7 +29,7 @@ from utils.telegram_to_wechat import get_telethon_msg_id
 logger = logging.getLogger(__name__)
 
 tg_user_id = get_user_id()
-black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74, 'paymsg']
+black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74, 'paymsg', 87]
 
 async def is_blacklisted(contact_name: str, sender_name: str, content: str, push_content: str = "") -> bool:
     """
@@ -117,7 +117,8 @@ def _get_message_handlers():
         "pat": _forward_pat,
         "ilinkvoip": _forward_voip,
         "VoIPBubbleMsg": _forward_voip,
-        "sysmsgtemplate": _forward_sysmsg
+        "sysmsgtemplate": _forward_sysmsg,
+        "mmchatroombarannouncememt": _forward_announcememt
     }
 
 async def _forward_text(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: str, **kwargs) -> dict:
@@ -128,7 +129,7 @@ async def _forward_text(chat_id: int, msg_type: int, from_wxid: str, sender_name
 
         # 更新群信息
         if from_wxid.endswith("@chatroom"):
-            await group_manager.update_group_member(from_wxid)
+            await group_manager.update_group_members(from_wxid)
 
     send_text = f"{sender_name}\n{content}"
     
@@ -499,6 +500,16 @@ async def _forward_sysmsg(chat_id: int, msg_type: int, from_wxid: str, sender_na
     except (KeyError, TypeError) as e:
         raise Exception("加入群聊信息提取失败")
 
+async def _forward_announcememt(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理群通知消息"""
+    try:
+        announcememt_content = content.get('sysmsg', {}).get('mmchatroombarannouncememt', {}).get('content', "")
+        
+        send_text = f"<blockquote>{locale.common('group_announcememt')}</blockquote>\n<blockquote>{announcememt_content}</blockquote>"
+
+        return await telegram_sender.send_text(chat_id, send_text)
+    except (KeyError, TypeError) as e:
+        raise Exception("群通知信息提取失败")
 async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
     """获取联系人显示信息，处理特殊情况"""
     # 先读取已保存的联系人
