@@ -41,7 +41,7 @@ async def main():
             # await wechat_api("SEND_TEXT", payload)
 
             time_now = datetime.now().strftime("%Y-%-m-%-d %H:%M")
-            user_info = await wechat_contacts.get_user_info("ocean446")
+            user_info = await wechat_contacts.get_user_info(config.MY_WXID)
             contact_name = user_info.name
             avatar_url = user_info.avatar_url
             xml_text = f"""<appmsg><title></title><des></des><type>19</type><url></url><appattach><cdnthumbaeskey /><aeskey /></appattach><recorditem><![CDATA[<recordinfo><info></info><datalist count="1"><dataitem datatype="1" dataid=""><srcMsgLocalid></srcMsgLocalid><sourcetime>{time_now}</sourcetime><fromnewmsgid></fromnewmsgid><srcMsgCreateTime></srcMsgCreateTime><datadesc>{news['text']}</datadesc><dataitemsource><hashusername></hashusername></dataitemsource><sourcename>{contact_name}</sourcename><sourceheadurl>{avatar_url}</sourceheadurl></dataitem></datalist><desc>{news['text']}</desc><fromscene>2</fromscene></recordinfo>]]></recorditem></appmsg>"""
