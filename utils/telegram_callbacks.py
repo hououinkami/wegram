@@ -9,6 +9,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from api import wechat_contacts
 from config import LOCALE as locale
 from utils import tools
 from api.telegram_sender import telegram_sender
@@ -405,12 +406,17 @@ async def handle_contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE
             keyboard.append(first_row)
         
         # 第二行：删除按钮
-        keyboard.append([
+        second_row = [
+            InlineKeyboardButton(
+                f"{locale.command('update_contact')}", 
+                callback_data=create_callback_data("update_contact", data)
+            ),
             InlineKeyboardButton(
                 f"{locale.command('delete_contact')}",
                 callback_data=create_callback_data("delete_contact", data)
             )
-        ])
+        ]
+        keyboard.append(second_row)
 
         # 第三行： 返回按钮
         keyboard.append([
@@ -601,6 +607,37 @@ async def handle_toggle_receive(update: Update, context: ContextTypes.DEFAULT_TY
         
     except Exception as e:
         logger.error(f"切换接收状态失败: {e}")
+        await query.answer(f"❌ 操作失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register_with_data("update_contact")
+async def handle_update_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理更新联系人回调"""
+    query = update.callback_query
+    
+    try:
+        wxid = data.get('wxid')
+        
+        if not wxid:
+            await query.answer("❌ 联系人ID无效", show_alert=True)
+            return
+        
+        if not wxid.endswith("@openim"):
+            user_info = await wechat_contacts.get_user_info(wxid)
+            
+            # 更新映射文件
+            await contact_manager.update_contact(wxid, {
+                "name": user_info.name,
+                "avatar_url": user_info.avatar_url
+            })
+
+            # 更新显示
+            now_contact = await contact_manager.get_contact(wxid)
+            await query.edit_message_text(f"{contact_manager.get_contact_type_icon(now_contact)} {user_info.name}", reply_markup=query.message.reply_markup)
+        
+            await query.answer("✅ 成功更新联系人", show_alert=True)
+        
+    except Exception as e:
+        logger.error(f"显示删除确认失败: {e}")
         await query.answer(f"❌ 操作失败: {str(e)}", show_alert=True)
 
 @CallbackRegistry.register_with_data("delete_contact")
