@@ -8,12 +8,40 @@ from dataclasses import dataclass, field
 import aiosqlite
 
 import config
-from api import wechat_contacts, telegram_sender
+from api import wechat_contacts
 from config import LOCALE as locale
+from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api
 from utils.group_binding import create_group
 
 logger = logging.getLogger(__name__)
+
+def single_execution(func):
+    """确保函数同时只能执行一次的装饰器"""
+    def wrapper(self, *args, **kwargs):
+        if not hasattr(self, f'_{func.__name__}_lock'):
+            setattr(self, f'_{func.__name__}_lock', asyncio.Lock())
+            setattr(self, f'_{func.__name__}_running', False)
+        
+        lock = getattr(self, f'_{func.__name__}_lock')
+        is_running = getattr(self, f'_{func.__name__}_running')
+        
+        async def async_wrapper():
+            if is_running:
+                if args:  # 假设第一个参数是chat_id
+                    logger.debug("⚠️ 操作正在进行中，请等待完成")
+                    # await telegram_sender.send_text(args[0], "⚠️ 操作正在进行中，请等待完成")
+                return
+            
+            async with lock:
+                try:
+                    setattr(self, f'_{func.__name__}_running', True)
+                    return await func(self, *args, **kwargs)
+                finally:
+                    setattr(self, f'_{func.__name__}_running', False)
+        
+        return async_wrapper()
+    return wrapper
 
 @dataclass
 class Contact:
@@ -622,6 +650,7 @@ class ContactManager:
             logger.error(f"❌ 创建群组失败: {e}")
             return {'success': False, 'error': str(e)}
 
+    @single_execution
     async def update_contacts_and_sync_to_db(self, chat_id: int):
         """获取联系人列表并同步到数据库"""
         try:
@@ -741,14 +770,14 @@ class ContactManager:
             
             # 发送统计信息
             stats_msg = f"""
-    📊 **同步统计**
-    • 总好友数: {len(all_contacts)}
-    • 新增联系人: {new_saved_count}
-    • 更新联系人: {updated_saved_count}
-    • 处理批次: {total_batches}
-    • 当前联系人总数: {total_contacts}
+📊 **更新結果**
+• 友人: {len(all_contacts)}
+• 新規: {new_saved_count}
+• 更新: {updated_saved_count}
+• 全部: {total_contacts}
             """
             logger.info(stats_msg)
+            await telegram_sender.send_text(chat_id, stats_msg)
             
         except Exception as e:
             error_msg = f"❌ 更新联系人失败: {str(e)}"
