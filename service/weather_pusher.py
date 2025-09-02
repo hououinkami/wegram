@@ -5,6 +5,7 @@ import sys
 from datetime import datetime
 from typing import Optional
 
+import config
 from utils import weather
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ class WeatherWarningService:
         """执行一次天气检查"""
         try:            
             # 调用预警函数
-            await weather.get_and_send_alert("101280601")
+            await weather.get_and_send_alert(config.LOCATION_ID)
             
         except Exception as e:
             logger.error(f"执行天气检查时发生错误: {e}")

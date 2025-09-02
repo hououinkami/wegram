@@ -262,7 +262,14 @@ async def get_hourly_forecast(location: str, hours: int = 24, lang: str = "zh") 
         query_params={"location": location, "lang": lang}
     )
 
-async def get_weather_warning(location: str = "101280601", lang: str = "zh") -> Dict[str, Any]:
+async def get_minutely_rain(location: str, lang: str = "zh") -> Dict[str, Any]:
+    """获取分钟级降水预报"""    
+    return await qweather_api_request(
+        path=f"/v7/minutely/5m",
+        query_params={"location": location, "lang": lang}
+    )
+
+async def get_weather_warning(location: str = config.LOCATION_ID, lang: str = "zh") -> Dict[str, Any]:
     """获取天气预警"""
     return await qweather_api_request(
         path="/v7/warning/now",
@@ -545,7 +552,7 @@ class WeatherAlertFormatter:
 class WeatherAlertMonitor:
     """天气预警监控器"""
     
-    def __init__(self, location_id: str = "101280601", db_path: str = None):
+    def __init__(self, location_id: str = config.LOCATION_ID, db_path: str = None):
         self.location_id = location_id
         
         if db_path is None:
@@ -657,7 +664,7 @@ class WeatherAlertMonitor:
             return []
 
 # ==================== 外部调用函数 ====================
-async def get_and_send_alert(location: str = "101280601"):
+async def get_and_send_alert(location: str = config.LOCATION_ID):
     """获取并发送预警信息"""
     monitor = WeatherAlertMonitor(location)
     messages = await monitor.check_alerts()
@@ -668,7 +675,7 @@ async def get_and_send_alert(location: str = "101280601"):
             payload = {
                 "At": "",
                 "Content": message["text"],
-                "ToWxid": "49925190240@chatroom",
+                "ToWxid": config.PUSH_WXID,
                 "Type": 1,
                 "Wxid": config.MY_WXID
             }
