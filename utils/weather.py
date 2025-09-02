@@ -680,3 +680,164 @@ async def get_and_send_alert(location: str = config.LOCATION_ID):
                 "Wxid": config.MY_WXID
             }
             await wechat_api("SEND_TEXT", payload)
+
+async def get_and_send_rain(location: str = config.LOCATION_ID):
+    """获取并发送分钟级降水信息"""
+    try:
+        # 获取分钟级降水数据
+        result = await get_minutely_rain(location)
+        logger.warning(result)
+        # 解析降水数据
+        minutely_data = result.get('minutely', [])
+        summary = result.get('summary', '')
+        
+        if not minutely_data:
+            no_data_msg = "📊 暂无分钟级降水预报数据"
+            logger.info(no_data_msg)
+            return
+        
+        # 格式化消息
+        message = _format_rain_message(minutely_data, summary)
+        
+        # 发送到Telegram
+        await telegram_sender.send_text(get_user_id(), message["html"])
+        
+        # 发送到微信
+        payload = {
+            "At": "",
+            "Content": message["text"],
+            "ToWxid": config.PUSH_WXID,
+            "Type": 1,
+            "Wxid": config.MY_WXID
+        }
+        await wechat_api("SEND_TEXT", payload)
+        
+    except QWeatherError as e:
+        error_msg = f"❌ 和风天气API错误: {e}"
+        logger.error(error_msg)
+        await telegram_sender.send_text(get_user_id(), error_msg)
+    except Exception as e:
+        error_msg = f"❌ 获取降水信息失败: {str(e)}"
+        logger.error(error_msg)
+        traceback.print_exc()
+        await telegram_sender.send_text(get_user_id(), error_msg)
+
+def _format_rain_message(minutely_data: List[Dict], summary: str) -> Dict[str, str]:
+    """格式化分钟级降水消息"""
+    current_time = datetime.now().strftime('%Y年%m月%d日 %H:%M')
+    
+    # 解析降水强度
+    rain_levels = []
+    significant_changes = []
+    
+    for i, data in enumerate(minutely_data):
+        time_str = data.get('fxTime', '')
+        precip = float(data.get('precip', 0))
+        type_desc = data.get('type', '')
+        
+        # 格式化时间（只显示时分）
+        try:
+            dt = datetime.fromisoformat(time_str.replace('+08:00', ''))
+            time_display = dt.strftime('%H:%M')
+        except:
+            time_display = time_str
+        
+        # 降水强度等级
+        if precip == 0:
+            level = "无降水"
+            emoji = "☀️"
+        elif precip <= 0.25:
+            level = "微量降水"
+            emoji = "🌦️"
+        elif precip <= 2.5:
+            level = "小雨"
+            emoji = "🌦️"
+        elif precip <= 10:
+            level = "中雨"
+            emoji = "🌧️"
+        elif precip <= 25:
+            level = "大雨"
+            emoji = "🌧️🌧️"
+        else:
+            level = "暴雨"
+            emoji = "🌧️🌧️🌧️"
+        
+        rain_levels.append({
+            'time': time_display,
+            'precip': precip,
+            'level': level,
+            'emoji': emoji,
+            'type': type_desc
+        })
+        
+        # 检测显著变化（降水开始、结束或强度显著变化）
+        if i == 0:
+            if precip > 0:
+                significant_changes.append(f"{time_display} {emoji} {level}开始 ({precip}mm/H)")
+        else:
+            prev_precip = float(minutely_data[i-1].get('precip', 0))
+            
+            # 降水开始
+            if prev_precip == 0 and precip > 0:
+                significant_changes.append(f"{time_display} {emoji} {level}开始 ({precip}mm/H)")
+            # 降水结束
+            elif prev_precip > 0 and precip == 0:
+                significant_changes.append(f"{time_display} ☀️ 降水结束")
+            # 强度显著变化（变化超过2.5mm/H）
+            elif abs(precip - prev_precip) >= 2.5:
+                if precip > prev_precip:
+                    significant_changes.append(f"{time_display} {emoji} 降水增强至{level} ({precip}mm/H)")
+                else:
+                    significant_changes.append(f"{time_display} {emoji} 降水减弱至{level} ({precip}mm/H)")
+    
+    # 构建消息
+    text_message = f"""🌧️ 降水预报"""
+    html_message = f"""<blockquote>🌧️ 降水预报</blockquote>"""
+    
+    # 添加概况
+    if summary and not summary.endswith("无降水"):
+        text_message += f"概况: {summary}\n\n"
+        html_message += f"<b>概况:</b> {summary}\n\n"
+    
+    # 添加显著变化
+    if significant_changes:
+        text_message += "⚡ 降水变化:\n"
+        html_message += "<b>⚡ 降水变化:</b>\n"
+        
+        for change in significant_changes[:5]:  # 最多显示5个重要变化
+            text_message += f"• {change}\n"
+            html_message += f"• {change}\n"
+        
+        text_message += "\n"
+        html_message += "\n"
+    
+    '''
+    # 添加详细预报（每10分钟显示一次）
+    text_message += "📊 详细预报:\n"
+    html_message += "<b>📊 详细预报:</b>\n"
+    
+    for i, rain_info in enumerate(rain_levels):
+        if i % 2 == 0:  # 每10分钟显示一次（假设数据是5分钟间隔）
+            precip_str = f"{rain_info['precip']}mm/H" if rain_info['precip'] > 0 else ""
+            text_message += f"{rain_info['time']} {rain_info['emoji']} {rain_info['level']} {precip_str}\n"
+            html_message += f"{rain_info['time']} {rain_info['emoji']} {rain_info['level']} {precip_str}\n"
+    
+    # 添加统计信息
+    total_precip = sum(float(data.get('precip', 0)) for data in minutely_data)
+    max_precip = max(float(data.get('precip', 0)) for data in minutely_data)
+    
+    if total_precip > 0:
+        text_message += f"\n📈 统计信息:\n"
+        text_message += f"• 最大降水强度: {max_precip}mm/H\n"
+        text_message += f"• 预计总降水量: {total_precip/12:.1f}mm (未来1小时)"  # 5分钟数据，12个点约1小时
+        
+        html_message += f"\n<b>📈 统计信息:</b>\n"
+        html_message += f"• 最大降水强度: {max_precip}mm/H\n"
+        html_message += f"• 预计总降水量: {total_precip/12:.1f}mm (未来1小时)"
+    '''
+    
+    return {
+        "text": text_message.strip(),
+        "html": html_message.strip()
+    }
+

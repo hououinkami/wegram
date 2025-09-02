@@ -21,8 +21,11 @@ class WeatherWarningService:
     async def run_weather_check(self):
         """执行一次天气检查"""
         try:            
-            # 调用预警函数
+            # 预警检查
             await weather.get_and_send_alert(config.LOCATION_ID)
+            
+            # 降水检查
+            await weather.get_and_send_rain(config.LOCATION)
             
         except Exception as e:
             logger.error(f"执行天气检查时发生错误: {e}")
@@ -55,7 +58,7 @@ class WeatherWarningService:
     
     async def service_loop(self):
         """服务主循环"""
-        logger.info("☀️ 天气预警服务启动，每小时的00、10、20、30、40、50分检查一次")
+        logger.info("☀️ 天气服务启动")
         
         while self.is_running:
             try:
