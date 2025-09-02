@@ -40,6 +40,7 @@ RABBITMQ_URL = os.getenv("RABBITMQ_URL")
 if not RABBITMQ_URL:
     raise ValueError("RABBITMQ_URL environment variable is required")
 WX_CHECK_INTERVAL = int(os.getenv("WX_CHECK_INTERVAL", "300"))
+PUSH_WXID = "49925190240@chatroom"
 
 LOCALE = Locale(LANG)
 
