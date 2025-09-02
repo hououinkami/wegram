@@ -698,6 +698,9 @@ async def get_and_send_rain(location: str = config.LOCATION_ID):
         
         # 格式化消息
         message = _format_rain_message(minutely_data, summary)
+
+        if not message:
+            return
         
         # 发送到Telegram
         await telegram_sender.send_text(get_user_id(), message["html"])
@@ -747,20 +750,23 @@ def _format_rain_message(minutely_data: List[Dict], summary: str) -> Dict[str, s
             level = "无降水"
             emoji = "☀️"
         elif precip <= 0.25:
-            level = "微量降水"
-            emoji = "🌦️"
-        elif precip <= 2.5:
             level = "小雨"
             emoji = "🌦️"
-        elif precip <= 10:
+        elif precip <= 1.5:
             level = "中雨"
             emoji = "🌧️"
-        elif precip <= 25:
+        elif precip <= 3:
             level = "大雨"
             emoji = "🌧️🌧️"
-        else:
+        elif precip <= 6:
             level = "暴雨"
             emoji = "🌧️🌧️🌧️"
+        elif precip <= 15:
+            level = "大暴雨"
+            emoji = "⛈️⛈️"
+        else:
+            level = "特大暴雨"
+            emoji = "⛈️⛈️⛈️"
         
         rain_levels.append({
             'time': time_display,
@@ -773,32 +779,36 @@ def _format_rain_message(minutely_data: List[Dict], summary: str) -> Dict[str, s
         # 检测显著变化（降水开始、结束或强度显著变化）
         if i == 0:
             if precip > 0:
-                significant_changes.append(f"{time_display} {emoji} {level}开始 ({precip}mm/H)")
+                significant_changes.append(f"{time_display} {emoji} {level}开始 ({precip}mm/5min)")
         else:
             prev_precip = float(minutely_data[i-1].get('precip', 0))
             
             # 降水开始
             if prev_precip == 0 and precip > 0:
-                significant_changes.append(f"{time_display} {emoji} {level}开始 ({precip}mm/H)")
+                significant_changes.append(f"{time_display} {emoji} {level}开始 ({precip}mm/5min)")
             # 降水结束
             elif prev_precip > 0 and precip == 0:
                 significant_changes.append(f"{time_display} ☀️ 降水结束")
-            # 强度显著变化（变化超过2.5mm/H）
+            # 强度显著变化（变化超过2.5mm/5min）
             elif abs(precip - prev_precip) >= 2.5:
                 if precip > prev_precip:
-                    significant_changes.append(f"{time_display} {emoji} 降水增强至{level} ({precip}mm/H)")
+                    significant_changes.append(f"{time_display} {emoji} 降水增强至{level} ({precip}mm/5min)")
                 else:
-                    significant_changes.append(f"{time_display} {emoji} 降水减弱至{level} ({precip}mm/H)")
+                    significant_changes.append(f"{time_display} {emoji} 降水减弱至{level} ({precip}mm/5min)")
+    
+    if summary.endswith("无降水") and not significant_changes:
+        return None
     
     # 构建消息
     text_message = f"""🌧️ 降水预报"""
     html_message = f"""<blockquote>🌧️ 降水预报</blockquote>"""
     
     # 添加概况
-    if summary and not summary.endswith("无降水"):
-        text_message += f"概况: {summary}\n\n"
-        html_message += f"<b>概况:</b> {summary}\n\n"
+    if summary:
+        text_message += f"{summary}\n\n"
+        html_message += f"{summary}\n\n"
     
+    '''
     # 添加显著变化
     if significant_changes:
         text_message += "⚡ 降水变化:\n"
@@ -810,6 +820,7 @@ def _format_rain_message(minutely_data: List[Dict], summary: str) -> Dict[str, s
         
         text_message += "\n"
         html_message += "\n"
+    '''
     
     '''
     # 添加详细预报（每10分钟显示一次）
@@ -818,7 +829,7 @@ def _format_rain_message(minutely_data: List[Dict], summary: str) -> Dict[str, s
     
     for i, rain_info in enumerate(rain_levels):
         if i % 2 == 0:  # 每10分钟显示一次（假设数据是5分钟间隔）
-            precip_str = f"{rain_info['precip']}mm/H" if rain_info['precip'] > 0 else ""
+            precip_str = f"{rain_info['precip']}mm/5min" if rain_info['precip'] > 0 else ""
             text_message += f"{rain_info['time']} {rain_info['emoji']} {rain_info['level']} {precip_str}\n"
             html_message += f"{rain_info['time']} {rain_info['emoji']} {rain_info['level']} {precip_str}\n"
     
@@ -828,11 +839,11 @@ def _format_rain_message(minutely_data: List[Dict], summary: str) -> Dict[str, s
     
     if total_precip > 0:
         text_message += f"\n📈 统计信息:\n"
-        text_message += f"• 最大降水强度: {max_precip}mm/H\n"
+        text_message += f"• 最大降水强度: {max_precip}mm/5min\n"
         text_message += f"• 预计总降水量: {total_precip/12:.1f}mm (未来1小时)"  # 5分钟数据，12个点约1小时
         
         html_message += f"\n<b>📈 统计信息:</b>\n"
-        html_message += f"• 最大降水强度: {max_precip}mm/H\n"
+        html_message += f"• 最大降水强度: {max_precip}mm/5min\n"
         html_message += f"• 预计总降水量: {total_precip/12:.1f}mm (未来1小时)"
     '''
     
