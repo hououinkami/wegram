@@ -246,7 +246,7 @@ class BotCommands:
         if len(args) > 0:
             user_id = args[0]
             add_message = args[1] if len(args) > 1 else ""
-            add_scene = scene_list.get(args[2], 0) if len(args) > 2 else 0
+            add_scene = scene_list.get(args[2], 0) if len(args) > 2 else 15
         else:
             await telegram_sender.send_text(chat_id, locale.command("no_phone"))
             return
