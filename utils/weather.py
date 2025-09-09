@@ -469,18 +469,17 @@ class WeatherWarningDB:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM weather_warnings WHERE id = ?', (warning_id,))
             conn.commit()
-            logger.info(f"已删除预警记录: {warning_id}")
+            logger.debug(f"已删除预警记录: {warning_id}")
 
 class WeatherAlertFormatter:
     """预警消息格式化器"""
     
     COLOR_MAP = {
-        'White': '白色',
         'Gray': '白色',
         'Blue': '蓝色', 
         'Yellow': '黄色',
-        'Red': '红色',
-        'Black': '黑色'
+        'Orange': '橙色',
+        'Red': '红色'
     }
     
     STATUS_MAP = {
@@ -497,7 +496,14 @@ class WeatherAlertFormatter:
         formatted_time = cls._format_time(warning.pub_time)
         current_time = datetime.now().strftime('%Y年%m月%d日 %H:%M')
         
+        # 判断是否需要停课提醒
+        needs_class_suspension = cls._needs_class_suspension_reminder(warning, color_cn)
+        
         if warning.status == 'Cancel':
+            # 如果不是停课相关预警的取消，返回None表示不需要发送
+            if not needs_class_suspension:
+                return None
+                
             message = f"""
 {emoji} {warning.type_name}{color_cn}预警 [已取消]
 取消时间: {current_time}
@@ -509,18 +515,36 @@ class WeatherAlertFormatter:
         else:
             message = f"""
 {emoji} {warning.type_name}{color_cn}预警
-发布时间: {formatted_time}
-{warning.text}
-"""
+发布时间: {formatted_time}"""
             message_html = f"""
 <blockquote>{emoji} {warning.type_name}{color_cn}预警</blockquote>
-<blockquote>发布时间: {formatted_time}</blockquote>
-{warning.text}
-"""
+<blockquote>发布时间: {formatted_time}</blockquote>"""
+            
+            # 如果需要停课提醒，添加到消息中
+            if needs_class_suspension:
+                message += "\n🥳 停课啦！"
+                message_html += "\n<blockquote>🥳 停课啦！</blockquote>"
+                
+            message += f"\n{warning.text}"
+            message_html += f"\n{warning.text}"
+                
         return {
             "text": message.strip(),
             "html": message_html.strip()
         }
+    
+    @staticmethod
+    def _needs_class_suspension_reminder(warning: WeatherWarning, color_cn: str) -> bool:
+        """判断是否需要停课提醒"""
+        # 黄色、红色台风预警
+        if warning.type_name == '台风' and color_cn in ['黄色', '橙色', '红色']:
+            return True
+        
+        # 红色暴雨预警
+        if warning.type_name == '暴雨' and color_cn == '红色':
+            return True
+            
+        return False
     
     @staticmethod
     def _get_emoji(status: str, color: str) -> str:
@@ -529,8 +553,8 @@ class WeatherAlertFormatter:
             return '🟢'
         
         emoji_map = {
-            '黑色': '⚫️',
             '红色': '🔴',
+            '橙色': '🟠',
             '黄色': '🟡',
             '蓝色': '🔵',
             '白色': '⚪️'
@@ -630,9 +654,9 @@ class WeatherAlertMonitor:
                         notification_messages.append(message)
                         
                         if existing_warning:
-                            logger.info(f"预警更新: {warning.title}")
+                            logger.debug(f"预警更新: {warning.title}")
                         else:
-                            logger.info(f"新预警: {warning.title}")
+                            logger.debug(f"新预警: {warning.title}")
                     
                     self.db.save_warning(warning)
             
@@ -646,9 +670,11 @@ class WeatherAlertMonitor:
                 # 生成取消消息
                 cancelled_warning.status = 'Cancel'  # 修改状态为取消
                 cancel_message = self.formatter.format_message(cancelled_warning)
-                notification_messages.append(cancel_message)
                 
-                logger.info(f"预警已取消: {cancelled_warning.title}")
+                if cancel_message is not None:
+                    notification_messages.append(cancel_message)
+                
+                logger.debug(f"预警已取消: {cancelled_warning.title}")
                 
                 # 从数据库中删除已取消的预警
                 self.db.delete_warning(cancelled_warning.id)
@@ -718,12 +744,10 @@ async def get_and_send_rain(location: str = config.LOCATION_ID):
     except QWeatherError as e:
         error_msg = f"❌ 和风天气API错误: {e}"
         logger.error(error_msg)
-        await telegram_sender.send_text(get_user_id(), error_msg)
     except Exception as e:
         error_msg = f"❌ 获取降水信息失败: {str(e)}"
         logger.error(error_msg)
         traceback.print_exc()
-        await telegram_sender.send_text(get_user_id(), error_msg)
 
 def _format_rain_message(minutely_data: List[Dict], summary: str) -> Dict[str, str]:
     """格式化分钟级降水消息"""
