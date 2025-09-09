@@ -25,7 +25,7 @@ class WeatherWarningService:
             await weather.get_and_send_alert(config.LOCATION_ID)
             
             # 降水检查
-            await weather.get_and_send_rain(config.LOCATION)
+            # await weather.get_and_send_rain(config.LOCATION)
             
         except Exception as e:
             logger.error(f"执行天气检查时发生错误: {e}")
