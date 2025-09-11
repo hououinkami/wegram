@@ -630,26 +630,33 @@ class ContactManager:
     async def create_group_for_contact_async(self, wxid: str, contact_name: str, description: str = "", avatar_url: str = None) -> Optional[Dict]:
         """异步方式创建群组"""        
         try:
-            # 删除占位信息
-            contact = await self.get_contact(wxid)
-            if contact and contact.chat_id == -9999999999:
-                await self.delete_contact(wxid)
-
-            # 使用线程池执行同步版本，避免事件循环冲突
+            # 先创建群组
             result = await create_group(wxid, contact_name, description, avatar_url)
             
-            # 创建成功后，如果有新的映射关系，保存到数据库
+            # 创建成功后处理数据库
             if result.get('success') and result.get('chat_id'):
-                await self.save_chat_wxid_mapping(
-                    wxid, contact_name, result['chat_id'], avatar_url
-                )
+                new_chat_id = result['chat_id']
+                
+                # 检查是否存在联系人记录
+                contact = await self.get_contact(wxid)
+                
+                if contact:
+                    # 如果存在记录，更新chat_id
+                    success = await self.update_contact(wxid, {'chat_id': new_chat_id})
+                    if not success:
+                        logger.error(f"❌ 更新联系人 {wxid} 的chat_id失败")
+                else:
+                    # 如果不存在记录，创建新的映射关系
+                    await self.save_chat_wxid_mapping(
+                        wxid, contact_name, new_chat_id, avatar_url
+                    )
             
             return result
             
         except Exception as e:
             logger.error(f"❌ 创建群组失败: {e}")
             return {'success': False, 'error': str(e)}
-
+    
     @single_execution
     async def update_contacts_and_sync_to_db(self, chat_id: int):
         """获取联系人列表并同步到数据库"""
