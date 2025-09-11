@@ -367,7 +367,6 @@ class BotCommands:
 
             # 更新联系人文件
             await contact_manager.delete_contact(to_wxid)
-            await group_manager.delete_group(to_wxid)
             
         except Exception as e:
             await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")

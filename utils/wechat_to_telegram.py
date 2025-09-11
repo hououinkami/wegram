@@ -796,10 +796,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
     
     async def _handle_deleted_group(from_wxid: str, handler_params: dict, content: dict, push_content: str, msg_type: Any) -> Optional[dict]:
         """处理被删除的群组"""
-        try:
-            # 删除联系人信息
-            await contact_manager.delete_contact(from_wxid)
-            
+        try:            
             # 重新获取或创建聊天群组
             contact_name, avatar_url = await _get_contact_info(from_wxid, content, push_content)
             
