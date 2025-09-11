@@ -70,7 +70,7 @@ def setup_logging():
     
     # 设置第三方库日志级别
     for logger_name in ['telethon', 'telethon.client.updates', 'telethon.network', 'telegram.ext.Updater', 'httpx', 'aiohttp']:
-        logging.getLogger(logger_name).setLevel(logging.WARNING)
+        logging.getLogger(logger_name).setLevel(logging.ERROR)
     
     return logging.getLogger()
 

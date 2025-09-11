@@ -67,8 +67,9 @@ class AsyncFileProcessor:
                 )
                 
             else:
-                # 下载失败，更新为错误消息
-                logger.warning(f"⚠️ 文件下载失败")
+                if filename != "企微图片":
+                    # 下载失败，更新为错误消息
+                    logger.warning(f"⚠️ 文件下载失败")
                 
         except Exception as e:
             logger.error(f"❌ 异步下载或更新过程中出错: {e}", exc_info=True)

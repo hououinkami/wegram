@@ -11,6 +11,7 @@ import aiofiles
 import aiofiles.os
 
 import config
+from config import LOCALE as locale
 from api.wechat_api import wechat_api
 
 # 获取模块专用的日志记录器
@@ -144,7 +145,7 @@ async def get_emoji(data_json) -> Tuple[bool, str, str]:
                     except Exception as e:
                         logger.warning(f"备份文件失败: {e}")
                     
-                    return True, file_buffer, "sticker.gif"
+                    return True, file_buffer, f"{locale.type(47)}.gif"
                     
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")
@@ -225,6 +226,10 @@ async def chunked_download(api_path: str, msg_id: str, from_wxid: str, data_json
             md5 = now.strftime("%Y%m%d%H%M%S")
         data_length = int(file_info.get("length") or file_info.get("appattach").get("totallen"))
         file_title = (file_info.get("title") or "")
+
+        # 发送者为企业微信时不尝试下载图片和视频
+        if file_key in ['img', 'videomsg'] and data_length == 0:
+            return False, "发送者为企业微信，终止下载", "企微图片"
         
         # 文件名和路径
         if not file_title:
