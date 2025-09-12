@@ -687,7 +687,7 @@ class ContactManager:
             for batch_index, batch in enumerate(batches):
                 try:
                     # 发送进度更新
-                    if batch_index % 5 == 0 or batch_index == total_batches - 1:
+                    if batch_index == total_batches - 1:
                         progress = f"⏳ 处理进度: {batch_index + 1}/{total_batches} 批次"
                         logger.info(progress)
                     
