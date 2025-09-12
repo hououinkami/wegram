@@ -229,7 +229,7 @@ class BotCommands:
                 await BotCommands.list_contacts(chat_id)
                 
         except Exception as e:
-            error_msg = f"❌ {locale.common('failed')}: {str(e)}"
+            error_msg = f"{locale.common('failed')}: {str(e)}"
             await telegram_sender.send_text(chat_id, error_msg)
             logger.error(f"friend_command执行失败: {str(e)}")
     
