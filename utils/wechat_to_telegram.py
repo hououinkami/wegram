@@ -602,6 +602,7 @@ async def _get_or_create_chat(from_wxid: str, sender_name: str, avatar_url: str,
     chat_id = await _create_group_for_contact(from_wxid, sender_name, avatar_url)
     if not chat_id:
         logger.warning(f"无法创建聊天群组: {from_wxid}")
+        await telegram_sender.send_text(tg_user_id, f"{locale.common('failed_to_create_group')}")
         return None
     
     return chat_id

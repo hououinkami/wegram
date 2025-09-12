@@ -49,7 +49,8 @@ class LocaleConfig:
                 'chat_account': 'チャット',
                 'group_account': 'グループ',
                 'offical_account': '公式アカ',
-                'group_announcememt': 'グループ通知'
+                'group_announcememt': 'グループ通知',
+                'failed_to_create_group': '❌ グループ作成失敗！'
             },
             'command': {
                 'update': '連絡先を更新',
@@ -146,7 +147,8 @@ class LocaleConfig:
                 'chat_account': '私聊',
                 'group_account': '群聊',
                 'offical_account': '公众号',
-                'group_announcememt': '群通知'
+                'group_announcememt': '群通知',
+                'failed_to_create_group': '❌ 新建群组失败！'
             },
             'command': {
                 'update': '更新联系人',
