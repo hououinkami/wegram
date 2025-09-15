@@ -308,9 +308,11 @@ async def _forward_link(chat_id: int, msg_type: int, from_wxid: str, sender_name
     
     if main_cover_url:
         main_cover = await tools.get_image_from_url(main_cover_url)
-        return await telegram_sender.send_photo(chat_id, main_cover, send_text)
-    else:
-        return await telegram_sender.send_text(chat_id, send_text)
+        if main_cover:
+            return await telegram_sender.send_photo(chat_id, main_cover, send_text)
+    
+    # 若无图片或图片下载失败
+    return await telegram_sender.send_text(chat_id, send_text)
 
 async def _forward_file(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, **kwargs) -> dict:
     """处理文件消息"""
