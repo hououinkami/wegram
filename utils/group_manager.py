@@ -503,7 +503,41 @@ class GroupMemberManager:
         except Exception as e:
             logger.error(f"❌ 跨群搜索用户失败: {e}")
             return []
-    
+
+    async def delete_group(self, chatroom_id: str) -> bool:
+        """删除群组"""
+        await self._ensure_initialized()
+        
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # 开始事务
+                await db.execute("BEGIN")
+                
+                # 删除成员
+                await db.execute("DELETE FROM members WHERE chatroom_id = ?", (chatroom_id,))
+                
+                # 删除群组
+                result = await db.execute("DELETE FROM chatrooms WHERE chatroom_id = ?", (chatroom_id,))
+                
+                await db.commit()
+                # 检查是否删除成功
+                if result.rowcount > 0:
+                    logger.info(f"🗑️ 群组删除成功: {chatroom_id}")
+                    
+                    # 清理缓存
+                    if chatroom_id in self._display_name_cache:
+                        del self._display_name_cache[chatroom_id]
+                    self._pending_updates.discard(chatroom_id)
+                    
+                    return True
+                else:
+                    logger.warning(f"⚠️ 没有删除任何记录: {chatroom_id}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"❌ 直接SQL删除失败: {e}")
+            return False
+
     async def get_statistics(self) -> Dict:
         """获取统计信息（自动初始化）"""
         await self._ensure_initialized()

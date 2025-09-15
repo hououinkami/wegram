@@ -175,6 +175,8 @@ class BotCommands:
 
             if args and args[0].lower() == "del":   # 直接删除
                 unbind_result = await contact_manager.delete_contact(to_wxid)
+                if to_wxid.endswith("@chatroom"):
+                    await group_manager.delete_group(to_wxid)
             else:   # 解绑但不删除
                 unbind_result = await contact_manager.update_contact_by_chatid(chat_id, {"chat_id": -9999999999})
 

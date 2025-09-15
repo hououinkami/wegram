@@ -15,6 +15,7 @@ from utils import tools
 from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api
 from utils.contact_manager import contact_manager
+from utils.group_manager import group_manager
 
 logger = logging.getLogger(__name__)
 
@@ -697,6 +698,9 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
         
         # 执行删除操作
         success = await contact_manager.delete_contact(wxid)
+
+        if wxid.endswith("@chatroom"):
+            await group_manager.delete_group(wxid)
         
         if success:
             await query.answer(f"✅ 削除成功: {name}")
