@@ -140,7 +140,7 @@ def xml_to_obj(xml_string):
 # 提取公众号文章
 def extract_url_items(json_dict):
     result = ""
-    
+
     def process_text_field(field):
         """处理可能是字典或字符串的文本字段"""
         if isinstance(field, dict) and "_text" in field:
@@ -153,6 +153,12 @@ def extract_url_items(json_dict):
         title = process_text_field(title)
         url = process_text_field(url)
         summary = process_text_field(summary)
+
+        # 纯文字分享需要删除文本中的超链接代码
+        pattern = r'<a[^>]*>(.*?)</a>'
+        match = re.search(pattern, title)
+        if match:
+            title = match.group(1)
         
         # HTML转义
         title = escape_html_chars(title)
