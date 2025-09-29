@@ -605,6 +605,24 @@ class WeatherAlertMonitor:
         
         return False
     
+    def _has_active_typhoon_warning(self, current_warnings: List[WeatherWarning]) -> bool:
+        """检查是否存在激活的台风黄色、橙色、红色预警"""
+        for warning in current_warnings:
+            if (warning.type_name == '台风' and 
+                warning.severity_color in ['Yellow', 'Orange', 'Red'] and
+                warning.status == 'Active'):
+                return True
+        return False
+    
+    def _should_send_typhoon_cancel_message(self, cancelled_warning: WeatherWarning, current_warnings: List[WeatherWarning]) -> bool:
+        """判断是否应该发送台风预警取消消息"""
+        # 只对台风黄色、橙色、红色预警进行特殊处理
+        if (cancelled_warning.type_name == '台风' and 
+            cancelled_warning.severity_color in ['Yellow', 'Orange', 'Red']):
+            # 检查是否还有其他台风黄色、橙色、红色预警存在
+            return not self._has_active_typhoon_warning(current_warnings)
+        return True  # 其他预警正常发送取消消息
+    
     def _parse_warning_data(self, warning_data: Dict) -> WeatherWarning:
         """解析API返回的预警数据"""
         return WeatherWarning(
@@ -634,8 +652,9 @@ class WeatherAlertMonitor:
             
             notification_messages = []
             
-            # 获取当前API返回的所有预警ID
+            # 获取当前API返回的所有预警ID和预警对象
             current_warning_ids = set()
+            current_warnings = []
             
             if warnings:
                 logger.debug(f"获取到 {len(warnings)} 条预警信息")
@@ -647,6 +666,7 @@ class WeatherAlertMonitor:
                         continue
                     
                     current_warning_ids.add(warning.id)
+                    current_warnings.append(warning)
                     existing_warning = self.db.get_warning(warning.id)
                     
                     if self._should_notify(warning, existing_warning):
@@ -667,14 +687,34 @@ class WeatherAlertMonitor:
             cancelled_warnings = self.db.get_cancelled_warnings(current_warning_ids)
             
             for cancelled_warning in cancelled_warnings:
-                # 生成取消消息
-                cancelled_warning.status = 'Cancel'  # 修改状态为取消
-                cancel_message = self.formatter.format_message(cancelled_warning)
+                should_send_cancel = False
                 
-                if cancel_message is not None:
-                    notification_messages.append(cancel_message)
+                # 判断是否应该发送取消通知
+                if cancelled_warning.type_name == '台风':
+                    # 台风预警使用特殊逻辑
+                    should_send_cancel = self._should_send_typhoon_cancel_message(cancelled_warning, current_warnings)
+                else:
+                    # 非台风预警使用format_message判断
+                    cancelled_warning.status = 'Cancel'
+                    cancel_message = self.formatter.format_message(cancelled_warning)
+                    should_send_cancel = (cancel_message is not None)
+                    
+                    # 如果需要发送，直接添加到消息列表
+                    if should_send_cancel:
+                        notification_messages.append(cancel_message)
                 
-                logger.debug(f"预警已取消: {cancelled_warning.title}")
+                # 台风预警需要发送时，调用format_message生成消息
+                if cancelled_warning.type_name == '台风' and should_send_cancel:
+                    cancelled_warning.status = 'Cancel'
+                    cancel_message = self.formatter.format_message(cancelled_warning)
+                    if cancel_message is not None:
+                        notification_messages.append(cancel_message)
+                
+                # 记录日志
+                if should_send_cancel:
+                    logger.debug(f"预警已取消并发送通知: {cancelled_warning.title}")
+                else:
+                    logger.debug(f"预警已取消但不发送通知: {cancelled_warning.title}")
                 
                 # 从数据库中删除已取消的预警
                 self.db.delete_warning(cancelled_warning.id)

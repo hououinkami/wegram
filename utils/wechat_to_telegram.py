@@ -29,7 +29,7 @@ from utils.telegram_to_wechat import get_telethon_msg_id
 logger = logging.getLogger(__name__)
 
 tg_user_id = get_user_id()
-black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74, 'paymsg', 87]
+black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74, 'paymsg', 87, 'secmsg']
 
 async def is_blacklisted(contact_name: str, sender_name: str, content: str, push_content: str = "") -> bool:
     """
@@ -894,12 +894,6 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             sender_name = f"<blockquote expandable>{sender_name}: </blockquote>"
         else:
             sender_name = ""
-        
-        # 调试输出未知类型消息
-        types_keys = [k for k in locale.type_map.keys()]
-        if msg_type not in types_keys:
-            logger.info(f"💬 类型: {msg_type}, 来自: {from_wxid}, 发送者: {sender_wxid}")
-            logger.info(f"💬 内容: {content}")
 
         # ========== 准备发送参数并发送消息 ==========
         # 准备通用参数
