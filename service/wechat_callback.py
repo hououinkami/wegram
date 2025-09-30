@@ -10,7 +10,8 @@ import config
 from config import LOCALE as locale
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
-from utils.wechat_to_telegram import process_callback_message
+from service.wechat_rabbitmq import MessageDeduplicator, ContactMessageProcessor
+from utils.wechat_to_telegram import process_callback_message as process_rabbitmq_message
 
 logger = logging.getLogger(__name__)
 
@@ -18,39 +19,53 @@ logger = logging.getLogger(__name__)
 PORT = config.PORT
 WXID = config.MY_WXID
 
-class MessageDeduplicator:
-    """消息去重器 - 线程安全版本"""
-    
-    def __init__(self):
-        self.processed_msg_ids: Set[int] = set()
-        self._lock = asyncio.Lock()
-        self.last_cleanup = time.time()
-    
-    async def is_duplicate(self, msg_id: int) -> bool:
-        """检查消息是否重复"""
-        async with self._lock:
-            # 每小时清理一次过期记录
-            current_time = time.time()
-            if current_time - self.last_cleanup > 3600:
-                await self._cleanup_old_records()
-                self.last_cleanup = current_time
-            
-            if msg_id in self.processed_msg_ids:
-                return True
-            
-            self.processed_msg_ids.add(msg_id)
-            return False
-    
-    async def _cleanup_old_records(self):
-        """清理过期记录，保持缓存大小合理"""
-        if len(self.processed_msg_ids) > 5000:
-            # 清理一半记录
-            keep_count = len(self.processed_msg_ids) // 2
-            self.processed_msg_ids = set(list(self.processed_msg_ids)[-keep_count:])
-            logger.info(f"⚠️ 清理缓存，保留 {keep_count} 条记录")
+# 全局去重器和处理器管理
+deduplicator = MessageDeduplicator(cache_size=1000, ttl=3600)  # 1小时过期
+contact_processors: Dict[str, ContactMessageProcessor] = {}
+processor_lock = asyncio.Lock()
 
-# 全局去重器
-deduplicator = MessageDeduplicator()
+# 统计信息
+stats = {
+  "total_messages": 0,
+  "duplicate_messages": 0,
+  "processed_messages": 0,
+  "failed_messages": 0
+}
+
+async def get_or_create_processor(contact_id: str) -> ContactMessageProcessor:
+    """获取或创建联系人处理器"""
+    async with processor_lock:
+        if contact_id not in contact_processors:
+            processor = ContactMessageProcessor(contact_id)
+            await processor.start()
+            contact_processors[contact_id] = processor
+            logger.debug(f"📝 为联系人 {contact_id} 创建新的处理器")
+        return contact_processors[contact_id]
+
+async def cleanup_idle_processors():
+    """清理空闲的处理器"""
+    while True:
+        try:
+            await asyncio.sleep(300)  # 每5分钟检查一次
+            
+            async with processor_lock:
+                current_time = time.time()
+                idle_contacts = []
+                
+                for contact_id, processor in contact_processors.items():
+                    # 检查队列是否为空且最后活动时间超过10分钟
+                    if (processor.message_queue.empty() and 
+                        current_time - processor.last_activity > 600):  # 10分钟无活动
+                        idle_contacts.append(contact_id)
+                
+                # 只清理长时间无活动的处理器，保留活跃的
+                for contact_id in idle_contacts[:10]:  # 限制每次最多清理10个
+                    processor = contact_processors.pop(contact_id)
+                    await processor.stop()
+                    logger.debug(f"🧹 清理空闲处理器: {contact_id}")
+                    
+        except Exception as e:
+            logger.error(f"❌ 清理处理器时出错: {e}")
 
 # 登陆检测
 login_status = None
@@ -78,7 +93,7 @@ async def login_check(callback_data):
         return {"success": True, "message": "正常状态"}
 
 async def process_callback_data(callback_data: Dict[str, Any]) -> Dict[str, Any]:
-    """异步处理回调数据"""
+    """异步处理回调数据 - 采用与RabbitMQ一致的处理方式"""
     try:
         # 检查是否在线
         await login_check(callback_data)
@@ -92,35 +107,69 @@ async def process_callback_data(callback_data: Dict[str, Any]) -> Dict[str, Any]
         if not add_msgs:
             return {"success": True, "message": "无消息"}
         
+        # 处理每条消息 - 改进去重逻辑
         processed_count = 0
+        failed_count = 0
         duplicate_count = 0
         
-        # 处理每条消息
         for msg in add_msgs:
             msg_id = msg.get('MsgId')
-            if not msg_id:
+            from_wxid = msg.get('FromUserName', {}).get('string', '')
+            
+            if not msg_id or not from_wxid:
                 continue
             
-            # 检查重复
-            if await deduplicator.is_duplicate(msg_id):
+            stats["total_messages"] += 1
+            
+            # 使用复合键进行去重，包含消息ID
+            msg_key = f"{msg_id}"
+            
+            # 先检查去重，立即标记为处理中
+            if deduplicator.is_duplicate(msg_key):
                 duplicate_count += 1
-                logger.warning(f"⚠️ 跳过重复消息: {msg_id}")
+                stats["duplicate_messages"] += 1
+                logger.warning(f"🔄 跳过重复消息: {msg_id} (来自: {from_wxid})")
                 continue
-            
-            # 处理新消息
+
             try:
-                await process_callback_message(msg)
+                # 立即标记为已处理，防止竞态条件
+                deduplicator.mark_processed(msg_key)
+                
+                # 获取或创建该联系人的处理器
+                processor = await get_or_create_processor(from_wxid)
+                # 只传递单个消息数据
+                await processor.add_message(msg)
+                
+                stats["processed_messages"] += 1
                 processed_count += 1
+                    
             except Exception as e:
-                logger.error(f"❌ 处理消息 {msg_id} 失败: {e}")
+                failed_count += 1
+                stats["failed_messages"] += 1
+                logger.error(f"❌ 分发消息 {msg_id} 到联系人 {from_wxid} 失败: {e}")
+                
+                # 处理失败时，从去重缓存中移除，允许重试
+                try:
+                    # 从已处理消息中移除，允许后续重试
+                    if msg_key in deduplicator.processed_messages:
+                        del deduplicator.processed_messages[msg_key]
+                except Exception as cleanup_error:
+                    logger.error(f"清理失败消息缓存时出错: {cleanup_error}")
+        
+        # 记录处理结果
+        if duplicate_count > 0:
+            logger.info(f"📊 消息处理完成 - 处理: {processed_count}, 失败: {failed_count}, 重复: {duplicate_count}")
+        elif processed_count > 0 or failed_count > 0:
+            logger.debug(f"📊 消息处理完成 - 处理: {processed_count}, 失败: {failed_count}")
         
         return {
             "success": True,
-            "message": f"⚠️ 处理 {processed_count} 条新消息，跳过 {duplicate_count} 条重复消息"
+            "message": f"处理 {processed_count} 条新消息，跳过 {duplicate_count} 条重复消息，失败 {failed_count} 条"
         }
         
     except Exception as e:
         logger.error(f"❌ 处理回调数据失败: {e}")
+        stats["failed_messages"] += 1
         return {"success": False, "message": str(e)}
 
 async def handle_message(request):
@@ -210,6 +259,9 @@ async def create_app():
 async def run_server():
     """启动异步服务器"""
     try:
+        # 启动清理任务
+        cleanup_task = asyncio.create_task(cleanup_idle_processors())
+        
         app = await create_app()
         runner = web.AppRunner(app)
         await runner.setup()
@@ -226,6 +278,19 @@ async def run_server():
         except asyncio.CancelledError:
             logger.info("⚠️ 服务正在关闭...")
         finally:
+            # 停止清理任务
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+            
+            # 停止所有联系人处理器
+            async with processor_lock:
+                for processor in contact_processors.values():
+                    await processor.stop()
+                contact_processors.clear()
+            
             await runner.cleanup()
             
     except OSError as e:
