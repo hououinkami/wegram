@@ -167,6 +167,10 @@ class TelegramPollingService:
         self.is_running = False
         self.queue_manager = UpdateQueueManager(process_function)
         
+        # 创建处理器实例用于手动调用（与webhook模块保持一致）
+        self._command_handlers = {}
+        self._callback_handlers = {}
+        
     def create_application(self):
         """创建Application实例，优化网络配置"""
         # 配置HTTP请求参数，主要是增加连接池大小和超时时间
@@ -179,6 +183,31 @@ class TelegramPollingService:
         )
         
         return Application.builder().token(self.bot_token).request(request).build()
+    
+    def setup_handlers(self):
+        """设置处理器实例（用于手动调用，与webhook模块保持一致）"""
+        # 创建命令处理器实例
+        for command, handler_func in self.command_handlers.items():
+            self._command_handlers[command] = CommandHandler(command, handler_func)
+        
+        # 创建回调查询处理器实例
+        for pattern, handler_func in self.callback_handlers.items():
+            self._callback_handlers[pattern] = CallbackQueryHandler(handler_func, pattern=pattern)
+        
+        # 注册到Application（轮询模式需要这样做）
+        for command_handler in self._command_handlers.values():
+            self.application.add_handler(command_handler)
+        
+        for callback_handler in self._callback_handlers.values():
+            self.application.add_handler(callback_handler)
+
+        # 处理所有其他非命令消息
+        self.application.add_handler(
+            MessageHandler(filters.ALL & ~filters.COMMAND, self.handle_update)
+        )
+        
+        # 添加错误处理器
+        self.application.add_error_handler(self.error_handler)
         
     async def handle_update(self, update: Update, context: CallbackContext):
         """处理接收到的 update - 现在通过队列管理器处理"""
@@ -200,24 +229,6 @@ class TelegramPollingService:
         else:
             logger.error(f"❌ 未知错误: {error}")
     
-    def setup_handlers(self):
-        """设置消息处理器"""
-        # 添加命令处理器
-        for command, handler in self.command_handlers.items():
-            self.application.add_handler(CommandHandler(command, handler))
-        
-        # 添加回调查询处理器 
-        for pattern, handler in self.callback_handlers.items():
-            self.application.add_handler(CallbackQueryHandler(handler, pattern=pattern))
-
-        # 处理所有其他非命令消息
-        self.application.add_handler(
-            MessageHandler(filters.ALL & ~filters.COMMAND, self.handle_update)
-        )
-        
-        # 添加错误处理器
-        self.application.add_error_handler(self.error_handler)
-    
     async def setup_commands(self):
         """设置机器人命令菜单"""
         if not self.commands:
@@ -237,10 +248,11 @@ class TelegramPollingService:
             
             # 创建并初始化应用
             self.application = self.create_application()
-            self.setup_handlers()
-            
             await self.application.initialize()
             await self.application.start()
+            
+            # 设置处理器
+            self.setup_handlers()
             
             # 设置机器人命令
             await self.setup_commands()
