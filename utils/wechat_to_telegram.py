@@ -471,7 +471,8 @@ async def _forward_voip(chat_id: int, msg_type: int, from_wxid: str, sender_name
             return
 
     if msg_type == "VoIPBubbleMsg":
-        voip_msg = content["voipmsg"]["VoIPBubbleMsg"]["msg"]
+        bubble_msg = content["voipmsg"]["VoIPBubbleMsg"]["msg"]
+        voip_msg = f"<blockquote>{locale.type('ilinkvoip')}</blockquote>\n<blockquote>{bubble_msg}</blockquote>"
     
     send_text = f"{sender_name}\n<blockquote>{voip_msg}</blockquote>"
     
