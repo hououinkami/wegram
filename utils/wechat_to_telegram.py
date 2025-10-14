@@ -436,7 +436,7 @@ async def _forward_luckymoney(chat_id: int, msg_type: int, from_wxid: str, sende
         lucky_url = lucky_info.get('iconurl')
 
         lucky_cover = await tools.get_image_from_url(lucky_url)
-        lucky_content = f"<blockquote>{locale.type(msg_type)}</blockquote>\n{lucky_title}"
+        lucky_content = f"<blockquote>[{locale.type(msg_type)}]</blockquote>\n{lucky_title}"
         send_text = f"{sender_name}\n{lucky_content}"
 
         if lucky_cover:
