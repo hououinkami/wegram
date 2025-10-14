@@ -80,12 +80,14 @@ async def forward_telegram_to_wx(chat_id: str, message) -> bool:
         # 判断消息类型并处理
         if message.text:
             text = message.text
+            black_words = ["淘宝", "【淘宝】"]
 
             # 判断是否为单纯文本信息
             msg_entities = message.entities or []
             is_url = False
             entity = None
-            if msg_entities and len(msg_entities) > 0:
+
+            if msg_entities and len(msg_entities) > 0 and not any(black_word in text for black_word in black_words):
                 entity = msg_entities[0]
                 # 查找第一个链接实体
                 for item in msg_entities:
