@@ -29,7 +29,7 @@ from utils.telegram_to_wechat import get_telethon_msg_id
 logger = logging.getLogger(__name__)
 
 tg_user_id = get_user_id()
-black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74, 'paymsg', 87, 'secmsg']
+black_list = ['open_chat', 'bizlivenotify', 'qy_chat_update', 74, 'paymsg', 87, 'secmsg', 'NewXmlShowChatRoomAnnouncement']
 
 async def is_blacklisted(contact_name: str, sender_name: str, content: str, push_content: str = "") -> bool:
     """
@@ -113,6 +113,7 @@ def _get_message_handlers():
         57: _forward_quote,
         66: _forward_wecom_contact,
         2000: _forward_transfer,
+        2001: _forward_luckymoney,
         "revokemsg": _forward_revoke,
         "pat": _forward_pat,
         "ilinkvoip": _forward_voip,
@@ -424,6 +425,26 @@ async def _forward_transfer(chat_id: int, msg_type: int, from_wxid: str, sender_
         send_text = f"{sender_name}\n{transfer_content}"
         
         return await telegram_sender.send_text(chat_id, send_text)
+    except (KeyError, TypeError) as e:
+        raise Exception("转账信息提取失败")
+    
+async def _forward_luckymoney(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+    """处理转账"""
+    try:
+        lucky_info = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {})
+        lucky_title = lucky_info.get('receivertitle')
+        lucky_url = lucky_info.get('iconurl')
+
+        lucky_cover = await tools.get_image_from_url(lucky_url)
+        lucky_content = f"<blockquote>{locale.type(msg_type)}</blockquote>\n{lucky_title}"
+        send_text = f"{sender_name}\n{lucky_content}"
+
+        if lucky_cover:
+            return await telegram_sender.send_photo(chat_id, lucky_cover, send_text)
+    
+        # 若无图片或图片下载失败
+        return await telegram_sender.send_text(chat_id, send_text)
+    
     except (KeyError, TypeError) as e:
         raise Exception("转账信息提取失败")
 
