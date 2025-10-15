@@ -66,7 +66,8 @@ async def process_telegram_update(update: Update) -> None:
         
         # 将消息添加进映射
         if wx_api_response:
-            await add_send_msgid(wx_api_response, message_id, telethon_msg_id)
+            to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
+            await add_send_msgid(wx_api_response, message_id, telethon_msg_id, to_wxid)
 
 # 转发函数
 async def forward_telegram_to_wx(chat_id: str, message, telethon_msg_id = None) -> bool:
@@ -777,7 +778,7 @@ async def _download_telegram_sticker(sticker) -> str:
         return None
 
 # 添加msgid映射
-async def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
+async def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0, to_wxid: str = None):
     
     if not wx_api_response:
         return
@@ -799,12 +800,15 @@ async def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
         response_data = data
 
     if response_data:
-        to_wx_id = tools.multi_get(response_data, 'ToUsetName.string', 'toUserName.string', 'ToUserName.string', 'toUserName', 'ToUserName')
         new_msg_id = tools.multi_get(response_data, 'NewMsgId', 'Newmsgid', 'newMsgId')
-        client_msg_id_origin = tools.multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
-        # 处理发送视频时返回的特殊情况
-        client_msg_id = client_msg_id_origin.rsplit('_', 1)[1] if '_' in client_msg_id_origin else client_msg_id_origin
         create_time = tools.multi_get(response_data, 'Createtime', 'createtime', 'createTime', 'CreateTime')
+
+        to_uesr_name = tools.multi_get(response_data, 'ToUsetName.string', 'toUserName.string', 'ToUserName.string', 'toUserName', 'ToUserName')
+        to_wx_id = to_uesr_name if to_uesr_name else to_wxid
+        
+        client_msgid = tools.multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
+        client_msg_id = client_msgid.rsplit('_', 1)[1] if '_' in client_msgid else client_msgid
+        
         if new_msg_id:
             await msgid_mapping.add(
                 tg_msg_id=tg_msgid,
