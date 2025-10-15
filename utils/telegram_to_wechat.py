@@ -56,20 +56,20 @@ async def process_telegram_update(update: Update) -> None:
             to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
             if not to_wxid:
                 return False
+            
+        # 获取自己发送的消息对应Telethon的MsgID
+        telethon_client = get_client()
+        telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), 'me', message.text, message_date)
 
         # 转发消息
-        wx_api_response = await forward_telegram_to_wx(chat_id, message)
+        wx_api_response = await forward_telegram_to_wx(chat_id, message, telethon_msg_id)
         
         # 将消息添加进映射
         if wx_api_response:
-            # 获取自己发送的消息对应Telethon的MsgID
-            telethon_client = get_client()
-            telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), 'me', message.text, message_date)
-
             await add_send_msgid(wx_api_response, message_id, telethon_msg_id)
 
 # 转发函数
-async def forward_telegram_to_wx(chat_id: str, message) -> bool:
+async def forward_telegram_to_wx(chat_id: str, message, telethon_msg_id = None) -> bool:
     to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
     
     if not to_wxid:
@@ -124,7 +124,7 @@ async def forward_telegram_to_wx(chat_id: str, message) -> bool:
             if message.caption:
                 await _send_telegram_text(to_wxid, message.caption)
             # 视频消息
-            return await _send_telegram_video(to_wxid, message.video)
+            return await _send_telegram_video(to_wxid, message.video, chat_id, telethon_msg_id)
         
         elif message.sticker:
             # 贴纸消息
@@ -186,7 +186,7 @@ async def _send_telegram_photo(to_wxid: str, photo: list) -> bool:
     file_id = photo[-1].file_id  # 最后一个通常是最大尺寸
     
     try:
-        image_base64 = await tools.telegram_file_to_base64(file_id)
+        image_base64 = await tools.telegram_file_to_base64_by_file_id(file_id)
         
         payload = {
             "Base64": image_base64,
@@ -200,7 +200,7 @@ async def _send_telegram_photo(to_wxid: str, photo: list) -> bool:
         return False
 
 
-async def _send_telegram_video(to_wxid: str, video) -> bool:
+async def _send_telegram_video(to_wxid: str, video, chat_id, telethon_msg_id) -> bool:
     """发送视频消息到微信"""
     if not video:
         logger.error("未收到视频数据")
@@ -212,9 +212,9 @@ async def _send_telegram_video(to_wxid: str, video) -> bool:
     duration = video.duration
     
     try:
-        video_base64 = await tools.telegram_file_to_base64(file_id)
-        thumb_base64 = await tools.telegram_file_to_base64(thumb_file_id)
-        
+        thumb_base64 = await tools.telegram_file_to_base64_by_file_id(thumb_file_id)
+        video_base64 = await tools.telegram_file_to_base64(video, int(chat_id), telethon_msg_id)
+
         payload = {
             "Base64": video_base64,
             "ImageBase64": thumb_base64,
@@ -223,7 +223,7 @@ async def _send_telegram_video(to_wxid: str, video) -> bool:
             "Wxid": config.MY_WXID
         }
         
-        return await wechat_api("SEND_VIDEO", payload)
+        return await wechat_api("SEND_VIDEO", payload, timeout=300)
     except Exception as e:
         logger.error(f"处理视频时出错: {e}")
         return False
@@ -398,7 +398,7 @@ async def _send_telegram_document(to_wxid: str, document) -> bool:
             return False
         
         # 下载文件并转换为base64
-        file_base64 = await tools.telegram_file_to_base64(file_id)
+        file_base64 = await tools.telegram_file_to_base64_by_file_id(file_id)
         if not file_base64:
             logger.error("获取文件base64失败")
             return False
@@ -801,7 +801,9 @@ async def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0):
     if response_data:
         to_wx_id = tools.multi_get(response_data, 'ToUsetName.string', 'toUserName.string', 'ToUserName.string', 'toUserName', 'ToUserName')
         new_msg_id = tools.multi_get(response_data, 'NewMsgId', 'Newmsgid', 'newMsgId')
-        client_msg_id = tools.multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
+        client_msg_id_origin = tools.multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
+        # 处理发送视频时返回的特殊情况
+        client_msg_id = client_msg_id_origin.rsplit('_', 1)[1] if '_' in client_msg_id_origin else client_msg_id_origin
         create_time = tools.multi_get(response_data, 'Createtime', 'createtime', 'createTime', 'CreateTime')
         if new_msg_id:
             await msgid_mapping.add(
@@ -846,7 +848,7 @@ async def get_telethon_msg_id(client, chat_id, sender_id, text=None, send_time=N
 async def revoke_telethon(event):
     try:
         for deleted_id in event.deleted_ids:
-            wx_msg = await msgid_mapping.telethon_to_wx(deleted_id)  # ✅ 添加 await
+            wx_msg = await msgid_mapping.telethon_to_wx(deleted_id)
             if not wx_msg:
                 return
             to_wxid = wx_msg.towxid
