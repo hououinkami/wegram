@@ -108,16 +108,6 @@ class ContactManager:
             await self._create_indexes()
             
             self._initialized = True
-            
-            # 临时导入json
-            # imported_count = await contact_manager.import_from_json()
-            # if imported_count > 0:
-            #     logger.info(f"自动导入了 {imported_count} 个联系人")
-
-            # 临时导出json
-            # exported_count = await contact_manager.export_to_json()
-            # if exported_count > 0:
-            #     logger.info(f"导出了 {exported_count} 个联系人")
 
         except Exception as e:
             logger.error(f"❌ 联系人管理器初始化失败: {e}")
