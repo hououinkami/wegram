@@ -124,8 +124,12 @@ class BotCommands:
                     "avatar_url": user_info.avatar_url
                 })
 
+                chat_info = await telegram_sender.get_chat(chat_id)
                 name_to_use = user_info.name if contact_saved.name != user_info.name else None
                 avatar_to_use = user_info.avatar_url if contact_saved.avatar_url != user_info.avatar_url else None
+                # 若无头像则设置新头像
+                if not hasattr(chat_info, 'photo') or chat_info.photo is None:
+                    avatar_to_use = user_info.avatar_url
                 
             # 更新TG群组
             await wechat_contacts.update_info(chat_id, name_to_use, avatar_to_use)
@@ -222,7 +226,7 @@ class BotCommands:
                     await telegram_sender.send_text(get_user_id(), f"{exported_count}の連絡先をエクスポートしました")
             elif args and args[0].lower() == 'update':
                 # 执行更新功能
-                await contact_manager.update_contacts_and_sync_to_db(chat_id)
+                await contact_manager.update_contacts_and_sync_to_db(chat_id, update = False)
             elif args and args[0].lower() != 'update':
                 # 执行搜索
                 await BotCommands.list_contacts(chat_id, args[0])

@@ -658,7 +658,7 @@ class ContactManager:
             return {'success': False, 'error': str(e)}
     
     @single_execution
-    async def update_contacts_and_sync_to_db(self, chat_id: int):
+    async def update_contacts_and_sync_to_db(self, chat_id: int, update: bool = False):
         """获取联系人列表并同步到数据库"""
         try:
             # 发送开始处理的消息
@@ -713,7 +713,7 @@ class ContactManager:
                                 wxid=wxid,
                                 name=user_info.name,
                                 chat_id=-9999999999,
-                                is_group=False,
+                                is_group=wxid.endswith('@chatroom'),
                                 is_receive=True,
                                 avatar_url=user_info.avatar_url if user_info.avatar_url else "",
                                 wx_name=""
@@ -722,29 +722,49 @@ class ContactManager:
                             new_contacts.append(new_contact)
                             new_contacts_count += 1
                             logger.info(f"➕ 添加新联系人: {user_info.name} ({wxid})")
-                        '''
-                        else:
+                        elif update:
                             # 存在则检查是否需要更新name和avatar_url
                             need_update = False
+                            need_tg_update = False
+                            updates = {}
                             
                             # 检查name是否需要更新
                             if existing_contact.name != user_info.name:
-                                existing_contact.name = user_info.name
+                                updates['name'] = user_info.name
                                 need_update = True
+                                need_tg_update = True
                                 logger.info(f"🔄 更新联系人姓名: {wxid} -> {user_info.name}")
                             
                             # 检查avatar_url是否需要更新
                             new_avatar_url = user_info.avatar_url if user_info.avatar_url else ""
                             if existing_contact.avatar_url != new_avatar_url:
-                                existing_contact.avatar_url = new_avatar_url
+                                updates['avatar_url'] = new_avatar_url
                                 need_update = True
+                                need_tg_update = True
                                 logger.info(f"🔄 更新联系人头像: {wxid}")
                             
-                            # 如果需要更新，添加到更新列表
+                            # 如果需要更新数据库
                             if need_update:
-                                updated_contacts.append(existing_contact)
-                                updated_contacts_count += 1
-                        '''
+                                success = await self.update_contact(wxid, updates)
+                                if success:
+                                    updated_contacts_count += 1
+                                    
+                                    # 如果联系人已绑定到Telegram群组，则更新群组信息
+                                    if need_tg_update and existing_contact.chat_id != -9999999999:
+                                        try:
+                                            # 准备更新参数
+                                            name_to_use = updates.get('name') if 'name' in updates else None
+                                            avatar_to_use = updates.get('avatar_url') if 'avatar_url' in updates else None
+                                            
+                                            # 更新TG群组信息
+                                            await wechat_contacts.update_info(
+                                                existing_contact.chat_id, 
+                                                name_to_use, 
+                                                avatar_to_use
+                                            )
+                                            
+                                        except Exception as e:
+                                            logger.error(f"❌ 更新Telegram群组信息失败 {existing_contact.chat_id}: {e}")
                     
                     # 每处理几个批次休眠一下，避免请求过于频繁
                     if batch_index < total_batches - 1:
@@ -759,14 +779,9 @@ class ContactManager:
             if new_contacts:
                 new_saved_count = await self.batch_save_contacts(new_contacts)
             
-            # 批量更新已存在的联系人
-            updated_saved_count = 0
-            if updated_contacts:
-                updated_saved_count = await self.batch_save_contacts(updated_contacts)
-            
             # 生成结果消息
-            if new_saved_count > 0 or updated_saved_count > 0:
-                success_msg = f"✅ 同步完成！新增 {new_saved_count} 个联系人，更新 {updated_saved_count} 个联系人"
+            if new_saved_count > 0 or updated_contacts_count > 0:
+                success_msg = f"✅ 同步完成！新增 {new_saved_count} 个联系人，更新 {updated_contacts_count} 个联系人"
             else:
                 success_msg = "✅ 同步完成！所有联系人信息已是最新，无需更新"
             
@@ -780,7 +795,7 @@ class ContactManager:
 📊 **更新結果**
 • 友人: {len(all_contacts)}
 • 新規: {new_saved_count}
-• 更新: {updated_saved_count}
+• 更新: {updated_contacts_count}
 • 全部: {total_contacts}
             """
             logger.info(stats_msg)
