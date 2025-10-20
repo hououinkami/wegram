@@ -992,13 +992,15 @@ class TelegramSender:
         )
     
     async def set_chat_photo(self, chat_id: Optional[int] = None, 
-                            photo: Union[str, Path, BytesIO, bytes] = None):
+                            photo: Union[str, Path, BytesIO, bytes] = None,
+                            delete_old_photo: bool = False):
         """
         设置群组头像
         
         Args:
             chat_id: 聊天ID，为空时使用默认值
             photo: 头像图片文件路径、Path对象、BytesIO对象、字节数据或图片URL
+            delete_old_photo: 是否在设置新头像前删除旧头像（默认False）
             
         Returns:
             bool: 设置是否成功
@@ -1009,6 +1011,19 @@ class TelegramSender:
         
         if photo is None:
             raise ValueError("必须提供 photo 参数")
+        
+        # 如果需要删除旧头像，先尝试删除
+        if delete_old_photo:
+            try:
+                # 先获取聊天信息，检查是否有头像
+                chat_info = await self.get_chat(target_chat_id)
+                if hasattr(chat_info, 'photo') and chat_info.photo is not None:
+                    await self.delete_chat_photo(target_chat_id)
+                    # 等待一小段时间确保删除操作完成
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                # 删除失败不影响设置新头像的操作
+                logger.warning(f"删除旧头像时出错（将继续设置新头像）: {e}")
         
         # 处理不同类型的头像输入
         if isinstance(photo, str):
