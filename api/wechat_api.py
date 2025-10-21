@@ -14,7 +14,7 @@ class WeChatAPIPaths:
     
     # 登录
     GET_PROFILE = "/User/GetContractProfile"
-    HEART_BEAT = "/Login/HeartBeat"
+    HEART_BEAT = "/Login/AutoHeartBeat"
     TWICE_LOGIN = "/Login/LoginTwiceAutoAuth"
     
     # 消息

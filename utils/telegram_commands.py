@@ -425,6 +425,24 @@ class BotCommands:
     @staticmethod
     @delete_command_message
     @command_scope(CommandScope.BOT_ONLY)
+    async def heartbeat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """自动长心跳"""
+        chat_id = update.effective_chat.id
+        
+        try:
+            autoheartbeat = await wechat_login.heartbeat(config.MY_WXID)
+            
+            if "成功" in autoheartbeat.get('Message'):
+                await telegram_sender.send_text(chat_id, locale.common("auto_heartbeat_success"))
+            else:
+                await telegram_sender.send_text(chat_id, locale.common("auto_heartbeat_fail"))
+                
+        except Exception as e:
+            await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+    
+    @staticmethod
+    @delete_command_message
+    @command_scope(CommandScope.BOT_ONLY)
     async def relogin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """执行二次登录"""
         chat_id = update.effective_chat.id
@@ -722,6 +740,7 @@ class BotCommands:
             ["quit", locale.command("quit")],
             ["qrcode", locale.command("qrcode")],
             ["rm", locale.command("revoke")],
+            ["heartbeat", locale.command("heartbeat")],
             ["relogin", locale.command("relogin")],
             ["timer", locale.command("timer")]
         ]
@@ -740,6 +759,7 @@ class BotCommands:
             "quit": cls.quit_command,
             "qrcode": cls.qrcode_command,
             "rm": cls.revoke_command,
+            "heartbeat": cls.heartbeat_command,
             "relogin": cls.relogin_command,
             "timer": cls.timer_command
         }
