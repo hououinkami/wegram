@@ -807,8 +807,9 @@ async def add_send_msgid(wx_api_response, tg_msgid, telethon_msg_id: int = 0, to
         to_wx_id = to_uesr_name if to_uesr_name else to_wxid
         
         client_msgid = tools.multi_get(response_data, 'ClientMsgid', 'ClientImgId.string', 'clientmsgid', 'clientMsgId')
-        client_msg_id = client_msgid.rsplit('_', 1)[1] if '_' in client_msgid else client_msgid
-        
+        client_msgid_str = str(client_msgid) if client_msgid is not None else ""
+        client_msg_id = client_msgid_str.rsplit('_', 1)[1] if '_' in client_msgid_str else client_msgid_str
+
         if new_msg_id:
             await msgid_mapping.add(
                 tg_msg_id=tg_msgid,
