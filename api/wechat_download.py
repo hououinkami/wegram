@@ -74,7 +74,7 @@ async def get_emoji(data_json) -> Tuple[bool, str, str]:
                 data = await f.read()
                 file_buffer = BytesIO(data)
                 file_buffer.seek(0)
-                return True, file_buffer, filename  # 统一返回BytesIO
+                return True, file_buffer, f"{locale.type(47)}.gif"  # 统一返回BytesIO
         except FileNotFoundError:
             pass
         
