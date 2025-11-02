@@ -855,6 +855,8 @@ async def revoke_telethon(event):
         for deleted_id in event.deleted_ids:
             wx_msg = await msgid_mapping.telethon_to_wx(deleted_id)
             if not wx_msg:
+                # 发送撤回失败提示
+                await telegram_sender.send_text(event.chat_id, f"<blockquote>{locale.command("revoke_failed")}</blockquote>", reply_to_message_id=event.message.id)
                 return
             to_wxid = wx_msg.towxid
             new_msg_id = wx_msg.msgid
