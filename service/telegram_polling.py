@@ -3,7 +3,7 @@ import logging
 from typing import Callable, Dict
 from collections import defaultdict, deque
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from telegram.request import HTTPXRequest
 from telegram.error import NetworkError, TimedOut, TelegramError
@@ -235,8 +235,34 @@ class TelegramPollingService:
             return
             
         try:
-            await self.application.bot.set_my_commands(self.commands)
-            logger.info(f"🤖 设置了 {len(self.commands)} 个机器人命令")
+            # 将命令列表转换为 BotCommand 对象列表
+            bot_commands = []
+            for command_info in self.commands:
+                if isinstance(command_info, list) and len(command_info) >= 2:
+                    # 如果是 [command, description] 格式
+                    command = command_info[0]
+                    description = command_info[1]
+                    # 确保描述不为空且长度合适
+                    if description and len(description.strip()) > 0:
+                        # Telegram 命令描述最大长度是 256 字符
+                        if len(description) > 256:
+                            description = description[:253] + "..."
+                        bot_commands.append(BotCommand(command, description))
+                    else:
+                        # 如果描述为空，提供默认描述
+                        bot_commands.append(BotCommand(command, f"Execute {command} command"))
+                elif isinstance(command_info, BotCommand):
+                    # 如果已经是 BotCommand 对象
+                    bot_commands.append(command_info)
+                else:
+                    logger.warning(f"⚠️ 跳过无效的命令配置: {command_info}")
+            
+            if bot_commands:
+                await self.application.bot.set_my_commands(bot_commands)
+                logger.info(f"🤖 设置了 {len(bot_commands)} 个机器人命令")
+            else:
+                logger.warning("⚠️ 没有有效的命令可以设置")
+                
         except Exception as e:
             # 设置命令失败不影响主要功能
             logger.warning(f"❌ 设置机器人命令失败: {e}")
