@@ -487,7 +487,7 @@ async def _forward_voip(chat_id: int, msg_type: int, from_wxid: str, sender_name
         voip_cancle = content.get('sysmsg', {}).get('voipmt', {}).get('cancel', "")
         voip_miss = content.get('sysmsg', {}).get('voipmt', {}).get('dismissapns', "")
         if voip_invite:
-            voip_msg = locale.type('ilinkvoip')
+            voip_msg = f"<blockquote>{locale.type('ilinkvoip')}</blockquote>"
         else:
             return
 
@@ -495,7 +495,7 @@ async def _forward_voip(chat_id: int, msg_type: int, from_wxid: str, sender_name
         bubble_msg = content["voipmsg"]["VoIPBubbleMsg"]["msg"]
         voip_msg = f"<blockquote>{locale.type('ilinkvoip')}</blockquote>\n<blockquote>{bubble_msg}</blockquote>"
     
-    send_text = f"{sender_name}\n<blockquote>{voip_msg}</blockquote>"
+    send_text = f"{sender_name}\n{voip_msg}"
     
     return await telegram_sender.send_text(chat_id, send_text)
 
