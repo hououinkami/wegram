@@ -62,20 +62,27 @@ async def process_telegram_update(update: Update) -> None:
         telethon_msg_id = await get_telethon_msg_id(telethon_client, abs(int(chat_id)), 'me', message.text, message_date)
 
         # 转发消息
-        wx_api_response = await forward_telegram_to_wx(chat_id, message, telethon_msg_id)
+        wx_api_response, error_msg = await forward_telegram_to_wx(chat_id, message, telethon_msg_id)
         
         # 将消息添加进映射
         if wx_api_response:
             to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
             await add_send_msgid(wx_api_response, message_id, telethon_msg_id, to_wxid)
+        else:
+            if error_msg:
+                error_text = f"<blockquote>❌ {locale.common('forward_failed')}</blockquote>\n<blockquote expandable>{error_msg}</blockquote>"
+            else:
+                error_text = f"<blockquote>❌ {locale.common('forward_failed')}</blockquote>"
+            
+            await telegram_sender.send_text(chat_id, error_text, reply_to_message_id=message_id)
 
 # 转发函数
-async def forward_telegram_to_wx(chat_id: str, message, telethon_msg_id = None) -> bool:
+async def forward_telegram_to_wx(chat_id: str, message, telethon_msg_id = None) -> tuple[bool, str]:
     to_wxid = await contact_manager.get_wxid_by_chatid(chat_id)
     
     if not to_wxid:
         logger.error(f"未找到chat_id {chat_id} 对应的微信ID")
-        return False
+        return False, locale.command('no_contacts')
     
     try:
         # 判断消息类型并处理
@@ -99,70 +106,65 @@ async def forward_telegram_to_wx(chat_id: str, message, telethon_msg_id = None) 
     
             if message.reply_to_message:
                 # 回复消息
-                return await _send_telegram_reply(to_wxid, message)
+                send_result = await _send_telegram_reply(to_wxid, message)
             elif msg_entities and is_url:
                 # 链接消息
-                return await _send_telegram_link(to_wxid, message)
+                send_result = await _send_telegram_link(to_wxid, message)
             elif msg_entities and entity and entity.type == "expandable_blockquote":
                 # 转发群聊消息时去除联系人
                 text = text.split('\n', 1)[1]
-                return await _send_telegram_text(to_wxid, text)
+                send_result = await _send_telegram_text(to_wxid, text)
             else:
                 # 纯文本消息
                 # 处理文本中的emoji
                 processed_text = process_emoji_text(text)
-                return await _send_telegram_text(to_wxid, processed_text)
+                send_result = await _send_telegram_text(to_wxid, processed_text)
             
         elif message.photo:
             # 发送附带文字
             if message.caption:
                 await _send_telegram_text(to_wxid, message.caption)
             # 图片消息
-            return await _send_telegram_photo(to_wxid, message.photo)
+            send_result = await _send_telegram_photo(to_wxid, message.photo)
             
         elif message.video:
             # 发送附带文字
             if message.caption:
                 await _send_telegram_text(to_wxid, message.caption)
             # 视频消息
-            return await _send_telegram_video(to_wxid, message.video, chat_id, telethon_msg_id)
+            send_result = await _send_telegram_video(to_wxid, message.video, chat_id, telethon_msg_id)
         
         elif message.sticker:
             # 贴纸消息
-            return await _send_telegram_sticker(to_wxid, message.sticker)
+            send_result = await _send_telegram_sticker(to_wxid, message.sticker)
         
         elif message.voice:
             # 语音消息
-            return await _send_telegram_voice(to_wxid, message.voice)
+            send_result = await _send_telegram_voice(to_wxid, message.voice)
         
         elif message.document:
             # 发送附带文字
             if message.caption:
                 await _send_telegram_text(to_wxid, message.caption)
             # 文档消息
-            return await _send_telegram_document(to_wxid, message.document)
+            send_result = await _send_telegram_document(to_wxid, message.document)
 
         elif message.location:
             # 定位消息
-            return await _send_telegram_location(to_wxid, message)
+            send_result = await _send_telegram_location(to_wxid, message)
 
         else:
-            return False
+            send_result = False
+        
+        # 发送结果处理
+        if send_result:
+            return send_result, ""
+        else:
+            return send_result, f"API{locale.common('error')}"
             
     except Exception as e:
-        logger.error(f"转发消息时出错: {e}")
-        
-        # 直接在这里发送失败通知
-        try:
-            await telegram_sender.send_text(
-                chat_id=chat_id,
-                text=f"❌ 消息发送失败: {str(e)}",
-                reply_to_message_id=message.message_id
-            )
-        except Exception as notification_error:
-            logger.error(f"发送失败通知失败: {notification_error}")
-            
-        return False
+        logger.error(f"转发消息时出错: {e}")            
+        return False, str(e)
 
 
 async def _send_telegram_text(to_wxid: str, text: str) -> bool:
