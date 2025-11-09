@@ -459,7 +459,8 @@ async def _send_telegram_reply(to_wxid: str, message):
         logger.error("未收到回复信息数据")
         return False
     try:
-        send_text = message.text
+        # 处理文本中的emoji
+        send_text = process_emoji_text(message.text)
         reply_to_message = message.reply_to_message
         reply_to_message_id = reply_to_message.message_id
         reply_to_wx_msgid = await msgid_mapping.tg_to_wx(reply_to_message_id)
