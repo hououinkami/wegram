@@ -13,7 +13,7 @@ from telegram.request import HTTPXRequest
 import config
 from config import LOCALE as locale
 from utils import tools
-from utils.message_formatter import escape_html_chars, escape_markdown_chars
+from utils.message_formatter import escape_html_chars, escape_markdown_chars, split_text, get_telegram_text_length
 
 logger = logging.getLogger(__name__)
 
@@ -186,12 +186,13 @@ class TelegramSender:
         raise last_exception
 
     async def send_text(self, chat_id: Optional[int] = None, text: str = "", 
-                       reply_to_message_id: Optional[int] = None, 
-                       parse_mode: str = ParseMode.HTML, 
-                       disable_web_page_preview: bool = False,
-                       reply_markup: Optional[InlineKeyboardMarkup] = None):
+                    reply_to_message_id: Optional[int] = None, 
+                    parse_mode: str = ParseMode.HTML, 
+                    disable_web_page_preview: bool = False,
+                    reply_markup: Optional[InlineKeyboardMarkup] = None,
+                    max_length: int = 4090):
         """
-        发送文本消息
+        发送文本消息，支持超长文本自动分段发送
         
         Args:
             chat_id: 聊天ID，为空时使用默认值
@@ -199,10 +200,11 @@ class TelegramSender:
             parse_mode: 解析模式
             reply_to_message_id: 回复的消息ID
             disable_web_page_preview: 禁用网页预览
-            reply_markup: 内联键盘
+            reply_markup: 内联键盘（仅在最后一条消息上显示）
+            max_length: 单条消息最大长度，默认4090
             
         Returns:
-            Message: 发送的消息对象
+            List[Message]: 发送的消息对象列表
         """
         if not text.strip():
             raise ValueError("消息文本不能为空")
@@ -211,15 +213,49 @@ class TelegramSender:
         if target_chat_id is None:
             raise ValueError("必须提供 chat_id 或设置默认 chat_id")
         
-        return await self._retry_operation(
-            self.bot.send_message,
-            chat_id=target_chat_id,
-            text=self.text_formatter(text, parse_mode),
-            parse_mode=parse_mode,
-            reply_to_message_id=reply_to_message_id,
-            disable_web_page_preview=disable_web_page_preview,
-            reply_markup=reply_markup
-        )
+        # 如果文本长度在限制内，直接发送
+        text_length = get_telegram_text_length(text)
+        if text_length <= max_length:
+            message = await self._retry_operation(
+                self.bot.send_message,
+                chat_id=target_chat_id,
+                text=self.text_formatter(text, parse_mode, max_length),
+                parse_mode=parse_mode,
+                reply_to_message_id=reply_to_message_id,
+                disable_web_page_preview=disable_web_page_preview,
+                reply_markup=reply_markup
+            )
+            return message
+        
+        # 超长文本分段处理
+        messages = []
+        segments = split_text(text, max_length - 30)  # 预留分段标识空间
+        
+        for i, segment in enumerate(segments):
+            # 添加分段标识
+            if len(segments) > 1:
+                formatted_segment = f"📄 {i+1}/{len(segments)}\n{segment}"
+            else:
+                formatted_segment = segment
+            
+            message = await self._retry_operation(
+                self.bot.send_message,
+                chat_id=target_chat_id,
+                text=self.text_formatter(formatted_segment, parse_mode, max_length),
+                parse_mode=parse_mode,
+                reply_to_message_id=reply_to_message_id if i == 0 else None,  # 只有第一条回复原消息
+                disable_web_page_preview=disable_web_page_preview,
+                reply_markup=reply_markup if i == len(segments) - 1 else None  # 只有最后一条显示键盘
+            )
+            
+            messages.append(message)
+            
+            # 短暂延迟避免发送过快
+            if i < len(segments) - 1:
+                await asyncio.sleep(0.5)
+        
+        logger.info(f"长文本已分 {len(segments)} 段发送完成")
+        return messages[0]
 
     async def send_photo(self, chat_id: Optional[int] = None, photo: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
                         parse_mode: str = ParseMode.HTML,
@@ -779,7 +815,7 @@ class TelegramSender:
         
         return await self._retry_operation(
             self.bot.edit_message_text,
-            text=self.text_formatter(text, parse_mode),
+            text=self.text_formatter(text, parse_mode, 0),
             chat_id=chat_id,
             message_id=message_id,
             inline_message_id=inline_message_id,
@@ -1100,8 +1136,38 @@ class TelegramSender:
             chat_id=target_chat_id
         )
     
-    def text_formatter(self, text: str, parse_mode: str = ""):
-        """格式化发送文本"""
+    def text_formatter(self, text: str, parse_mode: str = "", max_length: int = 1020):
+        """
+        格式化发送文本并处理长度限制
+        
+        Args:
+            text: 原始文本
+            parse_mode: 解析模式
+            max_length: 最大长度限制
+            TELEGRAM_LIMITS = {
+                "message_text": 4096,        # 消息文本
+                "caption": 1024,             # 媒体标题  
+                "inline_query": 256,         # 内联查询
+                "callback_data": 64,         # 回调数据
+                "bot_username": 32,          # 机器人用户名
+                "chat_title": 128,           # 群组标题
+                "chat_description": 255,     # 群组描述
+            }
+        
+        Returns:
+            str: 格式化并截断后的文本
+        """
+        if not text:
+            return ""
+        
+        text_length = get_telegram_text_length(text)
+
+        if max_length > 0 and text_length > max_length:
+            original_text = text
+            text = text[:max_length-3] + "..."
+            logger.warning(f"内容过长已截断! 原文：{original_text}")
+        
+        # 格式化文本
         if parse_mode == ParseMode.HTML:
             return escape_html_chars(text)
         elif parse_mode == ParseMode.MARKDOWN:
