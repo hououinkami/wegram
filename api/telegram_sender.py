@@ -5,7 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from telegram import Bot, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAnimation
+from telegram import Bot, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAnimation, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import NetworkError, TelegramError, TimedOut
 from telegram.request import HTTPXRequest
@@ -258,8 +258,8 @@ class TelegramSender:
         return messages[0]
 
     async def send_photo(self, chat_id: Optional[int] = None, photo: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
-                        parse_mode: str = ParseMode.HTML,
                         reply_to_message_id: Optional[int] = None,
+                        parse_mode: str = ParseMode.HTML,
                         reply_markup: Optional[InlineKeyboardMarkup] = None):
         """
         发送图片
@@ -303,8 +303,8 @@ class TelegramSender:
         )
 
     async def send_document(self, chat_id: Optional[int] = None, document: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
-                           parse_mode: str = ParseMode.HTML,
                            reply_to_message_id: Optional[int] = None,
+                           parse_mode: str = ParseMode.HTML,
                            reply_markup: Optional[InlineKeyboardMarkup] = None,
                            filename: Optional[str] = None):
         """
@@ -352,11 +352,11 @@ class TelegramSender:
         )
 
     async def send_video(self, chat_id: Optional[int] = None, video: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
+                        reply_to_message_id: Optional[int] = None,
                         parse_mode: str = ParseMode.HTML,
                         duration: Optional[int] = None,
                         width: Optional[int] = None,
                         height: Optional[int] = None,
-                        reply_to_message_id: Optional[int] = None,
                         reply_markup: Optional[InlineKeyboardMarkup] = None,
                         filename: Optional[str] = None):
         """
@@ -410,11 +410,11 @@ class TelegramSender:
         )
 
     async def send_audio(self, chat_id: Optional[int] = None, audio: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
+                        reply_to_message_id: Optional[int] = None,
                         parse_mode: str = ParseMode.HTML,
                         duration: Optional[int] = None,
                         performer: Optional[str] = None,
                         title: Optional[str] = None,
-                        reply_to_message_id: Optional[int] = None,
                         reply_markup: Optional[InlineKeyboardMarkup] = None,
                         filename: Optional[str] = None):
         """
@@ -467,12 +467,10 @@ class TelegramSender:
             reply_markup=reply_markup
         )
     
-    async def send_voice(self, chat_id: Optional[int] = None, 
-                        voice: Union[str, Path, BytesIO, bytes] = None, 
-                        caption: str = "", 
+    async def send_voice(self, chat_id: Optional[int] = None, voice: Union[str, Path, BytesIO, bytes] = None, caption: str = "", 
                         duration: Optional[int] = None,
-                        parse_mode: str = ParseMode.HTML,
                         reply_to_message_id: Optional[int] = None,
+                        parse_mode: str = ParseMode.HTML,
                         reply_markup: Optional[InlineKeyboardMarkup] = None,
                         filename: Optional[str] = None):
         """
@@ -525,9 +523,9 @@ class TelegramSender:
         )
 
     async def send_media_group(self, chat_id: Optional[int] = None,
-                              media: List[Union[Dict[str, Any], Any]] = None, 
-                              parse_mode: str = ParseMode.HTML,
-                              reply_to_message_id: Optional[int] = None):
+                              media: List[Union[Dict[str, Any], Any]] = None,
+                              reply_to_message_id: Optional[int] = None, 
+                              parse_mode: str = ParseMode.HTML):
         """
         发送媒体组（相册）
         
@@ -583,12 +581,12 @@ class TelegramSender:
         )
     
     async def send_animation(self, chat_id: Optional[int] = None, animation: Union[str, Path, BytesIO, bytes] = None, caption: str = "",  
+                           reply_to_message_id: Optional[int] = None,
                            parse_mode: str = ParseMode.HTML,
                            duration: Optional[int] = None,
                            width: Optional[int] = None,
                            height: Optional[int] = None,
                            thumbnail: Optional[Union[str, Path, BytesIO, bytes]] = None,
-                           reply_to_message_id: Optional[int] = None,
                            reply_markup: Optional[InlineKeyboardMarkup] = None,
                            filename: Optional[str] = None):
         """
@@ -657,16 +655,119 @@ class TelegramSender:
             reply_markup=reply_markup
         )
     
+    async def send_sticker(self, chat_id: Optional[int] = None, sticker: Union[str, Path, BytesIO, bytes] = None, 
+                          reply_to_message_id: Optional[int] = None,
+                          emoji: Optional[str] = "🫥",
+                          reply_markup: Optional[InlineKeyboardMarkup] = None,
+                          filename: Optional[str] = None,
+                          title: Optional[str] = None,
+                          callback_data = f"title",
+                          url: Optional[str] = None):
+        """
+        发送贴纸（支持内联键盘显示文字信息）
+        
+        Args:
+            chat_id: 聊天ID，为空时使用默认值
+            sticker: 贴纸文件路径、Path对象、BytesIO对象、字节数据或贴纸文件ID
+            emoji: 与贴纸对应的表情符号（可选）
+            reply_to_message_id: 回复的消息ID
+            reply_markup: 内联键盘（如果提供，将覆盖自动生成的键盘）
+            filename: 自定义文件名
+            title: 标题（显示在第一行按钮）
+            
+        Returns:
+            Message: 发送的消息对象
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None:
+            raise ValueError("必须提供 chat_id 或设置默认 chat_id")
+        
+        if sticker is None:
+            raise ValueError("必须提供 sticker 参数")
+        
+        # 处理不同类型的贴纸输入
+        if isinstance(sticker, str):
+            # 检查是否为文件ID（Telegram文件ID通常以特定格式开头）
+            if sticker.startswith(('CAACAgI', 'CAACAgE', 'BAACAgI', 'BAACAgE')) or len(sticker) > 100:
+                # 这是一个文件ID，直接使用
+                sticker_input = sticker
+            else:
+                # 这是一个文件路径
+                sticker_path = Path(sticker)
+                if not sticker_path.exists():
+                    raise FileNotFoundError(f"贴纸文件不存在: {sticker_path}")
+
+                sticker_input = InputFile(
+                    sticker_path.open('rb'), 
+                    filename=filename or sticker_path.name
+                )
+
+        elif isinstance(sticker, Path):
+            if not sticker.exists():
+                raise FileNotFoundError(f"贴纸文件不存在: {sticker}")
+            
+            sticker_input = InputFile(
+                sticker.open('rb'), 
+                filename=filename or sticker.name
+            )
+
+        elif isinstance(sticker, BytesIO):
+            sticker_input = InputFile(
+                sticker, 
+                filename=filename or "[ステッカー].webp"
+            )
+            
+        elif isinstance(sticker, bytes):
+            sticker_input = InputFile(
+                BytesIO(sticker), 
+                filename=filename or "[ステッカー].webp"
+            )
+        else:
+            sticker_input = sticker
+        
+        # 🆕 生成内联键盘（如果没有提供现成的）
+        if reply_markup is None and title:
+            
+            keyboard = []
+            
+            # 添加标题按钮
+            if title:
+                if url:
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            text=f"{title}",
+                            url=url
+                        )
+                    ])
+                else:
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            text=f"{title}",
+                            callback_data=callback_data
+                        )
+                    ])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
+        return await self._retry_operation(
+            self.bot.send_sticker,
+            chat_id=target_chat_id,
+            sticker=sticker_input,
+            emoji=emoji,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup
+        )
+    
     async def send_location(self, chat_id: Optional[int] = None,
                         latitude: float = None,
                         longitude: float = None,
                         title: str = "",
                         address: str = "",
+                        reply_to_message_id: Optional[int] = None,
                         foursquare_id: Optional[str] = None,
                         foursquare_type: Optional[str] = None,
                         google_place_id: Optional[str] = None,
                         google_place_type: Optional[str] = None,
-                        reply_to_message_id: Optional[int] = None,
                         reply_markup: Optional[InlineKeyboardMarkup] = None):
         """
         发送场所信息（包含标题和地址的位置）
@@ -927,6 +1028,73 @@ class TelegramSender:
             message_id=message_id,
             inline_message_id=inline_message_id,
             media=input_media,
+            reply_markup=reply_markup
+        )
+
+    async def edit_message_reply_markup(self, chat_id: Optional[int] = None,
+                                    message_id: Optional[int] = None,
+                                    inline_message_id: Optional[str] = None,
+                                    reply_markup: Optional[InlineKeyboardMarkup] = None):
+        """
+        只编辑消息的内联键盘，不改变消息内容
+        
+        Args:
+            chat_id: 聊天ID，为空时使用默认值
+            message_id: 消息ID
+            inline_message_id: 内联消息ID
+            reply_markup: 新的内联键盘
+            
+        Returns:
+            Message: 编辑后的消息对象
+        """
+        target_chat_id = chat_id or self.default_chat_id
+        if target_chat_id is None and not inline_message_id:
+            raise ValueError("必须提供 chat_id 或 inline_message_id")
+        
+        return await self._retry_operation(
+            self.bot.edit_message_reply_markup,
+            chat_id=target_chat_id,
+            message_id=message_id,
+            inline_message_id=inline_message_id,
+            reply_markup=reply_markup
+        )
+
+    async def update_buttons(self, chat_id: Optional[int] = None,
+                            message_id: Optional[int] = None,
+                            buttons: List[List[Dict[str, str]]] = None,
+                            inline_message_id: Optional[str] = None):
+        """
+        便捷的按钮更新方法
+        
+        Args:
+            chat_id: 聊天ID，为空时使用默认值
+            message_id: 消息ID
+            buttons: 按钮配置列表，格式: [[{"text": "按钮文本", "callback_data": "回调数据"}]]
+            inline_message_id: 内联消息ID
+            
+        Returns:
+            Message: 编辑后的消息对象
+        """
+        if not buttons:
+            reply_markup = None
+        else:
+            keyboard = []
+            for row in buttons:
+                button_row = []
+                for btn in row:
+                    if "url" in btn:
+                        button_row.append(InlineKeyboardButton(btn["text"], url=btn["url"]))
+                    elif "callback_data" in btn:
+                        button_row.append(InlineKeyboardButton(btn["text"], callback_data=btn["callback_data"]))
+                    else:
+                        raise ValueError("按钮必须包含 'url' 或 'callback_data'")
+                keyboard.append(button_row)
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        return await self.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=message_id,
+            inline_message_id=inline_message_id,
             reply_markup=reply_markup
         )
 

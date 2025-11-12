@@ -16,6 +16,7 @@ from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api
 from utils.contact_manager import contact_manager
 from utils.group_manager import group_manager
+from utils.sticker_mapper import add_sticker
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +261,7 @@ async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await query.answer("❌ 失敗")
 
 @CallbackRegistry.register_with_data("add_wecom_contact")
-async def handle_add_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+async def handle_add_wecom_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
     """处理添加企业微信好友按钮"""
     query = update.callback_query
 
@@ -726,6 +727,26 @@ async def handle_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         logger.error(f"确认删除联系人失败: {e}")
         await query.answer(f"❌ 删除失败: {str(e)}", show_alert=True)
+
+@CallbackRegistry.register_with_data("add_sticker")
+async def handle_add_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str, Any]):
+    """处理添加好友按钮"""
+    query = update.callback_query
+
+    if not data['unique_id'] or not data['md5']:
+        return
+    
+    try:
+        unique_id = data['unique_id']
+        md5 = data['md5']
+        size = data['size']
+
+        await add_sticker(unique_id, md5, size)
+        await query.answer(f"✅ 成功")
+      
+    except Exception as e:
+        logger.error(f"❌ 添加贴纸信息失败: {e}")
+        await query.answer("❌ 失敗")
 
 @CallbackRegistry.register("page_info")
 async def handle_page_info(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -284,7 +284,7 @@ async def _send_telethon_sticker(to_wxid: str, message, client) -> bool:
         
         # 尝试从缓存获取贴纸信息
         file_unique_id = f"{message.sticker.id}_{md5_hash[:8]}"
-        sticker_info = get_sticker_info(file_unique_id)
+        sticker_info = await get_sticker_info(file_unique_id)
 
         if sticker_info:
             md5 = sticker_info.get("md5", md5_hash)

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional, Union, BinaryIO
 
 import aiohttp
+import aiofiles
 import whisper
 from PIL import Image
 
@@ -204,6 +205,23 @@ def local_file_to_base64(file_path: str) -> str:
         
     except Exception as e:
         logger.error(f"转换文件为base64失败 {file_path}: {e}")
+        return None
+
+async def local_file_to_bytesio(file_path: str) -> BytesIO | None:
+    """将本地文件转换为BytesIO"""
+    try:
+        if not os.path.exists(file_path):
+            logger.error(f"文件不存在: {file_path}")
+            return None
+            
+        async with aiofiles.open(file_path, 'rb') as f:
+            data = await f.read()
+            file_buffer = BytesIO(data)
+            file_buffer.seek(0)
+            return file_buffer
+        
+    except Exception as e:
+        logger.error(f"转换文件为BytesIO失败 {file_path}: {e}")
         return None
 
 async def process_avatar_from_url(url: str, min_size: int = 512) -> Optional[BytesIO]:

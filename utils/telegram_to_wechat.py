@@ -240,7 +240,7 @@ async def _send_telegram_sticker(to_wxid: str, sticker) -> bool:
     # 提取贴纸的file_unique_id
     file_unique_id = sticker.file_unique_id
     try:
-        sticker_info = get_sticker_info(file_unique_id)
+        sticker_info = await get_sticker_info(file_unique_id)
         payload = {}
 
         if sticker_info:

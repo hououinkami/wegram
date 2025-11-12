@@ -2,11 +2,14 @@ import asyncio
 import logging
 import os
 import re
+import tempfile
 import threading
 from asyncio import Queue
 from io import BytesIO
 from typing import Any, Dict, Optional
 
+import aiofiles
+import aiofiles.os
 import ffmpeg
 import pilk
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -23,6 +26,8 @@ from utils.contact_manager import contact_manager
 from utils.file_processor import async_file_processor
 from utils.group_manager import group_manager
 from utils.message_mapper import msgid_mapping
+from utils.sticker_converter import converter
+from utils.sticker_mapper import get_sticker_id_by_md5
 from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import get_telethon_msg_id
 
@@ -122,7 +127,7 @@ def _get_message_handlers():
         "mmchatroombarannouncememt": _forward_announcememt
     }
 
-async def _forward_text(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: str, **kwargs) -> dict:
+async def _forward_text(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: str, reply_to_message_id: int, **kwargs) -> dict:
     """处理文本消息"""
     if msg_type == 10000:
         sender_name = ""
@@ -134,18 +139,18 @@ async def _forward_text(chat_id: int, msg_type: int, from_wxid: str, sender_name
 
     send_text = f"{sender_name}\n{content}"
     
-    return await telegram_sender.send_text(chat_id, send_text)
+    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
 
-async def _forward_image(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, **kwargs) -> dict:
+async def _forward_image(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, reply_to_message_id: int, **kwargs) -> dict:
     """处理图片消息"""
     return await async_file_processor.send_with_placeholder(
         'photo', f"[{locale.type(msg_type)}]",
-        chat_id, sender_name,
+        chat_id, sender_name, reply_to_message_id,
         wechat_download.get_image,
         msg_id, from_wxid, content
     )
 
-async def _forward_voice(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, message_info: dict, **kwargs) -> dict:
+async def _forward_voice(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, message_info: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理语音消息"""
     success, file = await wechat_download.get_voice(msg_id, message_info['FromUserName'], content)
 
@@ -158,7 +163,7 @@ async def _forward_voice(chat_id: int, msg_type: int, from_wxid: str, sender_nam
         raise Exception("语音转换失败")
     
     # 先发送语音
-    voice_response = await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration)
+    voice_response = await telegram_sender.send_voice(chat_id, ogg_path, sender_name, duration, reply_to_message_id)
 
     if voice_response:
         voice_msgid = voice_response.message_id
@@ -216,7 +221,7 @@ async def _forward_friend_request(chat_id: int, msg_type: int, from_wxid: str, s
     send_text = f"<blockquote>{locale.type(msg_type)}: {from_nickname}</blockquote>\n{content}"
     return await telegram_sender.send_photo(tg_user_id, processed_photo_content, send_text, reply_markup=reply_markup)
 
-async def _forward_contact(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_contact(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理名片信息"""
     contact_msg = content.get('msg', {})
     contact_nickname = contact_msg.get('nickname', '')
@@ -252,27 +257,89 @@ async def _forward_contact(chat_id: int, msg_type: int, from_wxid: str, sender_n
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     send_text = f"{sender_name}\n<blockquote>[{locale.type(msg_type)}]{contact_nickname}</blockquote>"
-    return await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_markup=reply_markup)
+    return await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_to_message_id=reply_to_message_id, reply_markup=reply_markup)
 
-async def _forward_video(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, **kwargs) -> dict:
+async def _forward_video(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, reply_to_message_id: int, **kwargs) -> dict:
     """处理视频消息"""
     return await async_file_processor.send_with_placeholder(
         'video', f"[{locale.type(msg_type)}]",
-        chat_id, sender_name,
+        chat_id, sender_name, reply_to_message_id,
         wechat_download.get_video,
         msg_id, from_wxid, content
     )
 
-async def _forward_sticker(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_sticker(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理贴纸消息"""
-    return await async_file_processor.send_with_placeholder(
-        'animation', f"[{locale.type(msg_type)}].gif",
-        chat_id, sender_name,
-        wechat_download.get_emoji,
-        content
-    )
+    # 所有贴纸均采用动画形式发送
+    # return await async_file_processor.send_with_placeholder(
+    #     'animation', f"[{locale.type(msg_type)}].gif",
+    #     chat_id, sender_name, reply_to_message_id
+    #     wechat_download.get_emoji,
+    #     content
+    # )
 
-async def _forward_location(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+    # 只将静态贴纸采用贴纸形式发送
+    # 获取贴纸信息
+    wx_sticker = content.get('msg', {}).get('emoji', {})
+    sticker_md5 = wx_sticker.get('md5', '')
+    sticker_size = wx_sticker.get('len', '')
+
+    match = re.search(r'<blockquote[^>]*>(.*?)</blockquote>', sender_name, re.DOTALL)
+    sender_name_text = match.group(1) if match else sender_name
+    
+    # 下载贴纸GIF
+    success, sticker_gif, file_name = await wechat_download.get_emoji_file(content)
+
+    # 判断是否为动画
+    gif_info = await converter.analyze_gif(sticker_gif)
+    is_animated = gif_info["is_animated"]
+
+    if is_animated:
+        # 以动画形式发送
+        sticker_bytesio = await tools.local_file_to_bytesio(sticker_gif)
+        return await telegram_sender.send_animation(chat_id, sticker_bytesio, sender_name, reply_to_message_id)
+    else:
+        # 以贴纸形式发送
+        # 检查是否已经存在WebP文件
+        try:
+            webp_filename = file_name.replace('.gif', '.webp')
+
+            DOWNLOAD_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            EMOJI_DIR = os.path.join(DOWNLOAD_DIR, "download", "sticker")
+            webp_filepath = os.path.join(EMOJI_DIR, webp_filename)
+
+            if await aiofiles.os.path.exists(webp_filepath):
+                webp_file = webp_filepath
+            else:
+                webp_file = await converter.gif_to_webp(sticker_gif)
+                
+        except Exception as e:
+            logger.error(f"处理webp文件时出错: {e}")
+            webp_file = await converter.gif_to_webp(sticker_gif)
+
+        result = await telegram_sender.send_sticker(chat_id, webp_file, reply_to_message_id, title=sender_name_text)
+
+        if result and result.sticker:
+            sticker_info = result.sticker
+            sticker_unique_id = sticker_info.file_unique_id
+            callback_data = {
+                "unique_id": sticker_unique_id,
+                "md5": sticker_md5,
+                "size": sticker_size,
+            }
+
+            await telegram_sender.update_buttons(
+                chat_id=chat_id,
+                message_id=result.message_id,
+                buttons=[
+                    [{"text": sender_name_text, "callback_data": create_callback_data("add_sticker", callback_data)}]
+                ]
+            )
+        
+        return result
+
+
+async def _forward_location(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理定位"""
     try:
         location = content.get('msg', {}).get('location', {})
@@ -281,11 +348,11 @@ async def _forward_location(chat_id: int, msg_type: int, from_wxid: str, sender_
         label = location.get('label', '')
         poiname = location.get('poiname', '')
         
-        return await telegram_sender.send_location(chat_id, latitude, longitude, poiname, label)
+        return await telegram_sender.send_location(chat_id, latitude, longitude, poiname, label, reply_to_message_id)
     except (KeyError, TypeError) as e:
         raise Exception("定位信息提取失败")
 
-async def _forward_app_message(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_app_message(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理App消息"""
     app_msg = content.get('msg', {}).get('appmsg', {})
     app_title = app_msg.get('title', '')
@@ -299,9 +366,9 @@ async def _forward_app_message(chat_id: int, msg_type: int, from_wxid: str, send
 
     send_text = f'{sender_name}\n<a href="{app_url}">{app}{app_title}</a>\n<blockquote>{app_des}</blockquote>'
     
-    return await telegram_sender.send_text(chat_id, send_text)
+    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
 
-async def _forward_link(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_link(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理公众号消息"""
     url_items, main_cover_url = message_formatter.extract_url_items(content)
 
@@ -310,40 +377,40 @@ async def _forward_link(chat_id: int, msg_type: int, from_wxid: str, sender_name
     if main_cover_url:
         main_cover = await tools.get_image_from_url(main_cover_url)
         if main_cover:
-            return await telegram_sender.send_photo(chat_id, main_cover, send_text)
+            return await telegram_sender.send_photo(chat_id, main_cover, send_text, reply_to_message_id)
     
     # 若无图片或图片下载失败
-    return await telegram_sender.send_text(chat_id, send_text)
+    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
 
-async def _forward_file(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, **kwargs) -> dict:
+async def _forward_file(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, msg_id: str, reply_to_message_id: int, **kwargs) -> dict:
     """处理文件消息"""
     return await async_file_processor.send_with_placeholder(
         'document', f"[{locale.type(msg_type)}]",
-        chat_id, sender_name,
+        chat_id, sender_name, reply_to_message_id,
         wechat_download.get_file,
         msg_id, from_wxid, content
     )
 
-async def _forward_chat_history(chat_id: int, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_chat_history(chat_id: int, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理聊天记录消息"""
     loop = asyncio.get_event_loop()
     chat_history = await loop.run_in_executor(None, process_chathistory, content)
     
     if chat_history:
         send_text = f"{sender_name}\n{chat_history}"
-        return await telegram_sender.send_text(chat_id, send_text)
+        return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
     else:
         raise Exception("聊天记录处理失败")
 
-async def _forward_miniprogram(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_miniprogram(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理小程序消息"""
     mini_name = content.get('msg', {}).get('appmsg', {}).get('sourcedisplayname', '')
     mini_title = content.get('msg', {}).get('appmsg', {}).get('title', '')
     send_text = f"{sender_name}\n<blockquote>[{locale.type(msg_type)}: {mini_name}]</blockquote>\n{mini_title}"
     
-    return await telegram_sender.send_text(chat_id, send_text)
+    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
 
-async def _forward_channel(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_channel(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理视频号"""
     try:
         finder_feed = content.get("msg", {}).get("appmsg", {}).get("finderFeed", {})
@@ -352,7 +419,7 @@ async def _forward_channel(chat_id: int, msg_type: int, from_wxid: str, sender_n
         channel_content = f"<blockquote>[{locale.type(msg_type)}: {channel_name}]</blockquote>\n{channel_title}"
         send_text = f"{sender_name}\n{channel_content}"
         
-        return await telegram_sender.send_text(chat_id, send_text)
+        return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
     except (KeyError, TypeError) as e:
         raise Exception("视频号信息提取失败")
 
@@ -367,18 +434,18 @@ async def _forward_groupnote(chat_id: int, msg_type: int, from_wxid: str, sender
     except (KeyError, TypeError) as e:
         raise Exception("群接龙信息提取失败")
 
-async def _forward_quote(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_quote(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理引用消息"""
     text = content["msg"]["appmsg"]["title"]
-    quote = content["msg"]["appmsg"]["refermsg"]
-    quote_newmsgid = quote["svrid"]
+    # quote = content["msg"]["appmsg"]["refermsg"]
+    # quote_newmsgid = quote["svrid"]
     
-    quote_tgmsgid = await msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
+    # quote_tgmsgid = await msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
     send_text = f"{sender_name}\n{text}"
     
-    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
+    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
 
-async def _forward_wecom_contact(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_wecom_contact(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理企业微信名片信息"""
     contact_msg = content.get('msg', {})
     contact_nickname = contact_msg.get('nickname', '')
@@ -405,9 +472,9 @@ async def _forward_wecom_contact(chat_id: int, msg_type: int, from_wxid: str, se
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     send_text = f"{sender_name}\n<blockquote>[{locale.type(msg_type)}]{contact_nickname}@{contact_company}</blockquote>"
-    return await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_markup=reply_markup)
+    return await telegram_sender.send_photo(chat_id, processed_photo_content, send_text, reply_to_message_id, reply_markup=reply_markup)
 
-async def _forward_transfer(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_transfer(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理转账"""
     try:
         transfer_info = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {})
@@ -424,11 +491,11 @@ async def _forward_transfer(chat_id: int, msg_type: int, from_wxid: str, sender_
         transfer_content = f"<blockquote>{transfer_title}</blockquote>\n{transfer_money}"
         send_text = f"{sender_name}\n{transfer_content}"
         
-        return await telegram_sender.send_text(chat_id, send_text)
+        return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
     except (KeyError, TypeError) as e:
         raise Exception("转账信息提取失败")
     
-async def _forward_luckymoney(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_luckymoney(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理转账"""
     try:
         lucky_info = content.get('msg', {}).get('appmsg', {}).get('wcpayinfo', {})
@@ -440,15 +507,15 @@ async def _forward_luckymoney(chat_id: int, msg_type: int, from_wxid: str, sende
         send_text = f"{sender_name}\n{lucky_content}"
 
         if lucky_cover:
-            return await telegram_sender.send_photo(chat_id, lucky_cover, send_text)
+            return await telegram_sender.send_photo(chat_id, lucky_cover, send_text, reply_to_message_id)
     
         # 若无图片或图片下载失败
-        return await telegram_sender.send_text(chat_id, send_text)
+        return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
     
     except (KeyError, TypeError) as e:
         raise Exception("转账信息提取失败")
 
-async def _forward_revoke(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
+async def _forward_revoke(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理撤回消息"""
     revoke_msg = content["sysmsg"]["revokemsg"]
     revoke_text = revoke_msg["replacemsg"]
@@ -457,7 +524,7 @@ async def _forward_revoke(chat_id: int, msg_type: int, from_wxid: str, sender_na
     quote_tgmsgid = await msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
     send_text = f"{sender_name}\n<blockquote>{revoke_text}</blockquote>"
     
-    return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id=quote_tgmsgid)
+    return await telegram_sender.send_text(chat_id, send_text, quote_tgmsgid)
 
 async def _forward_pat(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, **kwargs) -> dict:
     """处理拍一拍消息"""
@@ -534,6 +601,24 @@ async def _forward_announcememt(chat_id: int, msg_type: int, from_wxid: str, sen
         return await telegram_sender.send_text(chat_id, send_text)
     except (KeyError, TypeError) as e:
         raise Exception("群通知信息提取失败")
+
+async def _is_quote(content, msg_type = None) -> bool:
+    if not content or msg_type == 1:
+        return None
+    
+    if msg_type == 57:
+        text = content["msg"]["appmsg"]["title"]
+        quote = content["msg"]["appmsg"]["refermsg"]
+        quote_newmsgid = quote["svrid"]
+    else:
+        quote_newmsgid = content.get('msg', {}).get('extcommoninfo', {}).get('refermsg', {}).get('svrid')
+    
+    if quote_newmsgid:
+        quote_tgmsgid = await msgid_mapping.wx_to_tg(quote_newmsgid) or 0 if quote_newmsgid else 0
+        return quote_tgmsgid
+    else:
+        return None
+
 async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tuple:
     """获取联系人显示信息，处理特殊情况"""
     # 先读取已保存的联系人
@@ -806,7 +891,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
                 logger.error(f"处理器执行失败 (类型={msg_type}): {e}", exc_info=True)
                 type_text = f"[{locale.type(msg_type)}]"
                 send_text = f"{handler_params['sender_name']}\n{type_text}"
-                return await telegram_sender.send_text(chat_id, send_text)
+                return await telegram_sender.send_text(chat_id, send_text, handler_params['reply_to_message_id'])
         else:
             # 处理未知消息类型
             logger.warning(f"❓未知消息类型: {msg_type}")
@@ -817,7 +902,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             logger.info(f"💬 类型: {msg_type}, 来自: {handler_params['from_wxid']}")
             logger.info(f"💬 内容: {handler_params['content']}")
             
-            return await telegram_sender.send_text(chat_id, send_text)
+            return await telegram_sender.send_text(chat_id, send_text, handler_params['reply_to_message_id'])
     
     async def _handle_deleted_group(from_wxid: str, handler_params: dict, content: dict, push_content: str, msg_type: Any) -> Optional[dict]:
         """处理被删除的群组"""
@@ -884,6 +969,9 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             elif msg_type == 10002:  # 系统信息
                 msg_type = content['sysmsg']['type']
 
+        # 判断是否包含引用消息
+        reply_to_message_id = await _is_quote(content, msg_type)
+
         # ========== 早期过滤不需要处理的消息 ==========
         if (from_wxid.endswith('@placeholder_foldgroup') or # 激活折叠聊天
             from_wxid == 'notification_messages' or # 系统通知
@@ -926,7 +1014,8 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
             'sender_name': sender_name,
             'content': content,
             'push_content': push_content,
-            'message_info': message_info
+            'message_info': message_info,
+            'reply_to_message_id': reply_to_message_id
         }
         
         # 发送消息并处理响应

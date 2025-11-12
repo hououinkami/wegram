@@ -151,6 +151,93 @@ async def get_emoji(data_json) -> Tuple[bool, str, str]:
         logger.exception(f"下载失败: {str(e)}")
         return False, f"下载失败: {str(e)}", ""
 
+async def get_emoji_file(data_json) -> Tuple[bool, str, str, str]:
+    try:
+        md5 = data_json["msg"]["emoji"]["md5"]
+        data_length = int(data_json["msg"]["emoji"]["len"])
+        url = data_json["msg"]["emoji"]["cdnurl"]
+
+        # 文件名和路径
+        filename = f"{md5}.gif"
+        filepath = os.path.join(EMOJI_DIR, filename)
+
+        # ✅ 异步文件检查
+        try:
+            await aiofiles.os.stat(filepath)
+            # 文件存在
+            return True, filepath, f"{locale.type(47)}.gif"
+        except FileNotFoundError:
+            pass
+        
+        # 利用API请求下载
+        async def get_url_by_api():
+            # 构建请求参数
+            payload = {
+                "Md5": md5,
+                "Wxid": WXID
+            }
+
+            # 发送请求
+            response_data = await wechat_api("GET_EMOJI", payload)
+            
+            # 检查响应数据结构
+            if (response_data and "Data" in response_data):
+                # 检查是否有直接的url
+                if "url" in response_data["Data"]:
+                    url = response_data["Data"]["url"]
+                    return url
+                # 检查是否有emojiList结构
+                elif "emojiList" in response_data["Data"] and response_data["Data"]["emojiList"] and len(response_data["Data"]["emojiList"]) > 0:
+                    if "url" in response_data["Data"]["emojiList"][0]:
+                        url = response_data["Data"]["emojiList"][0]["url"]
+                        return url
+                    else:
+                        logger.error("emojiList中找不到url字段")
+                        return None
+                else:
+                    logger.error("响应数据中找不到url")
+                    return None
+            else:
+                logger.error("响应数据格式不正确")
+                return None
+        
+        # 如果原始URL为空，尝试通过API获取
+        if not url or url == "":
+            api_url = await get_url_by_api()
+            if api_url:
+                url = api_url
+            else:
+                logger.error("无法获取有效的URL")
+                return False, "无法获取有效的URL", ""
+        
+        url = str(url) if url else ""
+        if not url or not url.startswith('http'):
+            raise ValueError("Empty URL provided")
+
+        # 下载文件到内存并备份到磁盘
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as file_response:
+                if file_response.status == 200:
+                    # 读取所有数据到内存
+                    data = await file_response.read()
+                    
+                    # ✅ 异步备份到磁盘
+                    try:
+                        await aiofiles.os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                        
+                        async with aiofiles.open(filepath, 'wb') as f:
+                            await f.write(data)
+                        
+                        logger.debug(f"文件已备份到: {filepath}")
+                    except Exception as e:
+                        logger.warning(f"备份文件失败: {e}")
+                    
+                    return True, filepath, f"{locale.type(47)}.gif"
+                    
+    except Exception as e:
+        logger.exception(f"下载失败: {str(e)}")
+        return False, f"下载失败: {str(e)}", ""
+
 async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
     try:
         md5 = data_json["msg"]["voicemsg"]["aeskey"]
