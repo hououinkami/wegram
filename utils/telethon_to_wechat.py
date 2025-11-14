@@ -13,7 +13,7 @@ from telethon.events import NewMessage
 from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl, MessageEntityBlockquote
 
 import config
-from config import LOCALE as locale
+from config import locale
 from api import wechat_contacts, wechat_login
 from api.wechat_api import wechat_api
 from api.telegram_sender import telegram_sender

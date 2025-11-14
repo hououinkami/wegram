@@ -7,7 +7,7 @@ from typing import Any, Dict, Set
 from aiohttp import web
 
 import config
-from config import LOCALE as locale
+from config import locale
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
 from service.wechat_rabbitmq import MessageDeduplicator, ContactMessageProcessor

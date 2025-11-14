@@ -11,7 +11,7 @@ import aiofiles
 import aiofiles.os
 
 import config
-from config import LOCALE as locale
+from config import locale
 from api.wechat_api import wechat_api
 
 # 获取模块专用的日志记录器

@@ -9,7 +9,7 @@ from typing import List, Dict, Optional, Any
 from telegram import InputMediaPhoto, InputMediaVideo
 
 import config
-from config import LOCALE as locale
+from config import locale
 from utils import message_formatter
 from utils import tools
 from api.wechat_api import wechat_api

@@ -18,7 +18,7 @@ import aiofiles
 import whisper
 from PIL import Image
 
-from config import LOCALE as locale
+from config import locale
 from service.telethon_client import get_client
 from utils.message_formatter import escape_html_chars
 

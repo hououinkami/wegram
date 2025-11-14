@@ -11,7 +11,7 @@ from telegram.error import NetworkError, TelegramError, TimedOut
 from telegram.request import HTTPXRequest
 
 import config
-from config import LOCALE as locale
+from config import locale
 from utils import tools
 from utils.message_formatter import escape_html_chars, escape_markdown_chars, split_text, get_telegram_text_length
 

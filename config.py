@@ -4,6 +4,15 @@ from utils.locales import Locale
 
 # 语言
 LANG = os.getenv("LANG", "zh")
+locale = Locale(LANG)
+
+# 下载目录
+DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "download")
+IMAGE_DIR = os.path.join(DOWNLOAD_DIR, "image")
+VIDEO_DIR = os.path.join(DOWNLOAD_DIR, "video")
+EMOJI_DIR = os.path.join(DOWNLOAD_DIR, "sticker")
+FILE_DIR = os.path.join(DOWNLOAD_DIR, "file")
+VOICE_DIR = os.path.join(DOWNLOAD_DIR, "voice")
 
 # Telegram Bot
 TG_MODE = os.getenv("TG_MODE", "polling")
@@ -41,8 +50,6 @@ if not RABBITMQ_URL:
     raise ValueError("RABBITMQ_URL environment variable is required")
 WX_CHECK_INTERVAL = int(os.getenv("WX_CHECK_INTERVAL", "300"))
 PUSH_WXID = "49925190240@chatroom"
-
-LOCALE = Locale(LANG)
 
 # 黑名单功能开关
 ENABLE_BLACKLIST = os.getenv('ENABLE_BLACKLIST', 'true').lower() == 'true'

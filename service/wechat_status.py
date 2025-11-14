@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 import config
-from config import LOCALE as locale
+from config import locale
 import api.wechat_login as wechat_login
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id

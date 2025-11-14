@@ -16,7 +16,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 
 import config
-from config import LOCALE as locale
+from config import locale
 from api import wechat_contacts, wechat_download
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_client, get_user_id

@@ -13,7 +13,7 @@ from aio_pika.abc import AbstractIncomingMessage
 
 import config
 from api import wechat_login
-from config import LOCALE as locale
+from config import locale
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
 from utils.wechat_to_telegram import process_rabbitmq_message

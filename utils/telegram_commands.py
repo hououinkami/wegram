@@ -11,7 +11,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import config
-from config import LOCALE as locale
+from config import locale
 from api import wechat_contacts, wechat_login
 from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api

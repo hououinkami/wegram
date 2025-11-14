@@ -9,7 +9,7 @@ import aiosqlite
 
 import config
 from api import wechat_contacts
-from config import LOCALE as locale
+from config import locale
 from api.telegram_sender import telegram_sender
 from api.wechat_api import wechat_api
 from utils.group_binding import create_group
