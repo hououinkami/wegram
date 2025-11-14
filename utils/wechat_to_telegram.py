@@ -115,6 +115,7 @@ def _get_message_handlers():
         51: _forward_channel,
         53: _forward_groupnote,
         57: _forward_quote,
+        63: _forward_live,
         66: _forward_wecom_contact,
         2000: _forward_transfer,
         2001: _forward_luckymoney,
@@ -441,6 +442,19 @@ async def _forward_quote(chat_id: int, msg_type: int, from_wxid: str, sender_nam
     send_text = f"{sender_name}\n{text}"
     
     return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
+
+async def _forward_channel(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
+    """处理直播"""
+    try:
+        finder_live = content.get("msg", {}).get("appmsg", {}).get("finderLive", {})
+        live_name = finder_live["nickname"]
+        live_title = finder_live["desc"]
+        live_content = f"<blockquote>[{locale.type(msg_type)}: {live_name}]</blockquote>\n{live_title}"
+        send_text = f"{sender_name}\n{live_content}"
+        
+        return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
+    except (KeyError, TypeError) as e:
+        raise Exception("直播信息提取失败")
 
 async def _forward_wecom_contact(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理企业微信名片信息"""
