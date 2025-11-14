@@ -283,7 +283,7 @@ async def process_moment_data(data):
                     
                     if img_url:
                         try:
-                            bytes_io_data = await tools.get_image_from_url(img_url)
+                            bytes_io_data, _ = await tools.get_file_from_url(img_url)
                             caption = "\n".join(caption_parts) if i == 0 and caption_parts else ""
                             input_media = InputMediaPhoto(media=bytes_io_data, caption=caption)
                             media_list.append(input_media)

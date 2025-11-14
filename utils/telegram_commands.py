@@ -286,7 +286,7 @@ class BotCommands:
             
             # 发送搜索结果
             if avatar_url:
-                processed_photo_content = await tools.get_image_from_url(avatar_url)
+                processed_photo_content, _ = await tools.get_file_from_url(avatar_url)
 
             callback_data = {
                 "Opcode": 2,

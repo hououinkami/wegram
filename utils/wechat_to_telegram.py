@@ -27,7 +27,6 @@ from utils.file_processor import async_file_processor
 from utils.group_manager import group_manager
 from utils.message_mapper import msgid_mapping
 from utils.sticker_converter import converter
-from utils.sticker_mapper import get_sticker_id_by_md5
 from utils.telegram_callbacks import create_callback_data
 from utils.telegram_to_wechat import get_telethon_msg_id
 
@@ -209,7 +208,7 @@ async def _forward_friend_request(chat_id: int, msg_type: int, from_wxid: str, s
     }
 
     if avatar_url:
-        processed_photo_content = await tools.get_image_from_url(avatar_url)
+        processed_photo_content, _ = await tools.get_file_from_url(avatar_url)
 
     keyboard = [
         [InlineKeyboardButton(
@@ -247,7 +246,7 @@ async def _forward_contact(chat_id: int, msg_type: int, from_wxid: str, sender_n
     }
 
     if contact_avatar:
-        processed_photo_content = await tools.get_image_from_url(contact_avatar)
+        processed_photo_content, _ = await tools.get_file_from_url(contact_avatar)
 
     keyboard = [
         [InlineKeyboardButton(
@@ -311,11 +310,11 @@ async def _forward_sticker(chat_id: int, msg_type: int, from_wxid: str, sender_n
             if await aiofiles.os.path.exists(webp_filepath):
                 webp_file = webp_filepath
             else:
-                webp_file = await converter.gif_to_webp(sticker_gif)
+                webp_file = await converter.image_to_webp(sticker_gif)
                 
         except Exception as e:
             logger.error(f"处理webp文件时出错: {e}")
-            webp_file = await converter.gif_to_webp(sticker_gif)
+            webp_file = await converter.image_to_webp(sticker_gif)
 
         result = await telegram_sender.send_sticker(chat_id, webp_file, reply_to_message_id, title=sender_name_text)
 
@@ -337,7 +336,6 @@ async def _forward_sticker(chat_id: int, msg_type: int, from_wxid: str, sender_n
             )
         
         return result
-
 
 async def _forward_location(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理定位"""
@@ -375,7 +373,7 @@ async def _forward_link(chat_id: int, msg_type: int, from_wxid: str, sender_name
     send_text = f"{sender_name}\n{url_items}"
     
     if main_cover_url:
-        main_cover = await tools.get_image_from_url(main_cover_url)
+        main_cover, _ = await tools.get_file_from_url(main_cover_url)
         if main_cover:
             return await telegram_sender.send_photo(chat_id, main_cover, send_text, reply_to_message_id)
     
@@ -462,7 +460,7 @@ async def _forward_wecom_contact(chat_id: int, msg_type: int, from_wxid: str, se
     }
 
     if contact_avatar:
-        processed_photo_content = await tools.get_image_from_url(contact_avatar)
+        processed_photo_content, _ = await tools.get_file_from_url(contact_avatar)
 
     keyboard = [
         [InlineKeyboardButton(
@@ -502,7 +500,7 @@ async def _forward_luckymoney(chat_id: int, msg_type: int, from_wxid: str, sende
         lucky_title = lucky_info.get('receivertitle')
         lucky_url = lucky_info.get('iconurl')
 
-        lucky_cover = await tools.get_image_from_url(lucky_url)
+        lucky_cover, _ = await tools.get_file_from_url(lucky_url)
         lucky_content = f"<blockquote>[{locale.type(msg_type)}]</blockquote>\n{lucky_title}"
         send_text = f"{sender_name}\n{lucky_content}"
 

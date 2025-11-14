@@ -6,39 +6,242 @@ import re
 import requests
 import tempfile
 import time
+import urllib.parse
 import warnings
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Optional, Union, BinaryIO
+from typing import Optional, Union, Tuple
 
 import aiohttp
 import aiofiles
 import whisper
 from PIL import Image
 
+from config import LOCALE as locale
 from service.telethon_client import get_client
 from utils.message_formatter import escape_html_chars
 
 logger = logging.getLogger(__name__)
 
-async def get_image_from_url(url: str) -> Optional[BytesIO]:
-    """从URL下载图片并处理为BytesIO对象"""
+async def get_file_from_url(
+    url: str, 
+    file_type: str = "auto",
+    save_file: bool = False, 
+    save_dir: str = "/app/download"
+) -> Union[Tuple[Optional[BytesIO], str], Tuple[Optional[str], str]]:
+    """从URL下载任意类型的文件并处理为BytesIO对象或保存为文件"""
+
+    # 根据file_type设置默认文件名
+    default_names = {
+        "photo": locale.type(3),
+        "document": locale.type(6), 
+        "video": locale.type(43),
+        "sticker": locale.type(47),
+        "audio": locale.type(34),
+        "auto": locale.type(6)
+    }
+    default_filename = default_names.get(file_type) or file_type or locale.type(6)
+
     try:
+        # ✅ 增强请求头，特别针对QQ文件
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Upgrade-Insecure-Requests': '1'
         }
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                response.raise_for_status()
-                image_data = await response.read()
+        # ✅ 如果是QQ域名，添加特殊处理
+        if 'qlogo.cn' in url or 'ftn.qq.com' in url or 'gzc-download.ftn.qq.com' in url:
+            headers['Referer'] = 'https://web.qun.qq.com/'
+            logger.debug(f"检测到QQ文件链接，添加Referer头")
         
-        return BytesIO(image_data)
+        # ✅ 增加超时时间和重试机制
+        timeout = aiohttp.ClientTimeout(total=60, connect=10)  # 总超时60秒
+        connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
+        
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=connector,
+            headers=headers
+        ) as session:
+            
+            # ✅ 添加重试机制
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    logger.debug(f"尝试下载文件 (第{attempt+1}/{max_retries}次): {url}")
+                    
+                    async with session.get(
+                        url, 
+                        allow_redirects=True,  # ✅ 允许重定向
+                        max_redirects=10       # ✅ 最多10次重定向
+                    ) as response:
+                        
+                        # ✅ 详细的状态码检查
+                        logger.debug(f"响应状态码: {response.status}")
+                        logger.debug(f"响应头: {dict(response.headers)}")
+                        
+                        if response.status == 403:
+                            logger.error("403 Forbidden - 可能需要登录或权限")
+                            return None, default_filename
+                        elif response.status == 404:
+                            logger.error("404 Not Found - 文件不存在或链接已失效")
+                            return None, default_filename
+                        elif response.status >= 400:
+                            logger.error(f"HTTP错误: {response.status} - {response.reason}")
+                            if attempt == max_retries - 1:  # 最后一次尝试
+                                return None, default_filename
+                            continue
+                        
+                        response.raise_for_status()
+                        
+                        # ✅ 检查Content-Type
+                        content_type = response.headers.get('Content-Type', '')
+                        content_length = response.headers.get('Content-Length', '0')
+                        logger.debug(f"Content-Type: {content_type}")
+                        logger.debug(f"Content-Length: {content_length}")
+                        
+                        # ✅ 获取文件名
+                        filename = get_filename_from_response(response, url, default_filename)
+                        logger.debug(f"解析到的文件名: {filename}")
+                        
+                        # ✅ 如果需要保存文件，创建完整路径
+                        file_path = None
+                        if save_file:
+                            os.makedirs(save_dir, exist_ok=True)  # 确保目录存在
+                            file_path = os.path.join(save_dir, filename)
+                            logger.debug(f"文件将保存到: {file_path}")
+                        
+                        # ✅ 分块下载大文件
+                        file_data = BytesIO() if not save_file else None
+                        downloaded_size = 0
+                        chunk_size = 8192  # 8KB chunks
+                        
+                        if save_file:
+                            # 保存文件模式：直接写入文件
+                            with open(file_path, 'wb') as f:
+                                async for chunk in response.content.iter_chunked(chunk_size):
+                                    if chunk:
+                                        f.write(chunk)
+                                        downloaded_size += len(chunk)
+                        else:
+                            # BytesIO模式：写入内存
+                            async for chunk in response.content.iter_chunked(chunk_size):
+                                if chunk:
+                                    file_data.write(chunk)
+                                    downloaded_size += len(chunk)
+                        
+                        logger.debug(f"下载完成，文件大小: {downloaded_size} bytes")
+                        
+                        if downloaded_size == 0:
+                            logger.warning("下载的文件数据为空")
+                            return None, filename
+                        
+                        # ✅ 根据模式返回不同结果
+                        if save_file:
+                            return file_path, filename
+                        else:
+                            # ✅ 重置BytesIO指针到开头
+                            file_data.seek(0)
+                            return file_data, filename
+                            
+                except aiohttp.ClientError as e:
+                    logger.warning(f"第{attempt+1}次下载失败: {e}")
+                    if attempt == max_retries - 1:
+                        raise
+                    await asyncio.sleep(1)  # 重试前等待1秒
+                    
+        return None, default_filename
+        
+    except aiohttp.ClientError as e:
+        logger.error(f"网络请求失败: {e}")
+        return None, default_filename
+    except asyncio.TimeoutError as e:
+        logger.error(f"下载超时: {e}")
+        return None, default_filename
+    except Exception as e:
+        logger.error(f"下载文件失败: {e}", exc_info=True)
+        return None, default_filename
+
+def get_filename_from_response(response, url: str, default_filename: str) -> str:
+    """从响应中获取文件名"""
+    try:
+        # ✅ 优先从Content-Disposition获取
+        content_disposition = response.headers.get('Content-Disposition', '')
+        if content_disposition:
+            # 支持多种编码格式
+            patterns = [
+                r'filename\*=UTF-8\'\'([^;]+)',  # RFC 5987
+                r'filename\*=([^;]+)',
+                r'filename="([^"]+)"',
+                r'filename=([^;]+)'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, content_disposition, re.IGNORECASE)
+                if match:
+                    filename = match.group(1).strip()
+                    # URL解码
+                    try:
+                        filename = urllib.parse.unquote(filename)
+                        if filename and filename != 'undefined':
+                            logger.debug(f"从Content-Disposition获取文件名: {filename}")
+                            return filename
+                    except:
+                        pass
+        
+        # ✅ 从URL参数获取文件名
+        if '?fname=' in url or '&fname=' in url:
+            parsed_url = urllib.parse.urlparse(url)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            
+            if 'fname' in query_params:
+                fname = query_params['fname'][0]
+                if fname:
+                    logger.debug(f"从URL参数获取文件名: {fname}")
+                    return fname
+        
+        # ✅ 从URL路径获取文件名
+        parsed_url = urllib.parse.urlparse(url)
+        path = urllib.parse.unquote(parsed_url.path)
+        filename = os.path.basename(path)
+        
+        if filename and '.' in filename:
+            logger.debug(f"从URL路径获取文件名: {filename}")
+            return filename
+        
+        # ✅ 根据Content-Type推断扩展名
+        content_type = response.headers.get('Content-Type', '').lower()
+        extension = ''
+        
+        if 'pdf' in content_type:
+            extension = '.pdf'
+        elif 'image/jpeg' in content_type:
+            extension = '.jpg'
+        elif 'image/png' in content_type:
+            extension = '.png'
+        elif 'image/gif' in content_type:
+            extension = '.gif'
+        elif 'video/mp4' in content_type:
+            extension = '.mp4'
+        elif 'audio' in content_type:
+            extension = '.mp3'
+        
+        if extension:
+            return f"{default_filename}{extension}"
+        
+        return default_filename
         
     except Exception as e:
-        logger.error(f"下载处理图片失败: {e}")
-        return None
+        logger.warning(f"解析文件名失败: {e}")
+        return default_filename
 
 def parse_time_without_seconds(time_str):
     """解析时间并忽略秒数"""
@@ -50,7 +253,7 @@ def parse_time_without_seconds(time_str):
         logger.warning(f"无法解析时间格式: {time_str}，使用当前时间")
         return datetime.now()
 
-async def telegram_file_to_base64(video_obj=None,
+async def telegram_file_to_base64_smart(video_obj=None,
                                 chat_id=None, 
                                 message_id=None,
                                 size_threshold_mb: int = 20,
@@ -170,6 +373,33 @@ async def _download_via_telethon(chat_id, message_id):
     
     return file_base64
 
+async def telegram_file_to_path(file_id, save_dir="../download"):
+    """通过file_id下载文件到指定目录"""
+    try:
+        from api.telegram_sender import telegram_sender
+        
+        # Step 1: 获取文件信息
+        file = await telegram_sender.get_file(file_id)
+        
+        # Step 2: 生成文件名
+        original_path = file.file_path
+        if original_path:
+            filename = os.path.basename(original_path)
+        else:
+            filename = f"{file_id}"
+        
+        # Step 3: 构建保存路径
+        save_path = os.path.join(save_dir, filename)
+        
+        # Step 4: 下载文件到指定路径
+        await file.download_to_drive(save_path)
+        
+        return save_path
+        
+    except Exception as e:
+        logger.error(f"下载Telegram文件失败: {e}")
+        return False
+
 async def telegram_file_to_base64_by_file_id(file_id):
     """通过file_id获取文件并转换为 Base64 格式"""
     try:
@@ -227,7 +457,7 @@ async def local_file_to_bytesio(file_path: str) -> BytesIO | None:
 async def process_avatar_from_url(url: str, min_size: int = 512) -> Optional[BytesIO]:
     """从URL下载图片并处理为头像格式"""
     try:
-        image_bytesio = await get_image_from_url(url)
+        image_bytesio, _ = await get_file_from_url(url)
         if image_bytesio is None:
             return None
         
@@ -305,31 +535,6 @@ def multi_get(data, *keys, default=''):
             if value is not None:
                 return value
     return default
-
-# 全局模型缓存
-_model_cache = {}
-
-def _get_model(model_size="base", model_dir=None):
-    """获取或加载模型（M2 优化版本）"""
-    cache_key = f"{model_size}_{model_dir}"
-    
-    if cache_key not in _model_cache:
-        logger.info(f"🤖 正在加载 Whisper 模型: {model_size}")
-        
-        # 加载模型并忽略警告
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
-            warnings.filterwarnings("ignore", category=UserWarning)
-            
-            model = whisper.load_model(model_size, download_root=model_dir)
-            
-            # 移动到最佳设备
-            model = model.to("cpu")
-        
-        _model_cache[cache_key] = model
-        logger.info(f"✅ 模型加载完成")
-    
-    return _model_cache[cache_key]
 
 def get_60s(format_type="text"):
     """获取API内容并格式化为指定格式
@@ -416,6 +621,31 @@ def get_60s(format_type="text"):
     except Exception as e:
         logger.error(f"❌ 错误: {e}")
         return None
+
+# 全局模型缓存
+_model_cache = {}
+
+def _get_model(model_size="base", model_dir=None):
+    """获取或加载模型（M2 优化版本）"""
+    cache_key = f"{model_size}_{model_dir}"
+    
+    if cache_key not in _model_cache:
+        logger.info(f"🤖 正在加载 Whisper 模型: {model_size}")
+        
+        # 加载模型并忽略警告
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+            warnings.filterwarnings("ignore", category=UserWarning)
+            
+            model = whisper.load_model(model_size, download_root=model_dir)
+            
+            # 移动到最佳设备
+            model = model.to("cpu")
+        
+        _model_cache[cache_key] = model
+        logger.info(f"✅ 模型加载完成")
+    
+    return _model_cache[cache_key]
 
 async def voice_to_text(voice_input: Union[str, BytesIO], language="zh"):
     """

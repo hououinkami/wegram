@@ -216,7 +216,7 @@ async def _send_telegram_video(to_wxid: str, video, chat_id, telethon_msg_id) ->
     
     try:
         thumb_base64 = await tools.telegram_file_to_base64_by_file_id(thumb_file_id)
-        video_base64 = await tools.telegram_file_to_base64(video, int(chat_id), telethon_msg_id)
+        video_base64 = await tools.telegram_file_to_base64_smart(video, int(chat_id), telethon_msg_id)
 
         payload = {
             "Base64": video_base64,
