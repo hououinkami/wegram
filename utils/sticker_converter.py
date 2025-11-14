@@ -7,7 +7,6 @@ import tempfile
 from io import BytesIO
 from typing import Optional, Union, Dict, Any, Tuple
 
-
 import ffmpeg
 from lottie import objects, parsers
 from lottie.exporters import gif
@@ -898,11 +897,11 @@ class ConverterHelper:
             logger.error(f'Error during WebM validation: {error_msg}')
             return False, analysis_result
 
-    async def gif_to_webp(self, input_file: Union[str, BytesIO, bytes], output_file: Optional[str] = None, 
+    async def image_to_webp(self, input_file: Union[str, BytesIO, bytes], output_file: Optional[str] = None, 
                         frame_index: Optional[int] = None, max_size: int = 512, quality: int = 80,
                         static: bool = False) -> str:
         """
-        将 GIF 转换为 WebP 格式的贴纸
+        将 图片 转换为 WebP 格式的贴纸
         
         Args:
             input_file: 输入文件路径或字节数据
@@ -917,12 +916,17 @@ class ConverterHelper:
         """
         try:
             if output_file is None:
-                output_file = self._generate_output_filename(input_file, "gif_converted").replace('.gif', '.webp')
+                # 根据输入文件类型生成输出文件名
+                if isinstance(input_file, str):
+                    base_name = os.path.splitext(os.path.basename(input_file))[0]
+                    directory = os.path.dirname(input_file)
+                    output_file = os.path.join(directory, f"{base_name}.webp") if directory else f"{base_name}.webp"
+                else:
+                    output_file = "converted_image.webp"
 
             # 处理输入文件
-            # 处理不同类型的输入
             if isinstance(input_file, (bytes, BytesIO)):
-                with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as temp_file:
+                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
                     if isinstance(input_file, bytes):
                         temp_file.write(input_file)
                     else:  # BytesIO
@@ -932,41 +936,50 @@ class ConverterHelper:
             else:
                 temp_input = input_file
 
-            # 使用独立的GIF分析函数
-            # gif_info = await self.analyze_gif(temp_input)
+            # 获取图片格式
+            with Image.open(temp_input) as img:
+                image_type =  img.format.lower() if img.format else 'gif'
             
             try:
+                if image_type == 'gif':
                 # 方法1: 优先使用 FFmpeg 转换（支持动画和静态）
-                if frame_index is None and not static:
-                    # 保留动画
-                    success = await self._gif_to_webp_animated_ffmpeg(temp_input, output_file, max_size, quality)
+                    if frame_index is None and not static:
+                        # 保留动画
+                        success = await self._gif_to_webp_animated_ffmpeg(temp_input, output_file, max_size, quality)
+                    else:
+                        # 提取静态帧
+                        success = await self._gif_to_webp_static_ffmpeg(temp_input, output_file, frame_index or 0, max_size, quality)
                 else:
-                    # 提取静态帧
-                    success = await self._gif_to_webp_static_ffmpeg(temp_input, output_file, frame_index or 0, max_size, quality)
+                    # 其他格式（PNG/JPG/JPEG/WEBP等）转换为静态 WebP
+                    success = await self._image_to_webp_ffmpeg(temp_input, output_file, max_size, quality)
                 
                 if success:
-                    logger.info(f'✅ GIF to WebP conversion successful (FFmpeg): {output_file}')
+                    logger.info(f'✅ {image_type} to WebP conversion successful (FFmpeg): {output_file}')
                     return output_file
                 
             except Exception as e:
                 logger.warning(f'FFmpeg conversion failed, trying PIL: {e}')
             
             # 方法2: 回退到 PIL
-            if frame_index is None and not static:
-                # 保留动画
-                success = await self._gif_to_webp_animated_pil(temp_input, output_file, max_size, quality)
+            if image_type == 'gif':
+                if frame_index is None and not static:
+                    # 保留动画
+                    success = await self._gif_to_webp_animated_pil(temp_input, output_file, max_size, quality)
+                else:
+                    # 提取静态帧
+                    success = await self._gif_to_webp_static_pil(temp_input, output_file, frame_index or 0, max_size, quality)
             else:
-                # 提取静态帧
-                success = await self._gif_to_webp_static_pil(temp_input, output_file, frame_index or 0, max_size, quality)
+                 # 其他格式转换为静态 WebP
+                success = await self._image_to_webp_pil(temp_input, output_file, max_size, quality)
             
             if success:
-                logger.info(f'✅ GIF to WebP conversion successful (PIL): {output_file}')
+                logger.info(f'✅ {image_type} to WebP conversion successful (PIL): {output_file}')
                 return output_file
             else:
                 raise Exception('Both FFmpeg and PIL conversion methods failed')
 
         except Exception as err:
-            logger.error(f'Error during GIF to WebP conversion: {err}')
+            logger.error(f'Error during {image_type} to WebP conversion: {err}')
             raise err
         
         finally:
@@ -1143,6 +1156,83 @@ class ConverterHelper:
                 
         except Exception as e:
             logger.warning(f'PIL static conversion error: {e}')
+            return False
+        
+    async def _image_to_webp_ffmpeg(self, input_file: str, output_file: str, max_size: int, quality: int) -> bool:
+        """使用 FFmpeg 转换静态图片为 WebP"""
+        try:
+            cmd = [
+                'ffmpeg', '-i', input_file,
+                '-c:v', 'libwebp',
+                '-pix_fmt', 'yuva420p',  # 支持透明度
+                '-vf', f'scale={max_size}:{max_size}:force_original_aspect_ratio=decrease,pad={max_size}:{max_size}:(ow-iw)/2:(oh-ih)/2:color=0x00000000',
+                '-lossless', '0',  # 有损压缩以控制文件大小
+                '-compression_level', '4',
+                '-quality', str(quality),
+                '-preset', 'default',
+                '-f', 'webp',
+                '-y', output_file
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+            
+            if process.returncode == 0 and os.path.exists(output_file):
+                logger.info('FFmpeg static image to WebP conversion successful')
+                return True
+            else:
+                error_msg = stderr.decode('utf-8', errors='ignore') if stderr else 'Unknown error'
+                logger.warning(f'FFmpeg static image conversion failed: {error_msg}')
+                return False
+                
+        except Exception as e:
+            logger.warning(f'FFmpeg static image conversion error: {e}')
+            return False
+
+    async def _image_to_webp_pil(self, input_file: str, output_file: str, max_size: int, quality: int) -> bool:
+        """使用 PIL 转换静态图片为 WebP"""
+        try:
+            with Image.open(input_file) as img:
+                # 转换为 RGBA 模式以支持透明度
+                if img.mode != 'RGBA':
+                    # 🔍 特殊处理：保留 PNG 的透明度
+                    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                        img = img.convert('RGBA')
+                    else:
+                        # JPG 等不支持透明度的格式
+                        img = img.convert('RGB')
+                        # 创建 RGBA 图像，白色背景
+                        rgba_img = Image.new('RGBA', img.size, (255, 255, 255, 255))
+                        rgba_img.paste(img, (0, 0))
+                        img = rgba_img
+                
+                # 调整尺寸
+                resized_img = await self._resize_image_with_padding(img, max_size)
+                
+                # 保存为 WebP
+                save_kwargs = {
+                    'format': 'WEBP',
+                    'quality': quality,
+                    'method': 6,
+                    'lossless': False
+                }
+                
+                # 🔍 如果图像有透明度，确保保存时保留
+                if resized_img.mode == 'RGBA':
+                    save_kwargs['save_all'] = True
+                
+                resized_img.save(output_file, **save_kwargs)
+                
+                logger.info('PIL static image to WebP conversion successful')
+                return True
+                
+        except Exception as e:
+            logger.warning(f'PIL static image conversion error: {e}')
             return False
 
     async def _resize_image_with_padding(self, image: Image.Image, max_size: int) -> Image.Image:
