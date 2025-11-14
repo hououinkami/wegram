@@ -253,16 +253,86 @@ def parse_time_without_seconds(time_str):
         logger.warning(f"无法解析时间格式: {time_str}，使用当前时间")
         return datetime.now()
 
-async def telegram_file_to_base64_smart(video_obj=None,
-                                chat_id=None, 
-                                message_id=None,
-                                size_threshold_mb: int = 20,
-                                force_method: Optional[str] = None):
+async def get_telegram_file(
+    file_id: str = None,
+    file_obj = None,
+    chat_id = None,
+    message_id = None,
+    size_threshold_mb: int = 20,
+    force_method: Optional[str] = None,
+    save_file: bool = False,
+    save_dir: str = "/app/download",
+    filename: str = None
+) -> Union[str, bool]:
     """
-    获取文件并转换为 Base64 格式
+    统一的Telegram文件获取接口
     
     Args:
-        video_obj: API的video对象（用于API下载）
+        file_id: 文件ID（直接通过Bot API下载）
+        file_obj: API的video对象（用于API下载）
+        chat_id: 聊天ID（用于Telethon下载）
+        message_id: 消息ID（用于Telethon下载）
+        size_threshold_mb: 文件大小阈值(MB)
+        force_method: 强制使用的方法 ('api' 或 'telethon')
+        save_file: 是否保存文件
+        save_dir: 文件保存目录（仅当output_type="path"时使用）
+    
+    Returns:
+        str: Base64字符串或文件路径，失败返回False
+    """
+    try:
+        # 参数验证
+        if not any([file_id, file_obj, (chat_id and message_id)]):
+            raise ValueError("必须提供 file_id 或 file_obj 或 (chat_id + message_id)")
+        
+        # 根据输出类型调用相应函数
+        if not save_file:
+            return await telegram_file_to_base64(
+                file_id=file_id,
+                file_obj=file_obj,
+                chat_id=chat_id,
+                message_id=message_id,
+                size_threshold_mb=size_threshold_mb,
+                force_method=force_method
+            )
+        
+        else:
+            if not file_id:
+                # 如果没有file_id，需要先通过其他方式获取
+                if file_obj:
+                    file_id = file_obj.file_id
+                else:
+                    raise ValueError("保存文件模式目前只支持通过 file_id 或 file_obj.file_id")
+            
+            return await telegram_file_to_path(
+                file_id=file_id,
+                file_obj=file_obj,
+                chat_id=chat_id,
+                message_id=message_id,
+                size_threshold_mb=size_threshold_mb,
+                force_method=force_method,
+                save_dir=save_dir,
+                filename=filename
+            )
+            
+    except Exception as e:
+        logger.error(f"❌ get_telegram_file 失败: {e}")
+        return False
+
+async def telegram_file_to_base64(
+        file_id: str = None,
+        file_obj=None,
+        chat_id=None, 
+        message_id=None,
+        size_threshold_mb: int = 20,
+        force_method: Optional[str] = None
+    ):
+    """
+    下载Telegram文件并转换为 Base64 格式
+    
+    Args:
+        file_id: 文件ID（直接通过Bot API下载）
+        file_obj: API的video对象（用于API下载）
         chat_id: 聊天ID（用于Telethon下载）
         message_id: 消息ID（用于Telethon下载）
         size_threshold_mb: 文件大小阈值(MB)，超过此大小使用telethon下载
@@ -273,31 +343,35 @@ async def telegram_file_to_base64_smart(video_obj=None,
     """
     try:        
         # 参数验证
-        if not video_obj and not (chat_id and message_id):
-            raise ValueError("必须提供 video_obj 或者 (chat_id + message_id)")
+        if not any([file_id, file_obj, (chat_id and message_id)]):
+            raise ValueError("必须提供 file_id 或 file_obj 或 (chat_id + message_id)")
         
+        # 如果有file_id，优先使用（最简单的方式）
+        if file_id:
+            return await _download_via_api(file_id)
+
         # 如果强制指定方法
         if force_method == 'api':
-            if not video_obj:
-                raise ValueError("使用API方法必须提供video_obj")
-            return await _download_via_api(video_obj)
+            if not file_obj:
+                raise ValueError("使用API方法必须提供file_obj")
+            return await _download_via_api(file_obj.file_id)
         elif force_method == 'telethon':
             if not (chat_id and message_id):
                 raise ValueError("使用Telethon方法必须提供chat_id和message_id")
             return await _download_via_telethon(chat_id, message_id)
         
         # 智能选择逻辑
-        if video_obj:
+        if file_obj:
             try:
                 # 从video对象获取文件大小
-                file_size = getattr(video_obj, 'file_size', 0)
+                file_size = getattr(file_obj, 'file_size', 0)
                 file_size_mb = file_size / (1024 * 1024)
                 
                 # 根据文件大小选择下载方式
                 if file_size_mb < size_threshold_mb:
                     logger.info(f"🚀 使用Bot API下载 (< {size_threshold_mb}MB)")
                     try:
-                        return await _download_via_api(video_obj)
+                        return await _download_via_api(file_obj.file_id)
                     except Exception as api_error:
                         logger.warning(f"⚠️ Bot API下载失败: {api_error}")
                         if chat_id and message_id:
@@ -309,10 +383,10 @@ async def telegram_file_to_base64_smart(video_obj=None,
                     if chat_id and message_id:
                         return await _download_via_telethon(chat_id, message_id)
                     else:
-                        return await _download_via_api(video_obj)
+                        return await _download_via_api(file_obj.file_id)
                         
             except Exception as e:
-                logger.warning(f"⚠️ 处理video_obj失败: {e}")
+                logger.warning(f"⚠️ 处理file_obj失败: {e}")
                 if chat_id and message_id:
                     return await _download_via_telethon(chat_id, message_id)
                 else:
@@ -326,14 +400,14 @@ async def telegram_file_to_base64_smart(video_obj=None,
         logger.error(f"❌ 获取文件并转换为Base64失败: {e}")
         return False
 
-async def _download_via_api(video_obj):
+async def _download_via_api(file_id):
     """通过API下载文件"""
     from api.telegram_sender import telegram_sender
     
     start_time = time.time()
     
     # 获取文件（使用video对象的file_id）
-    file = await telegram_sender.get_file(video_obj.file_id)
+    file = await telegram_sender.get_file(file_id)
     
     # 下载文件到内存
     file_content = await file.download_as_bytearray()
@@ -373,52 +447,183 @@ async def _download_via_telethon(chat_id, message_id):
     
     return file_base64
 
-async def telegram_file_to_path(file_id, save_dir="../download"):
-    """通过file_id下载文件到指定目录"""
+async def telegram_file_to_path(
+    file_id: str = None,
+    file_obj = None,
+    chat_id = None,
+    message_id = None,
+    size_threshold_mb: int = 20,
+    force_method: Optional[str] = None,
+    save_dir: str = "/app/download",
+    filename: str = None
+):
+    """
+    通过智能选择下载Telegram文件到指定目录
+    
+    Args:
+        file_id: 文件ID（直接通过Bot API下载）
+        file_obj: API的文件对象（用于API下载）
+        chat_id: 聊天ID（用于Telethon下载）
+        message_id: 消息ID（用于Telethon下载）
+        size_threshold_mb: 文件大小阈值(MB)，超过此大小使用telethon下载
+        force_method: 强制使用的方法 ('api' 或 'telethon')
+        save_dir: 保存目录
+        filename: 自定义文件名（可选）
+    
+    Returns:
+        str: 文件路径，失败返回False
+    """
     try:
-        from api.telegram_sender import telegram_sender
+        # 参数验证
+        if not any([file_id, file_obj, (chat_id and message_id)]):
+            raise ValueError("必须提供 file_id 或 file_obj 或 (chat_id + message_id)")
         
-        # Step 1: 获取文件信息
+        # 确保保存目录存在
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # 如果有file_id，优先使用（最简单的方式）
+        if file_id:
+            return await _download_to_path_via_api(file_id, save_dir, filename)
+
+        # 如果强制指定方法
+        if force_method == 'api':
+            if not file_obj:
+                raise ValueError("使用API方法必须提供file_obj")
+            return await _download_to_path_via_api(file_obj.file_id, save_dir, filename)
+        elif force_method == 'telethon':
+            if not (chat_id and message_id):
+                raise ValueError("使用Telethon方法必须提供chat_id和message_id")
+            return await _download_to_path_via_telethon(chat_id, message_id, save_dir, filename)
+        
+        # 智能选择逻辑
+        if file_obj:
+            try:
+                # 从文件对象获取文件大小
+                file_size = getattr(file_obj, 'file_size', 0)
+                file_size_mb = file_size / (1024 * 1024)
+                
+                # 根据文件大小选择下载方式
+                if file_size_mb < size_threshold_mb:
+                    logger.info(f"🚀 使用Bot API下载到文件 (< {size_threshold_mb}MB)")
+                    try:
+                        return await _download_to_path_via_api(file_obj.file_id, save_dir, filename)
+                    except Exception as api_error:
+                        logger.warning(f"⚠️ Bot API下载失败: {api_error}")
+                        if chat_id and message_id:
+                            return await _download_to_path_via_telethon(chat_id, message_id, save_dir, filename)
+                        else:
+                            raise api_error
+                else:
+                    logger.info(f"🔄 使用Telethon下载到文件 (≥ {size_threshold_mb}MB)")
+                    if chat_id and message_id:
+                        return await _download_to_path_via_telethon(chat_id, message_id, save_dir, filename)
+                    else:
+                        return await _download_to_path_via_api(file_obj.file_id, save_dir, filename)
+                        
+            except Exception as e:
+                logger.warning(f"⚠️ 处理file_obj失败: {e}")
+                if chat_id and message_id:
+                    return await _download_to_path_via_telethon(chat_id, message_id, save_dir, filename)
+                else:
+                    raise e
+        else:
+            # 只有Telethon参数
+            logger.info("🔄 使用Telethon下载到文件")
+            return await _download_to_path_via_telethon(chat_id, message_id, save_dir, filename)
+            
+    except Exception as e:
+        logger.error(f"❌ 下载Telegram文件到路径失败: {e}")
+        return False
+
+async def _download_to_path_via_api(file_id: str, save_dir: str, filename: str = None):
+    """通过API下载文件到指定路径"""
+    from api.telegram_sender import telegram_sender
+    
+    start_time = time.time()
+    
+    try:
+        # 获取文件信息
         file = await telegram_sender.get_file(file_id)
         
-        # Step 2: 生成文件名
-        original_path = file.file_path
-        if original_path:
-            filename = os.path.basename(original_path)
+        # 生成文件名
+        if filename:
+            final_filename = filename
         else:
-            filename = f"{file_id}"
+            original_path = file.file_path
+            if original_path:
+                final_filename = os.path.basename(original_path)
+            else:
+                final_filename = f"{file_id}"
         
-        # Step 3: 构建保存路径
-        save_path = os.path.join(save_dir, filename)
+        # 构建保存路径
+        save_path = os.path.join(save_dir, final_filename)
         
-        # Step 4: 下载文件到指定路径
+        # 下载文件到指定路径
         await file.download_to_drive(save_path)
+        
+        download_time = time.time() - start_time
+        file_size_mb = os.path.getsize(save_path) / (1024 * 1024)
+        logger.info(f"✅ Bot API下载到文件完成，大小: {file_size_mb:.2f}MB，耗时: {download_time:.2f}s")
+        logger.info(f"📁 文件已保存到: {save_path}")
         
         return save_path
         
     except Exception as e:
-        logger.error(f"下载Telegram文件失败: {e}")
-        return False
+        logger.error(f"Bot API下载到文件失败: {e}")
+        raise e
 
-async def telegram_file_to_base64_by_file_id(file_id):
-    """通过file_id获取文件并转换为 Base64 格式"""
+async def _download_to_path_via_telethon(chat_id, message_id, save_dir: str, filename: str = None):
+    """通过Telethon下载文件到指定路径"""
+    start_time = time.time()
+    
     try:
-        from api.telegram_sender import telegram_sender
+        client = get_client()
         
-        # Step 1: 获取文件信息
-        file = await telegram_sender.get_file(file_id)
+        # 获取消息
+        message = await client.get_messages(chat_id, ids=message_id)
+        if not message or not message.media:
+            raise ValueError(f"消息 {message_id} 不存在或不包含媒体文件")
         
-        # Step 2: 下载文件到内存
-        file_content = await file.download_as_bytearray()
+        # 生成文件名
+        if filename:
+            final_filename = filename
+        else:
+            # 尝试从消息中获取文件名
+            media = message.media
+            if hasattr(media, 'document') and media.document:
+                # 文档类型
+                for attr in media.document.attributes:
+                    if hasattr(attr, 'file_name') and attr.file_name:
+                        final_filename = attr.file_name
+                        break
+                else:
+                    final_filename = f"document_{message_id}"
+            elif hasattr(media, 'photo'):
+                # 图片类型
+                final_filename = f"photo_{message_id}.jpg"
+            else:
+                # 其他类型
+                final_filename = f"media_{message_id}"
         
-        # Step 3: 转换为 Base64
-        file_base64 = base64.b64encode(file_content).decode('utf-8')
+        # 构建保存路径
+        save_path = os.path.join(save_dir, final_filename)
         
-        return file_base64
+        # 下载文件到指定路径
+        await client.download_media(message, file=save_path)
+        
+        if not os.path.exists(save_path):
+            raise RuntimeError("Telethon下载失败，文件未保存")
+        
+        download_time = time.time() - start_time
+        file_size_mb = os.path.getsize(save_path) / (1024 * 1024)
+        logger.info(f"✅ Telethon下载到文件完成，大小: {file_size_mb:.2f}MB，耗时: {download_time:.2f}s")
+        logger.info(f"📁 文件已保存到: {save_path}")
+        
+        return save_path
         
     except Exception as e:
-        logger.error(f"获取文件并转换为Base64失败: {e}")
-        return False
+        logger.error(f"Telethon下载到文件失败: {e}")
+        raise e
 
 def local_file_to_base64(file_path: str) -> str:
     """将本地文件转换为base64编码"""

@@ -147,7 +147,7 @@ async def forward_telegram_to_wx(chat_id: str, message, telethon_msg_id = None) 
             if message.caption:
                 await _send_telegram_text(to_wxid, message.caption)
             # 文档消息
-            send_result = await _send_telegram_document(to_wxid, message.document)
+            send_result = await _send_telegram_document(to_wxid, message.document, chat_id, telethon_msg_id)
 
         elif message.location:
             # 定位消息
@@ -189,7 +189,7 @@ async def _send_telegram_photo(to_wxid: str, photo: list) -> bool:
     file_id = photo[-1].file_id  # 最后一个通常是最大尺寸
     
     try:
-        image_base64 = await tools.telegram_file_to_base64_by_file_id(file_id)
+        image_base64 = await tools.get_telegram_file(file_id)
         
         payload = {
             "Base64": image_base64,
@@ -215,8 +215,8 @@ async def _send_telegram_video(to_wxid: str, video, chat_id, telethon_msg_id) ->
     duration = video.duration
     
     try:
-        thumb_base64 = await tools.telegram_file_to_base64_by_file_id(thumb_file_id)
-        video_base64 = await tools.telegram_file_to_base64_smart(video, int(chat_id), telethon_msg_id)
+        thumb_base64 = await tools.get_telegram_file(thumb_file_id)
+        video_base64 = await tools.get_telegram_file(file_obj=video, chat_id=int(chat_id), message_id=telethon_msg_id)
 
         payload = {
             "Base64": video_base64,
@@ -381,7 +381,7 @@ async def _send_telegram_voice(to_wxid: str, voice):
                 except Exception as e:
                     logger.warning(f"清理{file_type}失败 {file_path}: {e}")
 
-async def _send_telegram_document(to_wxid: str, document) -> bool:
+async def _send_telegram_document(to_wxid: str, document, chat_id, telethon_msg_id) -> bool:
     """发送文档消息到微信"""
     if not document:
         logger.error("未收到文档数据")
@@ -401,7 +401,7 @@ async def _send_telegram_document(to_wxid: str, document) -> bool:
             return False
         
         # 下载文件并转换为base64
-        file_base64 = await tools.telegram_file_to_base64_by_file_id(file_id)
+        file_base64 = await tools.get_telegram_file(file_obj=document, chat_id=int(chat_id), message_id=telethon_msg_id)
         if not file_base64:
             logger.error("获取文件base64失败")
             return False
