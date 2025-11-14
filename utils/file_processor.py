@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from io import BytesIO
 from pathlib import Path
 from typing import Callable, Any, Union, Optional
@@ -44,7 +45,7 @@ class AsyncFileProcessor:
             asyncio.create_task(
                 self._download_and_update(
                     file_type,
-                    chat_id, message_id,  sender_name,
+                    chat_id, message_id, sender_name,
                     download_func, download_args, download_kwargs
                 )
             )
@@ -57,16 +58,23 @@ class AsyncFileProcessor:
         """异步下载文件并更新消息"""
         try:
             # 执行下载
-            success, file_data, filename = await download_func(*args, **kwargs)
+            result = await download_func(*args, **kwargs)
+
+            if len(result) == 3:
+                success, file_data, filename = result
+            elif len(result) == 2:
+                file_data, filename = result
+                success = file_data is not None
+            else:
+                success, file_data, filename = False, None, "未知错误"
             
             if success:
                 if file_type == 'sticker':
 
-                    import re
                     match = re.search(r'<blockquote[^>]*>(.*?)</blockquote>', sender_name, re.DOTALL)
                     sender_name_text = match.group(1) if match else sender_name
 
-                    webm_path = await converter.gif_to_webp(file_data)
+                    webm_path = await converter.image_to_webp(file_data)
                     # webm_path = await converter.gif_to_webm("/app/download/sticker/000.gif")
 
                     # 贴纸特殊处理
