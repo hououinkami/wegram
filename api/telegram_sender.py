@@ -573,12 +573,18 @@ class TelegramSender:
             else:
                 processed_media.append(item)
         
-        return await self._retry_operation(
+        raw_response = await self._retry_operation(
             self.bot.send_media_group,
             chat_id=target_chat_id,
             media=processed_media,
             reply_to_message_id=reply_to_message_id
         )
+        
+        # 返回第一条消息而不是消息列表
+        if isinstance(raw_response, (list, tuple)) and raw_response:
+            return raw_response[0]
+        else:
+            return raw_response
     
     async def send_animation(self, chat_id: Optional[int] = None, animation: Union[str, Path, BytesIO, bytes] = None, caption: str = "",  
                            reply_to_message_id: Optional[int] = None,
@@ -1234,7 +1240,7 @@ class TelegramSender:
             # 检查是否为URL
             if photo.startswith(('http://', 'https://')):
                 # 如果是URL，需要先下载图片
-                photo_bytesio = await tools.get_image_from_url(photo)
+                photo_bytesio, _ = await tools.get_file_from_url(photo)
                 photo_input = InputFile(photo_bytesio, filename="avatar.jpg")
             else:
                 # 本地文件路径
