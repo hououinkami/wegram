@@ -443,7 +443,7 @@ async def _forward_quote(chat_id: int, msg_type: int, from_wxid: str, sender_nam
     
     return await telegram_sender.send_text(chat_id, send_text, reply_to_message_id)
 
-async def _forward_channel(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
+async def _forward_live(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理直播"""
     try:
         finder_live = content.get("msg", {}).get("appmsg", {}).get("finderLive", {})
