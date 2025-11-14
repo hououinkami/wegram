@@ -314,8 +314,7 @@ async def _send_telethon_voice(to_wxid: str, message, client):
 
     # 语音信息
     duration = getattr(message.voice, 'duration', 0)
-    download_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "download")
-    voice_dir = os.path.join(download_dir, "voice")
+    voice_dir = config.VOICE_DIR
     
     local_voice_path = None
     silk_path = None

@@ -321,8 +321,7 @@ async def _send_telegram_voice(to_wxid: str, voice):
     file_id = voice.file_id
     duration = voice.duration
     file_size = voice.file_size
-    download_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "download")
-    voice_dir = os.path.join(download_dir, "voice")
+    voice_dir = config.VOICE_DIR
     
     local_voice_path = None
     silk_path = None
@@ -735,8 +734,7 @@ async def _download_telegram_sticker(sticker) -> str:
         file_unique_id = sticker.file_unique_id
         
         # 设置下载目录
-        download_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "download")
-        sticker_dir = os.path.join(download_dir, "sticker")
+        sticker_dir = config.STICKER_DIR
         os.makedirs(sticker_dir, exist_ok=True)
         
         # 检查是否已存在文件

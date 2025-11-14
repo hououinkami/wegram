@@ -10,7 +10,7 @@ locale = Locale(LANG)
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "download")
 IMAGE_DIR = os.path.join(DOWNLOAD_DIR, "image")
 VIDEO_DIR = os.path.join(DOWNLOAD_DIR, "video")
-EMOJI_DIR = os.path.join(DOWNLOAD_DIR, "sticker")
+STICKER_DIR = os.path.join(DOWNLOAD_DIR, "sticker")
 FILE_DIR = os.path.join(DOWNLOAD_DIR, "file")
 VOICE_DIR = os.path.join(DOWNLOAD_DIR, "voice")
 

@@ -17,14 +17,7 @@ from api.wechat_api import wechat_api
 # 获取模块专用的日志记录器
 logger = logging.getLogger(__name__)
 
-# 常量定义
 WXID = config.MY_WXID
-DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "download")
-IMAGE_DIR = os.path.join(DOWNLOAD_DIR, "image")
-VIDEO_DIR = os.path.join(DOWNLOAD_DIR, "video")
-EMOJI_DIR = os.path.join(DOWNLOAD_DIR, "sticker")
-FILE_DIR = os.path.join(DOWNLOAD_DIR, "file")
-VOICE_DIR = os.path.join(DOWNLOAD_DIR, "voice")
 
 async def get_image(msg_id: str, from_wxid: str, data_json) -> Tuple[bool, str, str]:
     return await chunked_download(
@@ -64,7 +57,7 @@ async def get_emoji(data_json) -> Tuple[bool, str, str]:
 
         # 文件名和路径
         filename = f"{md5}.gif"
-        filepath = os.path.join(EMOJI_DIR, filename)
+        filepath = os.path.join(config.STICKER_DIR, filename)
 
         # ✅ 异步文件检查
         try:
@@ -159,7 +152,7 @@ async def get_emoji_file(data_json) -> Tuple[bool, str, str, str]:
 
         # 文件名和路径
         filename = f"{md5}.gif"
-        filepath = os.path.join(EMOJI_DIR, filename)
+        filepath = os.path.join(config.STICKER_DIR, filename)
 
         # ✅ 异步文件检查
         try:
@@ -246,7 +239,7 @@ async def get_voice(msg_id, from_user_name, data_json) -> Tuple[bool, str]:
 
         # 文件名和路径
         filename = f"{md5}.silk"
-        filepath = os.path.join(VOICE_DIR, filename)
+        filepath = os.path.join(config.VOICE_DIR, filename)
 
         # ✅ 异步文件检查
         try:

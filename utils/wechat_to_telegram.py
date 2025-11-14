@@ -302,10 +302,9 @@ async def _forward_sticker(chat_id: int, msg_type: int, from_wxid: str, sender_n
         # 检查是否已经存在WebP文件
         try:
             webp_filename = file_name.replace('.gif', '.webp')
-
-            DOWNLOAD_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            EMOJI_DIR = os.path.join(DOWNLOAD_DIR, "download", "sticker")
-            webp_filepath = os.path.join(EMOJI_DIR, webp_filename)
+            
+            sticker_dir = config.STICKER_DIR
+            webp_filepath = os.path.join(sticker_dir, webp_filename)
 
             if await aiofiles.os.path.exists(webp_filepath):
                 webp_file = webp_filepath
