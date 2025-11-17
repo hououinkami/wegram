@@ -12,8 +12,8 @@ import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
 
 import config
-from api import wechat_login
 from config import locale
+from utils import tools
 from api.telegram_sender import telegram_sender
 from service.telethon_client import get_user_id
 from utils.wechat_to_telegram import process_rabbitmq_message
@@ -595,9 +595,10 @@ class HeartbeatMonitor:
                         logger.error(f"❌ 微信服务疑似DOWN - 已超过{self.timeout}秒未收到消息")
                         logger.error(f"⏰ 最后收到消息时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_heartbeat))}")
                         
-                        # 在锁外发送异常告警
+                        # 在锁外发送异常告警并重启
                         try:
                             await self._send_service_down_alert(time_since_last)
+                            await tools.restart_container("wegram-server")
                         except Exception as e:
                             logger.error(f"❌ 发送服务异常告警失败: {e}")
                 # 每30秒检查一次
@@ -613,13 +614,13 @@ class HeartbeatMonitor:
             tg_user_id = get_user_id()
             down_minutes = int(down_time // 60)
             
-            alert_message = f"⚠️ **WeChatサーバーに異常発生！**\n\n" \
+            alert_message = f"⚠️ WeChatサーバーに異常発生！\n\n" \
                           f"🔴 サーバー状態: ダウン\n" \
                           f"⏱️ 異常継続時間: {down_minutes}分\n" \
                           f"📝 最終正常時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n\n" \
                           f"サーバーの稼働状況をご確認ください！"
             
-            await telegram_sender.send_text(tg_user_id, alert_message)
+            await telegram_sender.send_text(tg_user_id, locale.common('server_error'))
             
         except Exception as e:
             logger.error(f"❌ 发送服务异常告警失败: {e}")
@@ -643,14 +644,14 @@ class HeartbeatMonitor:
                 duration_str = f"{down_seconds}秒"
             
             # 构建恢复消息
-            recovery_message = f"✅ **WeChatサーバー復旧完了！**\n\n" \
+            recovery_message = f"✅ WeChatサーバー復旧完了！\n\n" \
                             f"🟢 サーバー状態: 正常稼働中\n" \
                             f"⏱️ 異常継続時間: {duration_str}\n" \
                             f"📝 異常開始時刻: {time.strftime('%H:%M:%S', time.localtime(service_down_start_time))}\n" \
                             f"📝 復旧完了時刻: {time.strftime('%H:%M:%S', time.localtime(self.last_heartbeat))}\n\n" \
                             f"サーバーが正常に復旧しました！"
             
-            await telegram_sender.send_text(tg_user_id, recovery_message)
+            await telegram_sender.send_text(tg_user_id, locale.common('server_recover'))
             
             logger.info(f"✅ 微信服务已恢复，总异常时间: {duration_str}")
             

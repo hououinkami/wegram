@@ -1,11 +1,14 @@
 import asyncio
 import base64
 import logging
+import json
 import os
 import re
 import requests
+import socket
 import tempfile
 import time
+import traceback
 import urllib.parse
 import warnings
 from datetime import datetime
@@ -740,6 +743,187 @@ def multi_get(data, *keys, default=''):
             if value is not None:
                 return value
     return default
+
+def parse_chunked_response(body):
+    """解析 chunked 编码的响应"""
+    try:
+        lines = body.split('\r\n')
+        json_data = ""
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # 跳过空行
+            if not line:
+                i += 1
+                continue
+                
+            # 尝试解析为十六进制长度
+            try:
+                chunk_size = int(line, 16)
+                if chunk_size == 0:
+                    break  # 结束标记
+                
+                # 下一行是数据
+                i += 1
+                if i < len(lines):
+                    json_data += lines[i]
+                    
+            except ValueError:
+                # 不是长度行，可能是数据行
+                json_data += line
+                
+            i += 1
+        
+        return json_data
+    except Exception as e:
+        logger.info(f"❌ Chunked 解析失败: {e}")
+        return None
+
+def docker_api_call(method, path):
+    """Docker API 调用 - 支持 chunked 编码"""
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect('/var/run/docker.sock')
+        
+        # 发送 HTTP 请求
+        request = f"{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        sock.sendall(request.encode())
+        
+        # 接收完整响应
+        response = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        
+        sock.close()
+        
+        # 转换为字符串
+        response_str = response.decode('utf-8')
+        
+        # 分离 HTTP 头和正文
+        if "\r\n\r\n" in response_str:
+            headers, body = response_str.split("\r\n\r\n", 1)
+            
+            # 检查状态码
+            status_line = headers.split('\r\n')[0]
+            
+            if "200 OK" in status_line:
+                # 检查是否是 chunked 编码
+                if "Transfer-Encoding: chunked" in headers:
+                    parsed_body = parse_chunked_response(body)
+                    if parsed_body:
+                        return parsed_body
+                    else:
+                        # 如果解析失败，尝试直接提取 JSON
+                        # 查找第一个 '[' 或 '{' 开始的 JSON
+                        json_start = -1
+                        for i, char in enumerate(body):
+                            if char in '[{':
+                                json_start = i
+                                break
+                        
+                        if json_start >= 0:
+                            # 从 JSON 开始位置提取到最后一个 '}' 或 ']'
+                            json_end = -1
+                            for i in range(len(body) - 1, json_start, -1):
+                                if body[i] in ']}':
+                                    json_end = i + 1
+                                    break
+                            
+                            if json_end > json_start:
+                                extracted_json = body[json_start:json_end]
+                                logger.info(f"🔍 提取的 JSON 长度: {len(extracted_json)}")
+                                return extracted_json
+                        
+                        logger.info("❌ 无法解析 chunked 响应")
+                        return None
+                else:
+                    return body.strip()
+                    
+            elif "204 No Content" in status_line:
+                return ""  # 重启成功，无内容
+            else:
+                logger.info(f"❌ HTTP 错误: {status_line}")
+                return None
+        else:
+            logger.info("❌ 无效的 HTTP 响应格式")
+            return None
+            
+    except Exception as e:
+        logger.info(f"❌ API 调用失败: {e}")
+        return None
+
+async def restart_container(container_name):
+    """重启指定容器"""
+    try:
+        logger.info(f"🔄 开始重启容器: {container_name}")
+        
+        # 获取容器列表
+        containers_response = docker_api_call("GET", "/containers/json?all=true")
+        if containers_response is None:
+            logger.info("❌ 获取容器列表失败")
+            return False
+        
+        try:
+            containers = json.loads(containers_response)
+        except json.JSONDecodeError as e:
+            logger.info(f"❌ JSON 解析失败: {e}")
+            
+            # 尝试清理响应中的非 JSON 字符
+            cleaned_response = containers_response
+            
+            # 移除可能的 chunked 编码残留
+            # 移除十六进制数字行
+            cleaned_response = re.sub(r'^[0-9a-fA-F]+\r?\n', '', cleaned_response, flags=re.MULTILINE)
+            # 移除单独的数字
+            cleaned_response = re.sub(r'^\d+\r?\n', '', cleaned_response, flags=re.MULTILINE)
+            
+            logger.info(f"🔍 清理后响应开头: {cleaned_response[:100]}")
+            
+            try:
+                containers = json.loads(cleaned_response)
+            except json.JSONDecodeError as e2:
+                logger.info(f"❌ 清理后仍然解析失败: {e2}")
+                return False
+        
+        # 查找目标容器
+        container_id = None
+        target_container = None
+        
+        for container in containers:
+            names = [name.lstrip('/') for name in container.get('Names', [])]
+            if container_name in names:
+                container_id = container['Id']
+                target_container = container
+                logger.info(f"✅ 找到容器: {container_name}, ID: {container_id[:12]}, 状态: {container.get('State', 'Unknown')}")
+                break
+        
+        if not container_id:
+            logger.info(f"❌ 未找到容器: {container_name}")
+            for container in containers:
+                names = [name.lstrip('/') for name in container.get('Names', [])]
+                state = container.get('State', 'Unknown')
+                logger.info(f"   • {names[0] if names else 'Unknown'} ({state})")
+            return False
+        
+        # 重启容器
+        restart_result = docker_api_call("POST", f"/containers/{container_id}/restart")
+        
+        if restart_result is not None:
+            logger.info(f"✅ 容器 {container_name} 重启成功")
+            return True
+        else:
+            logger.info(f"❌ 重启失败")
+            return False
+            
+    except Exception as e:
+        logger.info(f"❌ 发生错误: {e}")
+        logger.info(f"🔍 错误详情: {traceback.format_exc()}")
+        return False
 
 def get_60s(format_type="text"):
     """获取API内容并格式化为指定格式

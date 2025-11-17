@@ -56,7 +56,9 @@ class LocaleConfig:
                 'group_account': 'グループ',
                 'offical_account': '公式アカ',
                 'group_announcememt': 'グループ通知',
-                'failed_to_create_group': '❌ グループ作成失敗！'
+                'failed_to_create_group': '❌ グループ作成失敗！',
+                'server_error': '⚠️ WeChatサーバーに異常発生！\n🔄 サーバーの再起動を実行します',
+                'server_recover': '✅ WeChatサーバー復旧完了！'
             },
             'command': {
                 'update': '連絡先を更新',
@@ -93,6 +95,9 @@ class LocaleConfig:
                 'revoke': 'メッセージの撤回',
                 'revoke_failed': '❌ 撤回失敗',
                 'no_reply': '⚠️ 撤回したいメッセージを引用',
+                'restart_server': 'サーバーを再起動',
+                'restart_success': '✅ 再起動成功',
+                'restart_fail': '❌ 再起動失敗',
                 'heartbeat': '自動心拍',
                 'relogin': '二次ログイン',
                 'timer': '定時送信',
@@ -159,7 +164,9 @@ class LocaleConfig:
                 'group_account': '群聊',
                 'offical_account': '公众号',
                 'group_announcememt': '群通知',
-                'failed_to_create_group': '❌ 新建群组失败！'
+                'failed_to_create_group': '❌ 新建群组失败！',
+                'server_error': '⚠️ 服务器发生异常！\n🔄 尝试重启服务器',
+                'server_recover': '✅ 服务器已复原！'
             },
             'command': {
                 'update': '更新联系人',
@@ -196,6 +203,9 @@ class LocaleConfig:
                 'revoke': '撤回消息',
                 'revoke_failed': '❌ 撤回失败',
                 'no_reply': '⚠️ 请回复要撤回的信息',
+                'restart_server': '重启服务',
+                'restart_success': '✅ 重启成功',
+                'restart_fail': '❌ 重启失败',
                 'heartbeat': '自动心跳',
                 'relogin': '二次登录',
                 'timer': '定时发送',

@@ -425,6 +425,24 @@ class BotCommands:
     @staticmethod
     @delete_command_message
     @command_scope(CommandScope.BOT_ONLY)
+    async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """重启协议服务"""
+        chat_id = update.effective_chat.id
+        
+        try:
+            relogin = await tools.restart_container("wegram-server")
+            
+            if relogin:
+                await telegram_sender.send_text(chat_id, locale.common("restart_success"))
+            else:
+                await telegram_sender.send_text(chat_id, locale.common("restart_fail"))
+                
+        except Exception as e:
+            await telegram_sender.send_text(chat_id, f"{locale.common('failed')}: {str(e)}")
+    
+    @staticmethod
+    @delete_command_message
+    @command_scope(CommandScope.BOT_ONLY)
     async def heartbeat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """自动长心跳"""
         chat_id = update.effective_chat.id
@@ -740,6 +758,7 @@ class BotCommands:
             ["quit", locale.command("quit")],
             ["qrcode", locale.command("qrcode")],
             ["rm", locale.command("revoke")],
+            ["restart", locale.command("restart_server")],
             ["heartbeat", locale.command("heartbeat")],
             ["relogin", locale.command("relogin")],
             ["timer", locale.command("timer")]
@@ -759,6 +778,7 @@ class BotCommands:
             "quit": cls.quit_command,
             "qrcode": cls.qrcode_command,
             "rm": cls.revoke_command,
+            "restart": cls.restart_command,
             "heartbeat": cls.heartbeat_command,
             "relogin": cls.relogin_command,
             "timer": cls.timer_command
