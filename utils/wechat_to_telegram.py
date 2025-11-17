@@ -648,7 +648,7 @@ async def _get_contact_info(wxid: str, content: dict, push_content: str) -> tupl
         contact_name = push_content.split(" : ")[0].split("さん")[0]
             
     # 服务通知
-    if wxid == "service_notification":
+    if wxid == "service_notification" and not isinstance(content, str):
         contact_name = (
             content.get('msg', {}).get('appinfo', {}).get('appname') or 
             content.get('msg', {}).get('appmsg', {}).get('mmreader', {}).get('publisher', {}).get('nickname') or 
@@ -947,7 +947,7 @@ async def _process_message_async(message_info: Dict[str, Any]) -> None:
         create_time = message_info['CreateTime']
         
         # 处理服务通知
-        if from_wxid.endswith('@app'):
+        if from_wxid.endswith('@app') or to_wxid.endswith('@app'):
             from_wxid = "service_notification"
         
         # 处理群聊消息格式
