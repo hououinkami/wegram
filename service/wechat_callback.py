@@ -16,7 +16,7 @@ from utils.wechat_to_telegram import process_callback_message as process_rabbitm
 logger = logging.getLogger(__name__)
 
 # 配置
-PORT = config.PORT
+PORT = config.CALLBACK_PORT
 WXID = config.MY_WXID
 
 # 全局去重器和处理器管理
