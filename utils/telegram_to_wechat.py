@@ -70,9 +70,9 @@ async def process_telegram_update(update: Update) -> None:
             await add_send_msgid(wx_api_response, message_id, telethon_msg_id, to_wxid)
         else:
             if error_msg:
-                error_text = f"<blockquote>❌ {locale.common('forward_failed')}</blockquote>\n<blockquote expandable>{error_msg}</blockquote>"
+                error_text = f"<blockquote>{locale.common('forward_failed')}</blockquote>\n<blockquote expandable>{error_msg}</blockquote>"
             else:
-                error_text = f"<blockquote>❌ {locale.common('forward_failed')}</blockquote>"
+                error_text = f"<blockquote>{locale.common('forward_failed')}</blockquote>"
             
             await telegram_sender.send_text(chat_id, error_text, reply_to_message_id=message_id)
 
