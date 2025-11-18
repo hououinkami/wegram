@@ -14,9 +14,31 @@ STICKER_DIR = os.path.join(DOWNLOAD_DIR, "sticker")
 FILE_DIR = os.path.join(DOWNLOAD_DIR, "file")
 VOICE_DIR = os.path.join(DOWNLOAD_DIR, "voice")
 
-# Telegram Bot
+# 设置
+DEVICE_MODEL = os.getenv("DEVICE_MODEL", "WeGram")
 TG_MODE = os.getenv("TG_MODE", "polling")
 WECHAT_MODE = os.getenv("WECHAT_MODE", "callback")
+AUTO_CREATE_GROUPS = os.getenv("AUTO_CREATE_GROUPS", "True").lower() == "true"
+ENABLE_BLACKLIST = os.getenv('ENABLE_BLACKLIST', 'true').lower() == 'true'
+MAX_RATIO = os.getenv("MAX_RATIO", 4.0)
+MAX_SIZE = os.getenv("MAX_SIZE", 10)
+
+# WeChat API
+CALLBACK_PORT = int(os.getenv("CALLBACK_PORT", "8088"))
+BASE_URL = os.getenv("BASE_URL", "http://wegram-server:8058/api")
+MY_WXID = os.getenv("MY_WXID")
+if not MY_WXID:
+    raise ValueError("MY_WXID environment variable is required")
+PUSH_WXID = os.getenv("PUSH_WXID")
+DEVICE_ID = os.getenv("DEVICE_ID")
+RABBITMQ_URL = os.getenv("RABBITMQ_URL")
+if not RABBITMQ_URL:
+    raise ValueError("RABBITMQ_URL environment variable is required")
+
+# Telegram Bot
+PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+if not PHONE_NUMBER:
+    raise ValueError("PHONE_NUMBER environment variable is required")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is required")
@@ -26,33 +48,12 @@ if not API_ID:
 API_HASH = os.getenv("API_HASH")
 if not API_HASH:
     raise ValueError("API_HASH environment variable is required")
-PHONE_NUMBER = os.getenv("PHONE_NUMBER")
-if not PHONE_NUMBER:
-    raise ValueError("PHONE_NUMBER environment variable is required")
-DEVICE_MODEL = os.getenv("DEVICE_MODEL", "WeGram")
-WECHAT_CHAT_FOLDER = os.getenv("WECHAT_CHAT_FOLDER", "チャット")
-WECHAT_OFFICAL_FOLDER = os.getenv("WECHAT_OFFICAL_FOLDER", "WeChat")
-POLLING_INTERVAL = int(os.getenv("POLLING_INTERVAL", "1"))
-AUTO_CREATE_GROUPS = os.getenv("AUTO_CREATE_GROUPS", "True").lower() == "true"
 WEBHOOK_DOMAIN = os.getenv("WEBHOOK_DOMAIN")
-WEBHOOK_PORT = os.getenv("WEBHOOK_PORT", 8443)
+WEBHOOK_PORT = os.getenv("WEBHOOK_PORT")
 SSL_CERT_NAME = os.getenv("SSL_CERT_NAME", "cert.pem")
 SSL_KEY_NAME = os.getenv("SSL_KEY_NAME", "key.pem")
-
-# WeChat API
-PORT = int(os.getenv("PORT", "8088"))
-BASE_URL = os.getenv("BASE_URL", "http://wegram-server:8058/api")
-MY_WXID = os.getenv("MY_WXID")
-if not MY_WXID:
-    raise ValueError("MY_WXID environment variable is required")
-RABBITMQ_URL = os.getenv("RABBITMQ_URL")
-if not RABBITMQ_URL:
-    raise ValueError("RABBITMQ_URL environment variable is required")
-WX_CHECK_INTERVAL = int(os.getenv("WX_CHECK_INTERVAL", "300"))
-PUSH_WXID = "49925190240@chatroom"
-
-# 黑名单功能开关
-ENABLE_BLACKLIST = os.getenv('ENABLE_BLACKLIST', 'true').lower() == 'true'
+WECHAT_CHAT_FOLDER = os.getenv("WECHAT_CHAT_FOLDER", "聊天")
+WECHAT_OFFICAL_FOLDER = os.getenv("WECHAT_OFFICAL_FOLDER", "公众号")
 
 # 处理黑名单关键词
 def _parse_blacklist_keywords():

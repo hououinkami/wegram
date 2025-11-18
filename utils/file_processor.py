@@ -1,10 +1,14 @@
 import asyncio
 import logging
+import os
 import re
 from io import BytesIO
 from pathlib import Path
 from typing import Callable, Any, Union, Optional
 
+from PIL import Image
+
+import config
 from api.telegram_sender import telegram_sender
 from utils.sticker_converter import converter
 
@@ -87,6 +91,9 @@ class AsyncFileProcessor:
                         filename=filename
                     )
                 else:
+                    if file_type == 'photo':
+                        file_type = await self.image_send_mode(file_data)
+                    
                     # 使用edit_message_media方法，只替换媒体内容，不修改caption
                     await self.telegram_sender.edit_message_media(
                         chat_id=chat_id,
@@ -105,6 +112,47 @@ class AsyncFileProcessor:
         except Exception as e:
             logger.error(f"❌ 异步下载或更新过程中出错: {e}", exc_info=True)
 
+    async def image_send_mode(self, file_data) -> str:
+        """分析图片特征决定发送方式"""
+        try:
+            # 如果是BytesIO，需要特殊处理
+            if hasattr(file_data, 'read'):
+                file_data.seek(0)  # 重置指针
+                img = Image.open(file_data)
+                file_data.seek(0)  # 重置指针供后续使用
+            else:
+                # 如果是文件路径
+                img = Image.open(file_data)
+                
+            width, height = img.size
+            file_size = 0
+            
+            # 获取文件大小
+            if hasattr(file_data, 'getvalue'):
+                # BytesIO
+                file_size = len(file_data.getvalue()) / (1024 * 1024)  # MB
+            elif isinstance(file_data, str) and os.path.exists(file_data):
+                # 文件路径
+                file_size = os.path.getsize(file_data) / (1024 * 1024)  # MB
+            
+            # 判断条件
+            ratio = max(width/height, height/width)
+            max_dimension = max(width, height)
+            
+            # 决定发送方式的条件
+            should_use_document = (
+                ratio > config.MAX_RATIO or              # 长宽比过大
+                file_size > config.MAX_SIZE or            # 文件大于3MB
+                max_dimension > 9000 or     # 单边超过2048px
+                width + height > 10000       # 总尺寸过大
+            )
+            
+            return 'document' if should_use_document else 'photo'
+            
+        except Exception as e:
+            logger.warning(f"图片分析失败: {e}, 默认使用photo模式")
+            return 'photo'
+    
     async def replace_message_with_sticker(self, telegram_sender, chat_id: int, message_id: int, 
                                         sticker_data: Union[BytesIO, bytes, str, Path], 
                                         original_caption: str,
