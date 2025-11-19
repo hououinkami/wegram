@@ -6,6 +6,7 @@ import warnings
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 
 import asyncio
+import glob
 import importlib
 import logging
 import os
@@ -13,7 +14,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from typing import List
 
@@ -22,15 +23,19 @@ from utils.contact_manager import initialize_contact_manager
 from utils.group_manager import initialize_group_manager
 
 class DailyRotatingHandler(RotatingFileHandler):
-    """按天切换的日志处理器"""
+    """按天切换的日志处理器，自动清理旧日志文件"""
     
-    def __init__(self, log_dir, encoding='utf-8'):
+    def __init__(self, log_dir, encoding='utf-8', keep_days=7):
         self.log_dir = log_dir
+        self.keep_days = keep_days
         os.makedirs(log_dir, exist_ok=True)
         
         filename = self._get_filename()
         super().__init__(filename, mode='a', maxBytes=0, backupCount=0, encoding=encoding)
         self.current_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # 初始化时清理一次旧日志
+        self._cleanup_old_logs()
     
     def _get_filename(self):
         today = datetime.now().strftime("%Y-%m-%d")
@@ -48,8 +53,50 @@ class DailyRotatingHandler(RotatingFileHandler):
         self.current_date = datetime.now().strftime("%Y-%m-%d")
         self.baseFilename = self._get_filename()
         
+        # 在切换日志文件时清理旧日志
+        self._cleanup_old_logs()
+        
         if not self.delay:
             self.stream = self._open()
+    
+    def _cleanup_old_logs(self):
+        """清理超过保留天数的日志文件"""
+        try:
+            # 计算截止日期
+            cutoff_date = datetime.now() - timedelta(days=self.keep_days)
+            
+            # 查找所有日志文件
+            log_pattern = os.path.join(self.log_dir, "*.log")
+            log_files = glob.glob(log_pattern)
+            
+            deleted_count = 0
+            for log_file in log_files:
+                try:
+                    # 从文件名提取日期
+                    filename = os.path.basename(log_file)
+                    date_str = filename.replace('.log', '')
+                    
+                    # 尝试解析日期
+                    try:
+                        file_date = datetime.strptime(date_str, "%Y-%m-%d")
+                    except ValueError:
+                        # 如果文件名不符合日期格式，跳过
+                        continue
+                    
+                    # 如果文件日期早于截止日期，删除文件
+                    if file_date < cutoff_date:
+                        os.remove(log_file)
+                        deleted_count += 1
+                        print(f"🗑️ 已删除旧日志文件: {filename}")
+                        
+                except Exception as e:
+                    print(f"⚠️ 删除日志文件 {log_file} 时出错: {e}")
+            
+            if deleted_count > 0:
+                print(f"✅ 日志清理完成，共删除 {deleted_count} 个旧日志文件")
+                
+        except Exception as e:
+            print(f"❌ 清理旧日志文件时出错: {e}")
 
 def setup_logging():
     """设置日志"""
@@ -63,7 +110,7 @@ def setup_logging():
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            DailyRotatingHandler(log_dir),
+            DailyRotatingHandler(log_dir, keep_days=7),
             logging.StreamHandler()
         ]
     )
@@ -413,4 +460,3 @@ if __name__ == "__main__":
         print("⚠️ 程序被用户中断")
     except Exception as e:
         print(f"❌ 程序运行出错: {e}")
-        
