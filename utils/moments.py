@@ -339,8 +339,7 @@ async def process_moment_data(data):
                 if share_name:
                     caption_parts.append(f'<blockquote>{share_name}</blockquote>')
             else:
-                logger.warning("不支持的分享内容")
-                logger.debug(content_json)
+                logger.warning(f"⚠️ 不支持的分享内容: {content_json}")
 
             # 转发视频号信息
             finder_feed = safe_get_dict(content_obj, "finderFeed")
