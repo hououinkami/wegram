@@ -141,9 +141,9 @@ class AsyncFileProcessor:
             
             # 决定发送方式的条件
             should_use_document = (
-                ratio > config.MAX_RATIO or              # 长宽比过大
-                file_size > config.MAX_SIZE or            # 文件大于3MB
-                max_dimension > 9000 or     # 单边超过2048px
+                ratio > float(config.MAX_RATIO) or              # 长宽比过大
+                file_size > float(config.MAX_SIZE) or            # 文件大于3MB
+                max_dimension > 9000 or     # 单边过大
                 width + height > 10000       # 总尺寸过大
             )
             
