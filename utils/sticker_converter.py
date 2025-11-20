@@ -373,7 +373,7 @@ class ConverterHelper:
 
     async def gif_to_webm(self, input_file: Union[str, bytes, BytesIO], output_file: Optional[str] = None) -> str:
         """
-        将 GIF 转换为 WebM
+        将 GIF 转换为 WebM，使用递归压缩确保文件大小符合要求
         """
         try:
             if output_file is None:
@@ -390,271 +390,212 @@ class ConverterHelper:
                     temp_input = temp_file.name
             else:
                 temp_input = input_file
+            
+            # 递归压缩函数
+            async def convert_with_adaptive_quality(attempt: int = 0, max_attempts: int = 6) -> str:
+                """递归转换，逐步降低质量直到满足大小要求"""
+                
+                if attempt >= max_attempts:
+                    raise Exception(f'无法在{max_attempts}次尝试内将文件压缩到256KB以下')
+                
+                # 🎯 质量参数配置（逐步降低质量）
+                quality_configs = [
+                    # 尝试0: 高质量 (预期约200-250KB)
+                    {
+                        'crf': '28', 
+                        'bitrate': '200k', 
+                        'maxrate': '250k', 
+                        'bufsize': '500k',
+                        'cpu_used': '1', 
+                        'name': 'High Quality'
+                    },
+                    # 尝试1: 中高质量 (预期约150-200KB)  
+                    {
+                        'crf': '30', 
+                        'bitrate': '150k', 
+                        'maxrate': '200k', 
+                        'bufsize': '400k',
+                        'cpu_used': '2', 
+                        'name': 'Medium-High Quality'
+                    },
+                    # 尝试2: 中等质量 (预期约120-150KB)
+                    {
+                        'crf': '32', 
+                        'bitrate': '120k', 
+                        'maxrate': '150k', 
+                        'bufsize': '300k',
+                        'cpu_used': '2', 
+                        'name': 'Medium Quality'
+                    },
+                    # 尝试3: 中低质量 (预期约90-120KB)
+                    {
+                        'crf': '35', 
+                        'bitrate': '90k', 
+                        'maxrate': '120k', 
+                        'bufsize': '240k',
+                        'cpu_used': '3', 
+                        'name': 'Medium-Low Quality'
+                    },
+                    # 尝试4: 低质量 (预期约60-90KB)
+                    {
+                        'crf': '38', 
+                        'bitrate': '60k', 
+                        'maxrate': '80k', 
+                        'bufsize': '160k',
+                        'cpu_used': '4', 
+                        'name': 'Low Quality'
+                    },
+                    # 尝试5: 最低质量 (预期约40-60KB)
+                    {
+                        'crf': '42', 
+                        'bitrate': '40k', 
+                        'maxrate': '60k', 
+                        'bufsize': '120k',
+                        'cpu_used': '5', 
+                        'name': 'Minimum Quality'
+                    },
+                ]
+                
+                if attempt >= len(quality_configs):
+                    # 使用最低质量配置
+                    quality_config = quality_configs[-1]
+                else:
+                    quality_config = quality_configs[attempt]
+                
+                logger.info(f'🔄 将 {input_file} 转换为 WebM（尝试 {attempt + 1}/{max_attempts}）: {quality_config["name"]}')
+                
+                # 🎯 构建符合Telegram官方要求的FFmpeg命令
+                cmd = [
+                    'ffmpeg', '-i', temp_input,
 
-            # 使用独立的GIF分析函数
-            # gif_info = await self.analyze_gif(temp_input)
+                    # 视频编码器 - VP9
+                    '-c:v', 'libvpx-vp9',
 
-            # 异步运行 FFmpeg 命令
-            async def run_ffmpeg_command(cmd, timeout=60):
+                    # 像素格式
+                    '-pix_fmt', 'yuv420p',
+
+                    # 尺寸和帧率
+                    # '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black,fps=30',   # 尺寸填充黑色背景至512x512, 30fps
+                    '-vf', 'scale=512:512:force_original_aspect_ratio=decrease:eval=frame,fps=30',   # 尺寸调整至长边512, 30fps
+                    '-r', '30',
+
+                    # 关键帧设置
+                    '-g', '30',
+                    '-keyint_min', '15',
+
+                    # 时长限制，最长3s
+                    '-t', '3.0',
+                    
+                    # 可调质量参数 (根据尝试次数调整)
+                    '-crf', quality_config['crf'],
+                    '-b:v', quality_config['bitrate'],
+                    '-maxrate', quality_config['maxrate'],
+                    '-bufsize', quality_config['bufsize'],
+                    '-cpu-used', quality_config['cpu_used'],
+                    
+                    # VP9特定设置
+                    '-auto-alt-ref', '0',
+                    '-lag-in-frames', '0',
+                    '-quality', 'good',
+                    '-speed', '2',
+                    
+                    # 其他官方要求
+                    '-threads', '4',
+                    '-an',  # 无音频
+                    '-f', 'webm',
+                    '-avoid_negative_ts', 'make_zero',
+                    '-fflags', '+genpts',
+                    
+                    # 输出文件
+                    '-y', output_file
+                ]
+                
                 try:
+                    # 执行FFmpeg转换
+                    logger.debug(f'执行命令: {" ".join(cmd)}')
+                    
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE
                     )
                     
-                    try:
-                        stdout, stderr = await asyncio.wait_for(
-                            process.communicate(), 
-                            timeout=timeout
-                        )
-                        return process.returncode, stdout, stderr
-                    except asyncio.TimeoutError:
-                        logger.warning(f"FFmpeg command timed out after {timeout}s")
-                        process.terminate()
-                        try:
-                            await asyncio.wait_for(process.wait(), timeout=5)
-                        except asyncio.TimeoutError:
-                            process.kill()
-                            await process.wait()
-                        raise TimeoutError(f"FFmpeg command timed out after {timeout} seconds")
-                        
-                except Exception as e:
-                    logger.error(f"Error running FFmpeg command: {e}")
-                    raise
-
-            # 转换配置
-            telegram_configs = [
-                # 🎯 配置1: 双通道编码 - 确保 Duration 正确
-                {
-                    'name': 'Two-Pass VP9 with Duration Fix',
-                    'type': 'two_pass',
-                    'pass1_cmd': [
-                        'ffmpeg', '-i', temp_input,
-                        '-c:v', 'libvpx-vp9',
-                        '-pix_fmt', 'yuv420p',
-                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black,fps=15',
-                        '-pass', '1',
-                        '-b:v', '200k',
-                        '-crf', '30',
-                        '-g', '15',
-                        '-keyint_min', '5',
-                        '-auto-alt-ref', '0',
-                        '-lag-in-frames', '0',
-                        '-quality', 'good',
-                        '-cpu-used', '2',
-                        '-threads', '2',
-                        '-an',
-                        '-f', 'null',
-                        '/dev/null'
-                    ],
-                    'pass2_cmd': [
-                        'ffmpeg', '-i', temp_input,
-                        '-c:v', 'libvpx-vp9',
-                        '-pix_fmt', 'yuv420p',
-                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black,fps=15',
-                        '-pass', '2',
-                        '-b:v', '200k',
-                        '-crf', '30',
-                        '-g', '15',
-                        '-keyint_min', '5',
-                        '-auto-alt-ref', '0',
-                        '-lag-in-frames', '0',
-                        '-quality', 'good',
-                        '-cpu-used', '2',
-                        '-threads', '2',
-                        '-an',
-                        '-f', 'webm',
-                        '-avoid_negative_ts', 'make_zero',
-                        '-fflags', '+genpts',
-                        '-y', output_file
-                    ]
-                },
-                
-                # 🎯 配置2: 强制关键帧 - 确保动画
-                {
-                    'name': 'Force Keyframes VP9',
-                    'type': 'single_pass',
-                    'cmd': [
-                        'ffmpeg', '-i', temp_input,
-                        '-c:v', 'libvpx-vp9',
-                        '-pix_fmt', 'yuv420p',
-                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black,fps=15',
-                        '-b:v', '200k',
-                        '-minrate', '100k',    # 🔑 最小码率
-                        '-maxrate', '300k',    # 🔑 最大码率
-                        '-crf', '28',
-                        '-g', '15',
-                        '-keyint_min', '1',    # 🔑 强制更多关键帧
-                        '-force_key_frames', 'expr:gte(t,n_forced*0.5)',  # 🔑 每0.5秒一个关键帧
-                        '-auto-alt-ref', '0',
-                        '-lag-in-frames', '0',
-                        '-quality', 'good',
-                        '-cpu-used', '1',      # 🔑 更好的质量
-                        '-threads', '4',
-                        '-an',
-                        '-f', 'webm',
-                        '-movflags', '+faststart',
-                        '-avoid_negative_ts', 'make_zero',
-                        '-fflags', '+genpts',
-                        '-y', output_file
-                    ]
-                },
-                
-                # 🎯 配置3: 循环输入确保动画
-                {
-                    'name': 'Loop Input VP9',
-                    'type': 'single_pass',
-                    'cmd': [
-                        'ffmpeg', 
-                        '-stream_loop', '1',   # 🔑 循环输入1次
-                        '-i', temp_input,
-                        '-c:v', 'libvpx-vp9',
-                        '-pix_fmt', 'yuv420p',
-                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black,fps=12',
-                        '-b:v', '180k',
-                        '-crf', '32',
-                        '-g', '12',
-                        '-keyint_min', '6',
-                        '-auto-alt-ref', '0',
-                        '-lag-in-frames', '0',
-                        '-quality', 'good',
-                        '-cpu-used', '2',
-                        '-threads', '2',
-                        '-an',
-                        '-f', 'webm',
-                        '-t', '3.0',           # 🔑 限制总时长
-                        '-avoid_negative_ts', 'make_zero',
-                        '-fflags', '+genpts',
-                        '-y', output_file
-                    ]
-                },
-                
-                # 🎯 配置4: 最简单但有效的方法
-                {
-                    'name': 'Simple Effective VP9',
-                    'type': 'single_pass',
-                    'cmd': [
-                        'ffmpeg', '-i', temp_input,
-                        '-c:v', 'libvpx-vp9',
-                        '-vf', 'scale=512:512:flags=lanczos,fps=10',  # 🔑 简化滤镜
-                        '-b:v', '150k',
-                        '-crf', '35',
-                        '-g', '10',
-                        '-keyint_min', '1',
-                        '-auto-alt-ref', '0',
-                        '-lag-in-frames', '0',
-                        '-quality', 'realtime',  # 🔑 实时质量
-                        '-cpu-used', '4',
-                        '-threads', '2',
-                        '-an',
-                        '-f', 'webm',
-                        '-t', '2.5',
-                        '-avoid_negative_ts', 'make_zero',
-                        '-fflags', '+genpts',
-                        '-y', output_file
-                    ]
-                },
-                
-                # 🎯 配置5: 使用 libwebp 作为后备
-                {
-                    'name': 'WebP Fallback',
-                    'type': 'single_pass',
-                    'cmd': [
-                        'ffmpeg', '-i', temp_input,
-                        '-c:v', 'libwebp',     # 🔑 使用 WebP 编码器
-                        '-vf', 'scale=512:512:flags=lanczos,fps=15',
-                        '-lossless', '0',
-                        '-compression_level', '4',
-                        '-quality', '80',
-                        '-preset', 'default',
-                        '-loop', '0',          # 🔑 无限循环
-                        '-an',
-                        '-f', 'webm',
-                        '-t', '3.0',
-                        '-y', output_file
-                    ]
-                }
-            ]
-
-            last_error = None
-            
-            for i, config in enumerate(telegram_configs):
-                try:
-                    logger.info(f'🔄 Trying configuration {i+1}/{len(telegram_configs)}: {config["name"]}')
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
                     
-                    # 执行转换
-                    if config['type'] == 'two_pass':
-                        # 双通道编码
-                        returncode1, stdout1, stderr1 = await run_ffmpeg_command(config['pass1_cmd'], timeout=60)
-                        if returncode1 != 0:
-                            error_msg = stderr1.decode('utf-8', errors='ignore') if stderr1 else 'Unknown error'
-                            logger.warning(f'❌ Pass 1 failed: {error_msg[:200]}...')
-                            continue
-                        
-                        returncode, stdout, stderr = await run_ffmpeg_command(config['pass2_cmd'], timeout=60)
-                    else:
-                        # 单通道编码
-                        returncode, stdout, stderr = await run_ffmpeg_command(config['cmd'], timeout=60)
-                    
-                    if returncode != 0:
+                    if process.returncode != 0:
                         error_msg = stderr.decode('utf-8', errors='ignore') if stderr else 'Unknown error'
-                        logger.warning(f'❌ Config {i+1} failed: {error_msg[:200]}...')
-                        last_error = Exception(f'FFmpeg failed: {error_msg}')
-                        continue
+                        logger.warning(f'❌ FFmpeg转换失败 (尝试 {attempt + 1}): {error_msg[:200]}...')
+                        # 🔄 递归尝试下一个质量配置
+                        return await convert_with_adaptive_quality(attempt + 1, max_attempts)
                     
-                    # 使用独立的WebM验证函数
+                    # 检查输出文件是否存在
+                    if not os.path.exists(output_file):
+                        logger.warning(f'❌ 输出文件不存在 (尝试 {attempt + 1})')
+                        # 🔄 递归尝试下一个质量配置
+                        return await convert_with_adaptive_quality(attempt + 1, max_attempts)
+                    
+                    # 验证转换后的WebM文件
                     is_valid, validation_result = await self.validate_webm(
                         output_file, 
-                        max_size=256 * 1024,
+                        max_size=256 * 1024,  # 256KB限制
                         expected_width=512,
                         expected_height=512
                     )
-
+                    
                     if is_valid:
-                        logger.info(f'✅ SUCCESS! WebM conversion with {config["name"]}!')
-                        logger.info(f'   📦 Size: {validation_result["file_size"]} bytes')
-                        logger.info(f'   🎬 Frames: {validation_result["frame_count"]}')
-                        logger.info(f'   ⏱️  Duration: {validation_result["duration"]:.2f}s')
-                        logger.info(f'   🎥 Codec: {validation_result["codec_name"]}')
-                        
-                        # 清理临时文件
-                        if isinstance(input_file, (bytes, BytesIO)) and os.path.exists(temp_input):
-                            os.unlink(temp_input)
-                        
+                        # ✅ 转换成功！
+                        # logger.info(f'✅ 转换成功! 使用质量配置: {quality_config["name"]}')
+                        # logger.info(f'   📦 文件大小: {validation_result["file_size"]} bytes ({validation_result["file_size"]/1024:.1f}KB)')
+                        # logger.info(f'   📐 分辨率: {validation_result["width"]}x{validation_result["height"]}')
+                        # logger.info(f'   🎬 帧数: {validation_result["frame_count"]}')
+                        # logger.info(f'   ⏱️  时长: {validation_result["duration"]:.2f}s')
+                        # logger.info(f'   🎯 符合Telegram官方贴纸要求!')
                         return output_file
                     else:
-                        logger.warning(f'❌ Validation failed for config {i+1}:')
-                        for error in validation_result['errors']:
+                        # 验证失败，检查具体原因
+                        file_size = validation_result.get('file_size', 0)
+                        errors = validation_result.get('errors', [])
+                        
+                        logger.warning(f'❌ 文件验证失败 (尝试 {attempt + 1}):')
+                        for error in errors:
                             logger.warning(f'   - {error}')
                         
-                        # 删除无效文件
-                        if os.path.exists(output_file):
-                            os.unlink(output_file)
+                        if file_size > 256 * 1024:
+                            logger.warning(f'   📦 文件大小 {file_size} bytes ({file_size/1024:.1f}KB) 超过256KB限制')
+                            # 删除过大的文件
+                            if os.path.exists(output_file):
+                                os.unlink(output_file)
+                            # 🔄 递归尝试下一个质量配置
+                            return await convert_with_adaptive_quality(attempt + 1, max_attempts)
+                        else:
+                            # 其他验证错误（尺寸、帧率等）
+                            if os.path.exists(output_file):
+                                os.unlink(output_file)
+                            # 🔄 递归尝试下一个质量配置
+                            return await convert_with_adaptive_quality(attempt + 1, max_attempts)
                             
-                except TimeoutError as e:
-                    logger.error(f'Config {i+1} timed out: {e}')
-                    last_error = e
-                    continue
-                    
+                except asyncio.TimeoutError:
+                    logger.warning(f'❌ 转换超时 (尝试 {attempt + 1})')
+                    # 🔄 递归尝试下一个质量配置
+                    return await convert_with_adaptive_quality(attempt + 1, max_attempts)
                 except Exception as e:
-                    logger.warning(f'Config {i+1} failed: {e}')
-                    last_error = e
-                    continue
+                    logger.warning(f'❌ 转换异常 (尝试 {attempt + 1}): {str(e)[:100]}...')
+                    # 🔄 递归尝试下一个质量配置  
+                    return await convert_with_adaptive_quality(attempt + 1, max_attempts)
 
-            # 清理临时文件
-            if isinstance(input_file, (bytes, BytesIO)) and os.path.exists(temp_input):
-                os.unlink(temp_input)
+            # 🚀 开始递归转换
+            result = await convert_with_adaptive_quality()
             
-            # 所有配置都失败了
-            if last_error:
-                raise Exception(f'All conversion attempts failed. Last error: {last_error}')
-            else:
-                raise Exception('Failed to convert GIF to WebM: No suitable configuration found')
+            return result
             
         except Exception as err:
             logger.error(f'Error during GIF to WebM conversion: {err}')
             raise err
+        
+        finally:
+            # 清理临时文件
+            if isinstance(input_file, bytes) and 'temp_input' in locals() and os.path.exists(temp_input):
+                os.unlink(temp_input)
 
     async def analyze_gif(self, file_path: str) -> Dict[str, Any]:
         """
@@ -858,33 +799,46 @@ class ConverterHelper:
             analysis_result['is_animated'] = frame_count > 1 and duration > 0.1
             analysis_result['animation_valid'] = analysis_result['is_animated']
             
-            # 总体验证
+            # 验证帧率不超过30 FPS
+            analysis_result['fps_valid'] = analysis_result['fps'] <= 30.0
+            if not analysis_result['fps_valid']:
+                analysis_result['errors'].append(f'FPS too high: {analysis_result["fps"]} (max: 30)')
+            
+            # 验证时长不超过3秒
+            analysis_result['duration_valid'] = analysis_result['duration'] <= 3.0
+            if not analysis_result['duration_valid']:
+                analysis_result['errors'].append(f'Duration too long: {analysis_result["duration"]}s (max: 3.0s)')
+            
+            # 验证尺寸要求 - 一边必须是512px，另一边可以≤512px
+            width = analysis_result['width']
+            height = analysis_result['height']
+            analysis_result['telegram_dimensions_valid'] = (
+                (width == 512 and height <= 512) or 
+                (height == 512 and width <= 512)
+            )
+            if not analysis_result['telegram_dimensions_valid']:
+                analysis_result['errors'].append(f'Invalid Telegram dimensions: {width}x{height} (one side must be 512px, other ≤512px)')
+            
+            # 更新总体验证逻辑
             analysis_result['overall_valid'] = (
                 analysis_result['size_valid'] and
-                analysis_result['dimensions_valid'] and
+                analysis_result['telegram_dimensions_valid'] and  # 使用新的尺寸验证
                 analysis_result['codec_valid'] and
-                analysis_result['animation_valid']
+                analysis_result['animation_valid'] and
+                analysis_result['fps_valid'] and  # 新增
+                analysis_result['duration_valid']  # 新增
             )
             
-            # 记录错误
-            if not analysis_result['dimensions_valid']:
-                analysis_result['errors'].append(f'Invalid dimensions: {analysis_result["width"]}x{analysis_result["height"]} (expected: {expected_width}x{expected_height})')
-            
-            if not analysis_result['codec_valid']:
-                analysis_result['errors'].append(f'Invalid codec: {analysis_result["codec_name"]} (expected: vp9, libvpx-vp9, or webp)')
-            
-            if not analysis_result['animation_valid']:
-                analysis_result['errors'].append(f'Not animated: frames={frame_count}, duration={duration}s')
-            
-            # 记录分析结果
-            logger.info(f'🔍 WebM Validation Results:')
-            logger.info(f'   📦 File Size: {file_size} bytes (valid: {analysis_result["size_valid"]})')
-            logger.info(f'   📏 Dimensions: {analysis_result["width"]}x{analysis_result["height"]} (valid: {analysis_result["dimensions_valid"]})')
-            logger.info(f'   🎥 Codec: {analysis_result["codec_name"]} (valid: {analysis_result["codec_valid"]})')
-            logger.info(f'   ⏱️  Duration: {duration:.2f}s')
-            logger.info(f'   🖼️  Frames: {frame_count}')
-            logger.info(f'   🎬 Is Animated: {analysis_result["is_animated"]} (valid: {analysis_result["animation_valid"]})')
-            logger.info(f'   ✅ Overall Valid: {analysis_result["overall_valid"]}')
+            # 更新日志输出
+            # logger.info(f'🔍 WebM Validation Results (Telegram):')
+            # logger.info(f'   📦 File Size: {file_size} bytes (valid: {analysis_result["size_valid"]})')
+            # logger.info(f'   📏 Dimensions: {width}x{height} (valid: {analysis_result["telegram_dimensions_valid"]})')
+            # logger.info(f'   🎥 Codec: {analysis_result["codec_name"]} (valid: {analysis_result["codec_valid"]})')
+            # logger.info(f'   🎬 FPS: {analysis_result["fps"]} (valid: {analysis_result["fps_valid"]})')
+            # logger.info(f'   ⏱️  Duration: {duration:.2f}s (valid: {analysis_result["duration_valid"]})')
+            # logger.info(f'   🖼️  Frames: {frame_count}')
+            # logger.info(f'   🎭 Is Animated: {analysis_result["is_animated"]} (valid: {analysis_result["animation_valid"]})')
+            # logger.info(f'   ✅ Overall Valid: {analysis_result["overall_valid"]}')
             
             if analysis_result['errors']:
                 logger.warning(f'   ❌ Errors: {"; ".join(analysis_result["errors"])}')
