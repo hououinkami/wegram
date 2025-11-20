@@ -295,28 +295,49 @@ async def _forward_sticker(chat_id: int, msg_type: int, from_wxid: str, sender_n
     is_animated = gif_info["is_animated"]
 
     if is_animated:
-        # 以动画形式发送
-        sticker_bytesio = await tools.local_file_to_bytesio(sticker_gif)
-        return await telegram_sender.send_animation(chat_id, sticker_bytesio, sender_name, reply_to_message_id)
+        # 动态贴纸
+        try:
+            # 以贴纸形式发送
+            webm_filename = file_name.replace('.gif', '.webm')
+            
+            sticker_dir = config.STICKER_DIR
+            webm_filepath = os.path.join(sticker_dir, webm_filename)
+
+            # 检查是否已经存在WebM文件
+            if await aiofiles.os.path.exists(webm_filepath):
+                webm_file = webm_filepath
+            else:
+                webm_file = await converter.gif_to_webm(sticker_gif)
+            
+            result = await telegram_sender.send_sticker(chat_id, webm_file, reply_to_message_id, title=sender_name_text)
+                
+        except Exception as e:
+            logger.error(f"处理webm文件时出错: {e}")
+            # 以动画形式发送
+            sticker_bytesio = await tools.local_file_to_bytesio(sticker_gif)
+            result = await telegram_sender.send_animation(chat_id, sticker_bytesio, sender_name, reply_to_message_id)
+        
     else:
         # 以贴纸形式发送
-        # 检查是否已经存在WebP文件
         try:
             webp_filename = file_name.replace('.gif', '.webp')
             
             sticker_dir = config.STICKER_DIR
             webp_filepath = os.path.join(sticker_dir, webp_filename)
 
+            # 检查是否已经存在WebP文件
             if await aiofiles.os.path.exists(webp_filepath):
                 webp_file = webp_filepath
             else:
                 webp_file = await converter.image_to_webp(sticker_gif)
+            
+            result = await telegram_sender.send_sticker(chat_id, webp_file, reply_to_message_id, title=sender_name_text)
                 
         except Exception as e:
             logger.error(f"处理webp文件时出错: {e}")
-            webp_file = await converter.image_to_webp(sticker_gif)
-
-        result = await telegram_sender.send_sticker(chat_id, webp_file, reply_to_message_id, title=sender_name_text)
+            # 以文件形式发送
+            sticker_bytesio = await tools.local_file_to_bytesio(sticker_gif)
+            result = await telegram_sender.send_animation(chat_id, sticker_bytesio, sender_name, reply_to_message_id)
 
         if result and result.sticker:
             sticker_info = result.sticker
