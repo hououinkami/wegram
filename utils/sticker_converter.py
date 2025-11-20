@@ -7,10 +7,14 @@ import tempfile
 from io import BytesIO
 from typing import Optional, Union, Dict, Any, Tuple
 
+import aiofiles
+import aiofiles.os
 import ffmpeg
 from lottie import objects, parsers
 from lottie.exporters import gif
 from PIL import Image, ImageSequence
+
+import config
 
 # 假设你有这些常量定义
 class WxLimitConstants:
@@ -25,7 +29,7 @@ class ConverterHelper:
         # Python 的 ffmpeg-python 不需要设置路径，直接使用系统的 ffmpeg
         pass
     
-    def _generate_output_filename(self, input_file: Union[str, bytes], default_name: str = "output") -> str:
+    def _generate_output_filename(self, input_file: Union[str, bytes], default_name: str = "sticker") -> str:
         """
         根据输入文件生成默认的 GIF 输出文件名
         
@@ -371,7 +375,7 @@ class ConverterHelper:
             logger.error(f'lottie-python conversion failed: {e}')
             return False
 
-    async def gif_to_webm(self, input_file: Union[str, bytes, BytesIO], output_file: Optional[str] = None) -> str:
+    async def gif_to_webm(self, input_file: Union[str, bytes, BytesIO], output_file: Optional[str] = None, target_fps = 30) -> str:
         """
         将 GIF 转换为 WebM，使用递归压缩确保文件大小符合要求
         """
@@ -462,7 +466,7 @@ class ConverterHelper:
                 else:
                     quality_config = quality_configs[attempt]
                 
-                logger.info(f'🔄 将 {input_file} 转换为 WebM（尝试 {attempt + 1}/{max_attempts}）: {quality_config["name"]}')
+                logger.info(f'🔄 将 {input_file} 转换为 WebM（尝试 {attempt + 1}/{max_attempts}）: {quality_config["name"]} @ {target_fps:.2f}FPS')
                 
                 # 🎯 构建符合Telegram官方要求的FFmpeg命令
                 cmd = [
@@ -475,9 +479,9 @@ class ConverterHelper:
                     '-pix_fmt', 'yuv420p',
 
                     # 尺寸和帧率
-                    # '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black,fps=30',   # 尺寸填充黑色背景至512x512, 30fps
-                    '-vf', 'scale=512:512:force_original_aspect_ratio=decrease:eval=frame,fps=30',   # 尺寸调整至长边512, 30fps
-                    '-r', '30',
+                    # '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black,fps={target_fps:.2f}',   # 尺寸填充黑色背景至512x512, 30fps
+                    '-vf', f'scale=512:512:force_original_aspect_ratio=decrease:eval=frame,fps={target_fps:.2f}',   # 尺寸调整至长边512, 30fps
+                    '-r', str(target_fps),
 
                     # 关键帧设置
                     '-g', '30',
@@ -537,9 +541,8 @@ class ConverterHelper:
                     # 验证转换后的WebM文件
                     is_valid, validation_result = await self.validate_webm(
                         output_file, 
-                        max_size=256 * 1024,  # 256KB限制
-                        expected_width=512,
-                        expected_height=512
+                        max_size=256 * 1024,
+                        max_dimension=512
                     )
                     
                     if is_valid:
@@ -674,15 +677,14 @@ class ConverterHelper:
             }
 
     async def validate_webm(self, file_path: str, max_size: int = 256 * 1024, 
-                        expected_width: int = 512, expected_height: int = 512) -> Tuple[bool, Dict[str, Any]]:
+                    max_dimension: int = 512) -> Tuple[bool, Dict[str, Any]]:
         """
-        验证WebM文件是否符合要求
+        验证WebM文件是否符合Telegram贴纸要求
         
         Args:
             file_path: WebM文件路径
             max_size: 最大文件大小（字节）
-            expected_width: 期望的视频宽度
-            expected_height: 期望的视频高度
+            max_dimension: 最大尺寸（像素）
             
         Returns:
             (is_valid, analysis_result) 元组
@@ -702,6 +704,8 @@ class ConverterHelper:
             'dimensions_valid': False,
             'codec_valid': False,
             'animation_valid': False,
+            'fps_valid': True,
+            'duration_valid': True,
             'overall_valid': False,
             'errors': []
         }
@@ -762,7 +766,7 @@ class ConverterHelper:
                 duration = float(video_stream.get('duration', 0))
             analysis_result['duration'] = duration
             
-            # 获取帧数
+            # 获取帧数和帧率
             nb_frames = video_stream.get('nb_frames')
             if nb_frames and str(nb_frames).isdigit():
                 frame_count = int(nb_frames)
@@ -789,11 +793,6 @@ class ConverterHelper:
             analysis_result['frame_count'] = frame_count
             
             # 验证各项指标
-            analysis_result['dimensions_valid'] = (
-                analysis_result['width'] == expected_width and 
-                analysis_result['height'] == expected_height
-            )
-            
             analysis_result['codec_valid'] = analysis_result['codec_name'] in ['vp9', 'libvpx-vp9', 'webp']
             
             analysis_result['is_animated'] = frame_count > 1 and duration > 0.1
@@ -809,39 +808,28 @@ class ConverterHelper:
             if not analysis_result['duration_valid']:
                 analysis_result['errors'].append(f'Duration too long: {analysis_result["duration"]}s (max: 3.0s)')
             
-            # 验证尺寸要求 - 一边必须是512px，另一边可以≤512px
+            # 灵活的尺寸验证
             width = analysis_result['width']
             height = analysis_result['height']
-            analysis_result['telegram_dimensions_valid'] = (
-                (width == 512 and height <= 512) or 
-                (height == 512 and width <= 512)
+            analysis_result['dimensions_valid'] = (
+                (width == max_dimension and height <= max_dimension) or 
+                (height == max_dimension and width <= max_dimension)
             )
-            if not analysis_result['telegram_dimensions_valid']:
-                analysis_result['errors'].append(f'Invalid Telegram dimensions: {width}x{height} (one side must be 512px, other ≤512px)')
+            
+            if not analysis_result['dimensions_valid']:
+                analysis_result['errors'].append(
+                    f'Invalid dimensions: {width}x{height} (one side must be {max_dimension}px, other ≤{max_dimension}px)'
+                )
             
             # 更新总体验证逻辑
             analysis_result['overall_valid'] = (
                 analysis_result['size_valid'] and
-                analysis_result['telegram_dimensions_valid'] and  # 使用新的尺寸验证
+                analysis_result['dimensions_valid'] and
                 analysis_result['codec_valid'] and
                 analysis_result['animation_valid'] and
-                analysis_result['fps_valid'] and  # 新增
-                analysis_result['duration_valid']  # 新增
+                analysis_result['fps_valid'] and
+                analysis_result['duration_valid']
             )
-            
-            # 更新日志输出
-            # logger.info(f'🔍 WebM Validation Results (Telegram):')
-            # logger.info(f'   📦 File Size: {file_size} bytes (valid: {analysis_result["size_valid"]})')
-            # logger.info(f'   📏 Dimensions: {width}x{height} (valid: {analysis_result["telegram_dimensions_valid"]})')
-            # logger.info(f'   🎥 Codec: {analysis_result["codec_name"]} (valid: {analysis_result["codec_valid"]})')
-            # logger.info(f'   🎬 FPS: {analysis_result["fps"]} (valid: {analysis_result["fps_valid"]})')
-            # logger.info(f'   ⏱️  Duration: {duration:.2f}s (valid: {analysis_result["duration_valid"]})')
-            # logger.info(f'   🖼️  Frames: {frame_count}')
-            # logger.info(f'   🎭 Is Animated: {analysis_result["is_animated"]} (valid: {analysis_result["animation_valid"]})')
-            # logger.info(f'   ✅ Overall Valid: {analysis_result["overall_valid"]}')
-            
-            if analysis_result['errors']:
-                logger.warning(f'   ❌ Errors: {"; ".join(analysis_result["errors"])}')
             
             return analysis_result['overall_valid'], analysis_result
             
@@ -1273,5 +1261,63 @@ class ConverterHelper:
         except KeyError as e:
             logger.info(f'Duration information not found: {e}')
             raise e
+    
+    async def gif_to_telegram_sticker(self, input_file: Union[str, bytes, BytesIO], input_filename: Optional[str]) -> str:
+        """将GIF转换为Telegram贴纸，智能识别动态与静态"""
+        try:
+            # 参数验证
+            if not input_filename:
+                if isinstance(input_file, str):
+                    input_filename = os.path.basename(input_file)
+                else:
+                    input_filename = "sticker.gif"
+            
+            # 确保文件名以 .gif 结尾
+            if not input_filename.lower().endswith('.gif'):
+                input_filename += '.gif'
+
+            # 处理不同类型的输入
+            if isinstance(input_file, (bytes, BytesIO)):
+                with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as temp_file:
+                    if isinstance(input_file, bytes):
+                        temp_file.write(input_file)
+                    else:  # BytesIO
+                        input_file.seek(0)
+                        temp_file.write(input_file.read())
+                    temp_input = temp_file.name
+            else:
+                temp_input = input_file
+            
+            gif_info = await self.analyze_gif(temp_input)
+            sticker_dir = config.STICKER_DIR
+
+            if gif_info['is_animated']:
+                # 生成目标路径
+                sticker_filename = input_filename.replace('.gif', '.webm')
+                sticker_file = os.path.join(sticker_dir, sticker_filename)
+                # 判断帧率
+                gif_fps = gif_info.get('fps') or 30.0
+                gif_fps = min(30.0, gif_fps)
+
+                # 检查是否已经存在贴纸文件
+                if await aiofiles.os.path.exists(sticker_file):
+                    return sticker_file
+                else:
+                    return await self.gif_to_webm(temp_input, sticker_file, gif_fps)
+            else:
+                # 生成目标路径
+                sticker_filename = input_filename.replace('.gif', '.webp')
+                sticker_file = os.path.join(sticker_dir, sticker_filename)
+
+                # 检查是否已经存在贴纸文件
+                if await aiofiles.os.path.exists(sticker_file):
+                    return sticker_file
+                else:
+                    return await self.image_to_webp(temp_input, sticker_file)
+            
+        finally:
+            # 清理临时文件
+            if isinstance(input_file, bytes) and 'temp_input' in locals() and os.path.exists(temp_input):
+                os.unlink(temp_input)
 
 converter = ConverterHelper()
