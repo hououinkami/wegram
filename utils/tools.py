@@ -18,7 +18,6 @@ from typing import Optional, Union, Tuple
 
 import aiohttp
 import aiofiles
-import whisper
 from PIL import Image
 
 import config
@@ -1028,6 +1027,7 @@ def _get_model(model_size="base", model_dir=None):
             warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
             warnings.filterwarnings("ignore", category=UserWarning)
             
+            import whisper
             model = whisper.load_model(model_size, download_root=model_dir)
             
             # 移动到最佳设备
