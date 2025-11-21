@@ -265,7 +265,7 @@ async def get_telegram_file(
     size_threshold_mb: int = 20,
     force_method: Optional[str] = None,
     save_file: bool = False,
-    save_dir: str = "/app/download",
+    save_dir: str = config.DOWNLOAD_DIR,
     filename: str = None
 ) -> Union[str, bool]:
     """
@@ -458,7 +458,7 @@ async def telegram_file_to_path(
     message_id = None,
     size_threshold_mb: int = 20,
     force_method: Optional[str] = None,
-    save_dir: str = "/app/download",
+    save_dir: str = config.DOWNLOAD_DIR,
     filename: str = None
 ):
     """
