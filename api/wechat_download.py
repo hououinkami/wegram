@@ -158,7 +158,7 @@ async def get_emoji_file(data_json) -> Tuple[bool, str, str, str]:
         try:
             await aiofiles.os.stat(filepath)
             # 文件存在
-            return True, filepath, f"{locale.type(47)}.gif"
+            return True, filepath, filename
         except FileNotFoundError:
             pass
         
@@ -225,7 +225,7 @@ async def get_emoji_file(data_json) -> Tuple[bool, str, str, str]:
                     except Exception as e:
                         logger.warning(f"备份文件失败: {e}")
                     
-                    return True, filepath, f"{locale.type(47)}.gif"
+                    return True, filepath, filename
                     
     except Exception as e:
         logger.exception(f"下载失败: {str(e)}")

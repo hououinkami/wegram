@@ -286,77 +286,46 @@ async def _forward_sticker(chat_id: int, msg_type: int, from_wxid: str, sender_n
 
     match = re.search(r'<blockquote[^>]*>(.*?)</blockquote>', sender_name, re.DOTALL)
     sender_name_text = match.group(1) if match else sender_name
+    button_text = sender_name_text if sender_name_text else locale.type(msg_type)
     
     # 下载贴纸GIF
     success, sticker_gif, file_name = await wechat_download.get_emoji_file(content)
 
-    # 判断是否为动画
-    gif_info = await converter.analyze_gif(sticker_gif)
-    is_animated = gif_info["is_animated"]
-
-    if is_animated:
-        # 动态贴纸
-        try:
+    try:
+        # 转换GIF
+        sticker_file = await converter.gif_to_telegram_sticker(sticker_gif, file_name)
+        if sticker_file:
             # 以贴纸形式发送
-            webm_filename = file_name.replace('.gif', '.webm')
-            
-            sticker_dir = config.STICKER_DIR
-            webm_filepath = os.path.join(sticker_dir, webm_filename)
-
-            # 检查是否已经存在WebM文件
-            if await aiofiles.os.path.exists(webm_filepath):
-                webm_file = webm_filepath
-            else:
-                webm_file = await converter.gif_to_webm(sticker_gif)
-            
-            result = await telegram_sender.send_sticker(chat_id, webm_file, reply_to_message_id, title=sender_name_text)
-                
-        except Exception as e:
-            logger.error(f"处理webm文件时出错: {e}")
+            result = await telegram_sender.send_sticker(chat_id, sticker_file, reply_to_message_id, title=button_text)
+        else:
             # 以动画形式发送
             sticker_bytesio = await tools.local_file_to_bytesio(sticker_gif)
             result = await telegram_sender.send_animation(chat_id, sticker_bytesio, sender_name, reply_to_message_id)
-        
-    else:
-        # 以贴纸形式发送
-        try:
-            webp_filename = file_name.replace('.gif', '.webp')
             
-            sticker_dir = config.STICKER_DIR
-            webp_filepath = os.path.join(sticker_dir, webp_filename)
+    except Exception as e:
+        logger.error(f"处理webm文件时出错: {e}")
+        # 以动画形式发送
+        sticker_bytesio = await tools.local_file_to_bytesio(sticker_gif)
+        result = await telegram_sender.send_animation(chat_id, sticker_bytesio, sender_name, reply_to_message_id)
 
-            # 检查是否已经存在WebP文件
-            if await aiofiles.os.path.exists(webp_filepath):
-                webp_file = webp_filepath
-            else:
-                webp_file = await converter.image_to_webp(sticker_gif)
-            
-            result = await telegram_sender.send_sticker(chat_id, webp_file, reply_to_message_id, title=sender_name_text)
-                
-        except Exception as e:
-            logger.error(f"处理webp文件时出错: {e}")
-            # 以文件形式发送
-            sticker_bytesio = await tools.local_file_to_bytesio(sticker_gif)
-            result = await telegram_sender.send_animation(chat_id, sticker_bytesio, sender_name, reply_to_message_id)
+    if result and result.sticker:
+        sticker_info = result.sticker
+        sticker_unique_id = sticker_info.file_unique_id
+        callback_data = {
+            "unique_id": sticker_unique_id,
+            "md5": sticker_md5,
+            "size": sticker_size,
+        }
 
-        if result and result.sticker:
-            sticker_info = result.sticker
-            sticker_unique_id = sticker_info.file_unique_id
-            callback_data = {
-                "unique_id": sticker_unique_id,
-                "md5": sticker_md5,
-                "size": sticker_size,
-            }
-
-            await telegram_sender.update_buttons(
-                chat_id=chat_id,
-                message_id=result.message_id,
-                buttons=[
-                    [{"text": sender_name_text, "callback_data": create_callback_data("add_sticker", callback_data)}]
-                ]
-            )
-        
-        return result
+        await telegram_sender.update_buttons(
+            chat_id=chat_id,
+            message_id=result.message_id,
+            buttons=[
+                [{"text": button_text, "callback_data": create_callback_data("add_sticker", callback_data)}]
+            ]
+        )
+    
+    return result
 
 async def _forward_location(chat_id: int, msg_type: int, from_wxid: str, sender_name: str, content: dict, reply_to_message_id: int, **kwargs) -> dict:
     """处理定位"""

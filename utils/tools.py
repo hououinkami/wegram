@@ -21,6 +21,7 @@ import aiofiles
 import whisper
 from PIL import Image
 
+import config
 from config import locale
 from service.telethon_client import get_client
 from utils.message_formatter import escape_html_chars
@@ -31,7 +32,8 @@ async def get_file_from_url(
     url: str, 
     file_type: str = "auto",
     save_file: bool = False, 
-    save_dir: str = "/app/download"
+    save_dir: str = config.DOWNLOAD_DIR,
+    save_name: str = None
 ) -> Union[Tuple[Optional[BytesIO], str], Tuple[Optional[str], str]]:
     """从URL下载任意类型的文件并处理为BytesIO对象或保存为文件"""
 
@@ -44,7 +46,7 @@ async def get_file_from_url(
         "audio": locale.type(34),
         "auto": locale.type(6)
     }
-    default_filename = default_names.get(file_type) or file_type or locale.type(6)
+    default_filename = save_name or default_names.get(file_type) or file_type or locale.type(6)
 
     try:
         # ✅ 增强请求头，特别针对QQ文件

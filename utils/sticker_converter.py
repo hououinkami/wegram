@@ -467,7 +467,12 @@ class ConverterHelper:
                     quality_config = quality_configs[attempt]
                 
                 logger.info(f'🔄 将 {input_file} 转换为 WebM（尝试 {attempt + 1}/{max_attempts}）: {quality_config["name"]} @ {target_fps:.2f}FPS')
-                
+
+                # 尺寸帧率参数：透明
+                video_filter = f'scale=512:512:force_original_aspect_ratio=decrease:eval=frame,fps={target_fps:.2f}'
+                # 尺寸填充黑色背景至512x512, 30fps
+                # video_filter = f'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:black,fps={target_fps:.2f}'
+
                 # 🎯 构建符合Telegram官方要求的FFmpeg命令
                 cmd = [
                     'ffmpeg', '-i', temp_input,
@@ -476,11 +481,10 @@ class ConverterHelper:
                     '-c:v', 'libvpx-vp9',
 
                     # 像素格式
-                    '-pix_fmt', 'yuv420p',
+                    '-pix_fmt', 'yuva420p',
 
                     # 尺寸和帧率
-                    # '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black,fps={target_fps:.2f}',   # 尺寸填充黑色背景至512x512, 30fps
-                    '-vf', f'scale=512:512:force_original_aspect_ratio=decrease:eval=frame,fps={target_fps:.2f}',   # 尺寸调整至长边512, 30fps
+                    '-vf', video_filter,
                     '-r', str(target_fps),
 
                     # 关键帧设置
@@ -528,7 +532,7 @@ class ConverterHelper:
                     
                     if process.returncode != 0:
                         error_msg = stderr.decode('utf-8', errors='ignore') if stderr else 'Unknown error'
-                        logger.warning(f'❌ FFmpeg转换失败 (尝试 {attempt + 1}): {error_msg[:200]}...')
+                        logger.warning(f'❌ FFmpeg转换失败 (尝试 {attempt + 1}): {error_msg}')
                         # 🔄 递归尝试下一个质量配置
                         return await convert_with_adaptive_quality(attempt + 1, max_attempts)
                     
@@ -1273,9 +1277,14 @@ class ConverterHelper:
                     input_filename = "sticker.gif"
             
             # 确保文件名以 .gif 结尾
-            if not input_filename.lower().endswith('.gif'):
-                input_filename += '.gif'
-
+            # if not input_filename.lower().endswith('.gif'):
+            #     input_filename += '.gif'
+                
+            # 获取后缀
+            file_ext = input_filename.rsplit('.', 1)[-1] if '.' in input_filename else ""
+            # 获取不含后缀的文件名
+            file_name_without_ext = input_filename.rsplit('.', 1)[0] if '.' in input_filename else input_filename
+                
             # 处理不同类型的输入
             if isinstance(input_file, (bytes, BytesIO)):
                 with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as temp_file:
@@ -1288,10 +1297,21 @@ class ConverterHelper:
             else:
                 temp_input = input_file
             
-            gif_info = await self.analyze_gif(temp_input)
+            # 类型判断
+            if file_ext ==  "gif":
+                gif_info = await self.analyze_gif(temp_input)
+                is_animated = gif_info["is_animated"]
+                gif_duration = gif_info["duration"]
+            else:
+                is_animated = False
+            
             sticker_dir = config.STICKER_DIR
 
-            if gif_info['is_animated']:
+            if is_animated:
+                # 若超过3时，直接返回
+                if gif_duration > 3.0:
+                    return None
+                    
                 # 生成目标路径
                 sticker_filename = input_filename.replace('.gif', '.webm')
                 sticker_file = os.path.join(sticker_dir, sticker_filename)
@@ -1306,7 +1326,7 @@ class ConverterHelper:
                     return await self.gif_to_webm(temp_input, sticker_file, gif_fps)
             else:
                 # 生成目标路径
-                sticker_filename = input_filename.replace('.gif', '.webp')
+                sticker_filename = input_filename.replace(f'.{file_ext}', '.webp')
                 sticker_file = os.path.join(sticker_dir, sticker_filename)
 
                 # 检查是否已经存在贴纸文件
