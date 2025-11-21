@@ -178,8 +178,8 @@ class GroupManager:
             if existing_contact:
                 return {
                     'success': True,
-                    'chat_id': existing_contact.get('chatId'),
-                    'group_name': existing_contact.get('name'),
+                    'chat_id': existing_contact.chat_id,
+                    'group_name': existing_contact.name,
                     'group_type': 'group',
                     'bot_invited': True,
                     'bot_is_admin': True,
@@ -224,9 +224,6 @@ class GroupManager:
             moved_to_folder = await self._move_chat_to_folder(client, chat_id, folder_name)
             if not moved_to_folder:
                 logger.warning(f"移动群组到文件夹失败，但群组创建成功")
-
-            # 保存映射关系
-            await self.contact_manager.save_chat_wxid_mapping(wxid, contact_name, chat_id, avatar_url)
             
             return {
                 'success': True,

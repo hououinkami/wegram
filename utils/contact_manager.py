@@ -489,21 +489,35 @@ class ContactManager:
         try:
             # 检查是否已存在相同的映射
             existing = await self.get_contact(wxid)
-            if existing and existing.chat_id == chat_id:
-                return
-            
             is_group = wxid.endswith('@chatroom')
-            contact = Contact(
-                wxid=wxid,
-                name=name,
-                chat_id=chat_id,
-                is_group=is_group,
-                is_receive=True,
-                avatar_url=avatar_url or "",
-                wx_name=""
-            )
+
+            if existing:
+                updates = {}
+                if existing.chat_id != chat_id:
+                    updates['chat_id'] = chat_id
+                if existing.name != name:
+                    updates['name'] = name
+                if avatar_url and existing.avatar_url != avatar_url:
+                    updates['avatar_url'] = avatar_url
+                if existing.is_group != is_group:
+                    updates['is_group'] = is_group
+                
+                if updates:
+                    await self.update_contact(wxid, updates)
+                    logger.info(f"✅ 更新映射关系: {wxid} -> {chat_id}")
+            else:
+                contact = Contact(
+                    wxid=wxid,
+                    name=name,
+                    chat_id=chat_id,
+                    is_group=is_group,
+                    is_receive=True,
+                    avatar_url=avatar_url or "",
+                    wx_name=""
+                )
             
             await self.save_contact(contact)
+            logger.info(f"✅ 创建新映射关系: {qqid} -> {chat_id}")
             
         except Exception as e:
             logger.error(f"❌ 保存映射关系失败: {e}")
@@ -626,20 +640,11 @@ class ContactManager:
             # 创建成功后处理数据库
             if result.get('success') and result.get('chat_id'):
                 new_chat_id = result['chat_id']
-                
-                # 检查是否存在联系人记录
-                contact = await self.get_contact(wxid)
-                
-                if contact:
-                    # 如果存在记录，更新chat_id
-                    success = await self.update_contact(wxid, {'chat_id': new_chat_id})
-                    if not success:
-                        logger.error(f"❌ 更新联系人 {wxid} 的chat_id失败")
-                else:
-                    # 如果不存在记录，创建新的映射关系
-                    await self.save_chat_wxid_mapping(
-                        wxid, contact_name, new_chat_id, avatar_url
-                    )
+
+                # 创建新的映射关系
+                await self.save_chat_wxid_mapping(
+                    wxid, contact_name, new_chat_id, avatar_url
+                )
             
             return result
             
